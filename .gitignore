@@ -2,7 +2,7 @@
 config.json
 .storage_secret
 
-# Additiona Files
+# Additional Files
 PROJECT_BRIEFING.md
 start.bat
 install.sh
@@ -10,8 +10,14 @@ install.sh
 # User Data
 users/
 
+# niceGUI Storage
+.nicegui/
+
 # Logs
 logs/
+
+# Voices
+voices/
 
 # TTS/Audio Temp Files
 rpg_audio_*
