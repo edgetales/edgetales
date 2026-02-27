@@ -1,0 +1,10 @@
+{
+  "api_key": "sk-ant-api03-YOUR-KEY-HERE",
+  "invite_code": "",  
+  "enable_https": true,
+  "storage_secret": "magickeyfromasnowyisland900",
+  "ssl_certfile": "",
+  "ssl_keyfile": "",
+  "port": 8080,
+  "default_ui_lang": "en"
+}
