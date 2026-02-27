@@ -108,7 +108,7 @@ The narrative tone reference: *Studio Ghibli, Avatar: The Last Airbender, Harry 
 
 ---
 
-# Screenshots (Desktop)
+# Screenshots (mobile)
 
 **Character creation** — choose genre, tone, archetype, set wishes & boundaries:
 
@@ -120,6 +120,8 @@ The narrative tone reference: *Studio Ghibli, Avatar: The Last Airbender, Harry 
 **Describe your character, then review the AI-generated draft:**
 
 ![Character](docs/character.png)
+
+Screenshots (desktop)
 ![Character Draft](docs/draft.png)
 
 **The first scene:**
