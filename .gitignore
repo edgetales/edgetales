@@ -1,0 +1,31 @@
+# Secrets & Config
+config.json
+.storage_secret
+
+# Additiona Files
+PROJECT_BRIEFING.md
+start.bat
+install.sh
+
+# User Data
+users/
+
+# Logs
+logs/
+
+# TTS/Audio Temp Files
+rpg_audio_*
+
+# SSL Certs
+*.pem
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
