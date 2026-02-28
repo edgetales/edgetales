@@ -162,7 +162,7 @@ Every player turn flows through three specialised AI agents, each with a distinc
 Player types action
         │
         ▼
-  ┌─────────────┐
+  ┌──────────────┐
   │    Brain     │  Claude Haiku — fast, cheap
   │              │  Parses: move type, stat, intent,
   └──────┬───────┘  target NPC, position, effect
