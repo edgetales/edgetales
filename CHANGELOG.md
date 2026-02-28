@@ -5,6 +5,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.26]
+
+### Improved
+- **NPC name wrapping in sidebar:** Long NPC names now wrap with a hanging indent — second line aligns under the name text, not under the disposition bubble (CSS `text-indent` + `padding-left` on `.q-item__label`)
+- **Sidebar swipe-to-close:** Added Quasar `swipeable` prop to left drawer — sidebar can be dismissed with a left swipe gesture on mobile (opening via edge-swipe not feasible due to iOS system gesture conflict)
+
+---
+
 ## [0.9.25]
 
 ### Added

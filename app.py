@@ -2019,7 +2019,7 @@ async def main_page(client: Client):
     header.set_value(False)
 
     # Left drawer (created at page level, hidden initially, populated in main phase)
-    with ui.left_drawer(value=False).props("width=320 breakpoint=768") as drawer:
+    with ui.left_drawer(value=False).props("width=320 breakpoint=768 swipeable") as drawer:
         drawer_content = ui.column().classes("w-full")
 
     # Footer (created at page level, hidden initially, populated in main phase)
