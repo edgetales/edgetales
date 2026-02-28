@@ -5,6 +5,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.25]
+
+### Added
+- **Expanded Chaos Interrupts (10 types):** Researched Mythic GME Event Focus Table, Ironsworn/Starforged oracles, and screenwriting theory (McKee's "Crisis", Aristotle's Peripeteia, Snyder's beat sheet). 6 new interrupt types: `environment_shift` (dramatic environmental change), `remote_event` (off-screen news), `positive_windfall` (lucky break — prevents "chaos = only bad"), `callback` (past decisions echo forward), `dilemma` (forced choice between competing values, no clean option), `ticking_clock` (sudden time pressure). Type-specific narrator instructions for dilemma, ticking_clock, and positive_windfall
+
+### Fixed
+- **Chapter-start scroll bug:** New chapter scrolled to bottom instead of scene start, with bounce effect on manual scroll. Cause: missing scene marker in `_make_chapter_action()` — `render_chat_messages()` returned no `last_scene_id`, so two-step scroll only executed the "scroll to bottom" half. Fix: scene marker inserted as first message element, matching the game-start flow
+
+---
+
 ## [0.9.24] — 2025
 
 ### Added

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Edge Tales - Narrative Solo RPG Engine — NiceGUI Frontend
+Edge Tales - Narrative Solo RPG Engine 
+========================================
+NiceGUI UI and server logic
 """
 
 import asyncio
@@ -1778,7 +1780,10 @@ def _make_chapter_action(game, chapter_msg_key: str):
             g, n = await asyncio.to_thread(start_new_chapter, client, game, config, username)
             loading_dlg.close()
             s["game"] = g; s["pending_burn"] = None; ch = g.chapter_number
-            s["messages"] = [{"role": "assistant", "content": f"*{E['book']} {t(chapter_msg_key, lang, n=ch)}*\n\n{n}"}]
+            s["messages"] = [
+                {"scene_marker": t("game.scene_marker", lang, n=1, location=g.current_location)},
+                {"role": "assistant", "content": f"*{E['book']} {t(chapter_msg_key, lang, n=ch)}*\n\n{n}"},
+            ]
             save_game(g, username, s["messages"], s.get("active_save", "autosave"))
             if s.get("tts_enabled", False): s["pending_tts"] = n
             ui.navigate.reload()

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Narrative RPG Engine — Internationalization (i18n)
+Edge Tales - Narrative Solo RPG Engine 
 ===================================================
 Central module for all UI-facing text, labels, and display strings.
 Supports multiple languages with German as default/fallback.

@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Narrative RPG Engine — Core Module (Framework-Independent)
-==========================================================
-Extracted from rpg_engine.py v5.11 for NiceGUI migration.
-Contains: GameState, game mechanics, AI calls, prompts, parser,
-          save/load, story system, campaign mode.
-No Streamlit dependency.
+Edge Tales - Narrative Solo RPG Engine 
+========================================
+Core Module (Framework-Independent)
 """
 
 import json
@@ -823,10 +820,19 @@ KISHOTENKETSU_DEFAULT_PROBABILITY = 0.50  # For custom tones and "surprise"
 
 # Chaos interrupt types
 CHAOS_INTERRUPT_TYPES = [
+    # Original 4
     "npc_unexpected",      # NPC shows up or acts against expectation
     "threat_escalation",   # A danger escalates or new threat emerges
     "twist",               # Something contradicts what was believed true
     "discovery",           # Unexpected clue, item, or revelation
+    # Solo RPG literature (Mythic GME, Ironsworn/Starforged)
+    "environment_shift",   # Environment changes dramatically (weather, collapse, phenomenon)
+    "remote_event",        # News/signs of important events happening elsewhere
+    "positive_windfall",   # Unexpected good fortune or lucky break
+    "callback",            # A past action or decision has unexpected consequences now
+    # Screenwriting theory (McKee, Aristotle, Snyder)
+    "dilemma",             # Forced choice between competing values — no clean option
+    "ticking_clock",       # Sudden time pressure or deadline changes the dynamic
 ]
 
 # LANGUAGES is imported from i18n.py
@@ -1972,7 +1978,7 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
   risky = uncertain, things could go either way
   desperate = visceral danger, everything on the line
 - If <pacing> suggests "breather", shift to a quieter, reflective tone (campfire moment, quiet conversation, calm before the storm). Still advance the story, but lower intensity.
-- If <chaos_interrupt> is present, weave the specified disruption naturally into the scene
+- If <chaos_interrupt> is present, weave the specified disruption naturally into the scene. For type="dilemma", present the forced choice clearly so the player must decide next turn. For type="ticking_clock", establish the deadline or urgency so it shapes future actions. For type="positive_windfall", make it feel earned by the world, not a gift from nowhere.
 - If <dramatic_question> is present, the scene should address this question (resolve or deepen it)
 - If story_arc structure="kishotenketsu" and phase="ten_twist": focus on perspective SHIFT, not conflict escalation. Something seemingly unrelated recontextualizes everything.
 </rules>
@@ -2627,6 +2633,12 @@ def _pacing_block(game: GameState, chaos_interrupt: Optional[str] = None,
             "threat_escalation": "An existing danger escalates dramatically or a new threat emerges from nowhere",
             "twist": "Something believed to be true is revealed as false, or an ally shows hidden motives",
             "discovery": "An unexpected object, clue, or piece of information falls into the player's hands",
+            "environment_shift": "The environment changes dramatically — sudden weather, structural collapse, fire, flood, unnatural darkness, or a strange phenomenon alters the scene conditions",
+            "remote_event": "News arrives or signs appear that something important happened elsewhere — an ally is in trouble, a faction made a move, or a place the player knows has changed",
+            "positive_windfall": "An unexpected piece of good fortune — a hidden cache, an uninvited ally, a lucky coincidence, or a momentary reprieve from danger",
+            "callback": "A consequence of a past action catches up — a previous decision backfires or pays off, an old debt is called in, or a forgotten detail becomes suddenly relevant",
+            "dilemma": "The scene presents the character with a forced choice between two things they value — there is no clean option, only sacrifice and consequence. Make BOTH options tangible and costly",
+            "ticking_clock": "A sudden time pressure or deadline is introduced — something must happen soon or an opportunity is lost, a threat becomes unstoppable, or a situation becomes irreversible",
         }
         desc = interrupt_descriptions.get(chaos_interrupt, "Something unexpected disrupts the scene")
         parts.append(f'<chaos_interrupt type="{chaos_interrupt}">{desc}</chaos_interrupt>')

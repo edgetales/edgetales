@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Narrative RPG Engine — Voice Module (Framework-Independent)
-===========================================================
-Extracted from rpg_engine.py v5.11 for NiceGUI migration.
-Contains: EdgeTTSBackend, ChatterboxBackend, VoiceEngine (TTS + STT).
-No Streamlit dependency.
+Edge Tales - Narrative Solo RPG Engine 
+========================================
+Voice Module (Framework-Independent)
 """
 
 import re

@@ -108,7 +108,7 @@ The narrative tone reference: *Studio Ghibli, Avatar: The Last Airbender, Harry 
 
 ---
 
-# Screenshots (Desktop)
+# Screenshots (mobile)
 
 **Character creation** — choose genre, tone, archetype, set wishes & boundaries:
 
@@ -120,6 +120,8 @@ The narrative tone reference: *Studio Ghibli, Avatar: The Last Airbender, Harry 
 **Describe your character, then review the AI-generated draft:**
 
 ![Character](docs/character.png)
+
+# Screenshots (desktop)
 ![Character Draft](docs/draft.png)
 
 **The first scene:**
@@ -160,7 +162,7 @@ Every player turn flows through three specialised AI agents, each with a distinc
 Player types action
         │
         ▼
-  ┌─────────────┐
+  ┌──────────────┐
   │    Brain     │  Claude Haiku — fast, cheap
   │              │  Parses: move type, stat, intent,
   └──────┬───────┘  target NPC, position, effect
