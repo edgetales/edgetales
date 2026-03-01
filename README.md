@@ -86,6 +86,10 @@ Stories in EdgeTales have a narrative arc. The engine tracks pacing, tension, an
 
 **Campaign mode** carries your character, stats, NPCs, and world into a new chapter. The AI summarises the previous chapter, your NPC relationships and their memories carry over, and unresolved story threads feed into the new arc. Mechanics reset (health, spirit, supply are restored), but your character's identity and history remain intact. It's the same person, a new adventure.
 
+**Chapters are preserved and readable.** Every completed chapter is automatically archived with its full chat history. In the save slot management panel you'll see a list of your previous chapters — click any of them to re-read the story exactly as it unfolded, including dice results, scene markers, and narrator prose. A *Read Only* banner makes it clear you're viewing the archive rather than the live game. You can export any individual chapter to PDF directly from the chapter view.
+
+The chapter archive is stored per save slot in `users/<username>/saves/chapters/<save_name>/` — one file per chapter (`chapter_1.json`, `chapter_2.json`, ...). Deleting a save slot also removes all associated chapter archives.
+
 **Safety Tools - Wishes & Boundaries**
 
 During character creation, you can tell EdgeTales what you want in your story and what you absolutely don't want. These are saved to your profile and pre-filled automatically next time.
@@ -150,7 +154,12 @@ edgetales/
 ├── users/              # Per-user data (auto-created)
 │   └── <username>/
 │       ├── settings.json   # Personal preferences (TTS, language, dice display)
-│       └── saves/          # Save files
+│       └── saves/          # Save files (one JSON per slot)
+│           └── chapters/
+│               └── <save_name>/    # Chapter archives (one per completed chapter)
+│                   ├── chapter_1.json  # Full chat history + title of chapter 1
+│                   ├── chapter_2.json  # Full chat history + title of chapter 2
+│                   └── ...
 └── logs/               # Application logs (auto-created)
 ```
 
@@ -419,6 +428,7 @@ Environment=ANTHROPIC_API_KEY=sk-ant-YOUR-KEY-HERE
 4. **Grow** - build momentum, forge bonds with NPCs, survive escalating chaos
 5. **Conclude** - when the story reaches its climax, generate an epilogue or keep going
 6. **Continue** - start a new chapter with the same character and world, or begin fresh
+7. **Look back** - re-read any completed chapter from the save slot panel, or export it to PDF
 
 ---
 
