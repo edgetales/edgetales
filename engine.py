@@ -3485,13 +3485,82 @@ def list_saves_with_info(username: str) -> list[dict]:
 
 
 def delete_save(username: str, name: str) -> bool:
-    """Delete a save file. Returns True if deleted, False if not found."""
+    """Delete a save file and its chapter archives. Returns True if deleted, False if not found."""
     path = _get_save_dir(username) / f"{name}.json"
     if path.exists():
         path.unlink()
+        delete_chapter_archives(username, name)
         log(f"[Save] Deleted: {username}/{name}")
         return True
     return False
+
+
+# ===============================================================
+# CHAPTER ARCHIVES (separate files per chapter for read-only replay)
+# ===============================================================
+
+def save_chapter_archive(username: str, save_name: str, chapter_number: int,
+                         chat_messages: list, title: str = "") -> Path:
+    """Archive chat messages for a completed chapter as a separate file."""
+    chapter_dir = _get_save_dir(username) / "chapters" / save_name
+    chapter_dir.mkdir(parents=True, exist_ok=True)
+    data = {
+        "chapter": chapter_number,
+        "title": title or f"Chapter {chapter_number}",
+        "archived_at": datetime.now().isoformat(),
+        "chat_messages": [
+            {k: v for k, v in msg.items() if k not in ("audio_bytes", "audio_format")}
+            for msg in chat_messages if not msg.get("recap")
+        ],
+    }
+    path = chapter_dir / f"chapter_{chapter_number}.json"
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    log(f"[ChapterArchive] Saved ch{chapter_number} for {username}/{save_name} "
+        f"({len(data['chat_messages'])} msgs, title={title!r})")
+    return path
+
+
+def load_chapter_archive(username: str, save_name: str, chapter_number: int) -> tuple[list, str]:
+    """Load archived chat messages for a chapter. Returns (chat_messages, title)."""
+    path = _get_save_dir(username) / "chapters" / save_name / f"chapter_{chapter_number}.json"
+    if not path.exists():
+        return [], ""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data.get("chat_messages", []), data.get("title", "")
+    except (json.JSONDecodeError, OSError) as e:
+        log(f"[ChapterArchive] Load failed ch{chapter_number}: {e}", level="warning")
+        return [], ""
+
+
+def list_chapter_archives(username: str, save_name: str) -> list[dict]:
+    """List available chapter archives for a save. Returns [{"chapter": 1, "title": "..."}, ...]."""
+    chapter_dir = _get_save_dir(username) / "chapters" / save_name
+    if not chapter_dir.exists():
+        return []
+    archives = []
+    for f in chapter_dir.iterdir():
+        m = re.match(r"chapter_(\d+)\.json", f.name)
+        if m:
+            ch_num = int(m.group(1))
+            title = ""
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                title = data.get("title", "")
+            except (json.JSONDecodeError, OSError):
+                pass
+            archives.append({"chapter": ch_num, "title": title})
+    archives.sort(key=lambda x: x["chapter"])
+    return archives
+
+
+def delete_chapter_archives(username: str, save_name: str):
+    """Delete all chapter archives for a save slot."""
+    chapter_dir = _get_save_dir(username) / "chapters" / save_name
+    if chapter_dir.exists():
+        import shutil
+        shutil.rmtree(chapter_dir, ignore_errors=True)
+        log(f"[ChapterArchive] Deleted archives: {username}/{save_name}")
 
 
 # ===============================================================

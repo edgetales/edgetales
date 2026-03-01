@@ -31,6 +31,7 @@ from engine import (
     load_user_config, save_user_config,
     list_users, create_user, delete_user,
     save_game, load_game, list_saves, list_saves_with_info, delete_save, export_story_pdf,
+    save_chapter_archive, load_chapter_archive, list_chapter_archives, delete_chapter_archives,
     get_current_act, setup_file_logging,
     call_setup_brain, start_new_game, start_new_chapter,
     process_turn, process_momentum_burn, call_recap,
@@ -296,7 +297,7 @@ def load_user_settings(username: str) -> None:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def build_roll_data(roll: RollResult, consequences=None, clock_events=None, brain=None) -> dict:
+def build_roll_data(roll: RollResult, consequences=None, clock_events=None, brain=None, chaos_interrupt=None) -> dict:
     lang = L()
     rl = get_result_labels(lang)
     result_label, _ = rl.get(roll.result, ("?", "info"))
@@ -313,6 +314,7 @@ def build_roll_data(roll: RollResult, consequences=None, clock_events=None, brai
         "consequences": consequences or [], "clock_events": clock_events or [],
         "position": brain.get("position", "risky") if brain else "risky",
         "effect": brain.get("effect", "standard") if brain else "standard",
+        "chaos_interrupt": chaos_interrupt or "",
     }
 
 
@@ -890,6 +892,7 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                                         s["active_save"] = n
                                         s["processing"] = False  # Cancel any in-flight turn
                                         s["_turn_gen"] = s.get("_turn_gen", 0) + 1
+                                        s["viewing_chapter"] = None; s["chapter_view_messages"] = None; s["chapter_view_title"] = None
                                         s["messages"].append({"role":"assistant","content":f"*{E['checkmark']} {t('actions.game_loaded', lang, name=loaded.player_name, scene=loaded.scene_count)}*"})
                                         ui.navigate.reload()
                                 return do_load
@@ -913,14 +916,54 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                                         dlg.open()
                                     return do_delete
                                 ui.button(icon="delete_outline", on_click=make_delete(sname)).props("flat round dense size=sm").tooltip(t("actions.delete", lang)).style("color: #ef4444")
+                        # --- Chapter archives (inside active save card) ---
+                        if is_active and chapter > 1:
+                            archived = list_chapter_archives(username, sname)
+                            if archived:
+                                viewing = s.get("viewing_chapter")
+                                ui.separator().classes("my-1")
+                                for arch in archived:
+                                    ch_n = arch["chapter"]
+                                    ch_title = arch.get("title", "")
+                                    is_viewing = (viewing == ch_n)
+                                    lbl = f"{E['book']} {t('chapters.chapter_label', lang, n=ch_n)}"
+                                    if ch_title:
+                                        lbl += f" — {ch_title}"
+                                    def make_view_ch(n=ch_n, sn=sname):
+                                        async def do_view():
+                                            msgs, ttl = load_chapter_archive(username, sn, n)
+                                            if msgs:
+                                                s["viewing_chapter"] = n
+                                                s["chapter_view_messages"] = msgs
+                                                s["chapter_view_title"] = ttl
+                                                ui.navigate.reload()
+                                            else:
+                                                ui.notify(t("chapters.not_found", lang), type="warning")
+                                        return do_view
+                                    btn = ui.button(lbl, on_click=make_view_ch(ch_n)).props("flat dense size=sm no-caps").classes("w-full text-left text-xs")
+                                    if is_viewing:
+                                        btn.style("color: var(--accent-light); border: 1px solid var(--accent-light)")
+                                    else:
+                                        btn.style("color: var(--text-secondary)")
+                                # Current chapter (not clickable when active)
+                                cur_lbl = f"{E['book']} {t('chapters.chapter_label', lang, n=chapter)} {E['check']}"
+                                if viewing:
+                                    def back_to_current():
+                                        s["viewing_chapter"] = None; s["chapter_view_messages"] = None; s["chapter_view_title"] = None
+                                        ui.navigate.reload()
+                                    ui.button(cur_lbl, on_click=back_to_current).props("flat dense size=sm no-caps").classes("w-full text-left text-xs")
+                                else:
+                                    ui.label(cur_lbl).classes("text-xs w-full").style("color: #4ade80; padding: 0.25rem 0.5rem")
         else:
             ui.label(t("actions.no_saves", lang)).classes("text-xs text-center w-full").style("color: var(--text-secondary)")
 
         # --- New game ---
         ui.separator().classes("my-1")
         async def new_game():
+            delete_chapter_archives(username, s.get("active_save", "autosave"))
             s["game"]=None;s["creation"]=None;s["pending_burn"]=None;s["messages"]=[];s["active_save"]="autosave"
             s["processing"]=False;s["_turn_gen"]=s.get("_turn_gen",0)+1
+            s["viewing_chapter"]=None;s["chapter_view_messages"]=None
             ui.navigate.reload()
         ui.button(f"{E['trash']} {t('actions.new_game', lang)}", on_click=new_game, color="red").props("flat").classes("w-full")
 
@@ -939,6 +982,7 @@ def render_sidebar_actions(on_switch_user=None) -> None:
     async def switch():
         s["current_user"]="";s["game"]=None;s["creation"]=None;s["messages"]=[];s["user_config_loaded"]=False;s["active_save"]="autosave"
         s["processing"]=False;s["_turn_gen"]=s.get("_turn_gen",0)+1
+        s["viewing_chapter"]=None;s["chapter_view_messages"]=None;s["chapter_view_title"]=None
         if on_switch_user:
             await on_switch_user()
         else:
@@ -1197,8 +1241,10 @@ def render_help() -> None:
 def render_chat_messages(container) -> Optional[str]:
     """Render chat history. Returns the ID of the last scene marker (for scroll targeting)."""
     s = S()
+    viewing = s.get("viewing_chapter")
+    messages = s.get("chapter_view_messages", []) if viewing else s.get("messages", [])
     last_scene_marker_id = None
-    for i, msg in enumerate(s.get("messages", [])):
+    for i, msg in enumerate(messages):
         if msg.get("scene_marker"):
             marker_id = f"msg-{i}"
             last_scene_marker_id = marker_id
@@ -1236,11 +1282,14 @@ def render_dice_display(rd: dict) -> None:
         pl = get_position_labels(lang)
         ph = f" {E['dot']} {pl.get(pos,'')}" if pos and pos!="risky" else ""
         match_txt = f" {E['dot']} {t('dice.match_short', lang)}" if is_match else ""
-        ui.html(f'<div class="dice-simple {severity}">{result_label} {E["dot"]} {stat_label}{ph}{match_txt}</div>').classes("w-full")
+        chaos_txt = f" {E['dot']} {t('dice.chaos_short', lang)}" if rd.get("chaos_interrupt") else ""
+        ui.html(f'<div class="dice-simple {severity}">{result_label} {E["dot"]} {stat_label}{ph}{match_txt}{chaos_txt}</div>').classes("w-full")
     elif setting == 2:  # Detailed
         header = f"{E['dice']} {result_label} \u2014 {move_label} ({stat_label})"
         if is_match:
             header += f" {E['comet']}"
+        if rd.get("chaos_interrupt"):
+            header += f" {E['dot']} {t('dice.chaos_short', lang)}"
         with ui.expansion(header).classes("w-full"):
             ui.markdown(t("dice.action", lang, d1=rd['d1'], d2=rd['d2'], stat_value=rd['stat_value'], score=rd['action_score'], c1=rd['c1'], c2=rd['c2']))
             if is_match:
@@ -1653,7 +1702,8 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
             ll=game.session_log[-1] if game.session_log else {}
             roll_data=build_roll_data(roll, consequences=ll.get("consequences",[]),
                 clock_events=ll.get("clock_events",[]),
-                brain={"position":ll.get("position","risky"),"effect":ll.get("effect","standard")})
+                brain={"position":ll.get("position","risky"),"effect":ll.get("effect","standard")},
+                chaos_interrupt=ll.get("chaos_interrupt",""))
         s["messages"].append({"role":"assistant","content":narration,"roll_data":roll_data})
         save_game(game,username,s["messages"],s.get("active_save","autosave"))
         # Render AI response
@@ -1692,6 +1742,11 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
             s["pending_burn"]=burn_info; ui.navigate.reload()
         else:
             await do_tts(narration, msg_col)
+            # Reload if game state now requires special UI (epilogue offer, game over)
+            # These cards only render on page load, so a reload is needed to show them.
+            bp = game.story_blueprint or {}
+            if game.game_over or (bp.get("story_complete") and not game.epilogue_dismissed and not game.epilogue_shown):
+                ui.navigate.reload()
     except anthropic.AuthenticationError:
         try: spinner.delete()
         except Exception: pass
@@ -1738,7 +1793,7 @@ def render_momentum_burn() -> bool:
                     s["game"]=game;s["pending_burn"]=None
                     ur=RollResult(roll.d1,roll.d2,roll.c1,roll.c2,roll.stat_name,roll.stat_value,roll.action_score,nr,roll.move,getattr(roll,"match",roll.c1==roll.c2))
                     ll=game.session_log[-1] if game.session_log else {}
-                    rd=build_roll_data(ur,consequences=ll.get("consequences",[]),clock_events=ll.get("clock_events",[]),brain=bd["brain"])
+                    rd=build_roll_data(ur,consequences=ll.get("consequences",[]),clock_events=ll.get("clock_events",[]),brain=bd["brain"],chaos_interrupt=ll.get("chaos_interrupt",""))
                     msgs=s["messages"]
                     if msgs and msgs[-1].get("role")=="assistant":
                         msgs[-1]={"role":"assistant","content":f"*{E['fire']} {t('momentum.gathering', lang)}*\n\n{narration}",
@@ -1779,6 +1834,18 @@ def _make_chapter_action(game, chapter_msg_key: str):
             client = anthropic.Anthropic(api_key=s["api_key"])
             g, n = await asyncio.to_thread(start_new_chapter, client, game, config, username)
             loading_dlg.close()
+            # Archive the just-completed chapter's messages before replacing them
+            completed_ch = g.chapter_number - 1
+            ch_title = ""
+            if g.campaign_history:
+                ch_title = g.campaign_history[-1].get("title", "")
+            active_save = s.get("active_save", "autosave")
+            try:
+                save_chapter_archive(username, active_save, completed_ch, s["messages"], title=ch_title)
+            except Exception as arch_e:
+                log(f"[ChapterArchive] Failed to archive chapter {completed_ch}: {arch_e}", level="warning")
+            # Clear chapter viewing state if active
+            s["viewing_chapter"] = None; s["chapter_view_messages"] = None
             s["game"] = g; s["pending_burn"] = None; ch = g.chapter_number
             s["messages"] = [
                 {"scene_marker": t("game.scene_marker", lang, n=1, location=g.current_location)},
@@ -1793,7 +1860,9 @@ def _make_chapter_action(game, chapter_msg_key: str):
             ui.notify(t("game.error", lang, error=e), type="negative")
 
     def full_new():
+        delete_chapter_archives(s["current_user"], s.get("active_save", "autosave"))
         s["game"] = None; s["creation"] = None; s["messages"] = []; s["active_save"] = "autosave"
+        s["viewing_chapter"] = None; s["chapter_view_messages"] = None
         ui.navigate.reload()
 
     return new_ch, full_new
@@ -1838,6 +1907,7 @@ def render_epilogue() -> bool:
                         client=anthropic.Anthropic(api_key=s["api_key"])
                         g, epilogue_text = await asyncio.to_thread(generate_epilogue, client, game, config)
                         s["game"] = g
+                        s["messages"].append({"scene_marker": f"{E['star']} {t('epilogue.marker', lang)}"})
                         s["messages"].append({"role":"assistant","content":f"*{E['star']} {t('epilogue.marker', lang)}*\n\n{epilogue_text}"})
                         save_game(g, username, s["messages"], s.get("active_save","autosave"))
                         if s.get("tts_enabled", False): s["pending_tts"] = epilogue_text
@@ -2019,7 +2089,7 @@ async def main_page(client: Client):
     header.set_value(False)
 
     # Left drawer (created at page level, hidden initially, populated in main phase)
-    with ui.left_drawer(value=False).props("width=320 breakpoint=768 swipeable") as drawer:
+    with ui.left_drawer(value=False).props("width=320 breakpoint=768") as drawer:
         drawer_content = ui.column().classes("w-full")
 
     # Footer (created at page level, hidden initially, populated in main phase)
@@ -2186,30 +2256,73 @@ async def main_page(client: Client):
             chat_container = ui.column().classes("chat-scroll w-full")
             s["_chat_container"] = chat_container  # Store reference for sidebar actions (recap etc.)
             with chat_container:
+                # Chapter viewing banner
+                viewing_chapter = s.get("viewing_chapter")
+                if viewing_chapter:
+                    ch_title = s.get("chapter_view_title", "")
+                    if ch_title:
+                        banner_text = t("chapters.viewing_title", L(), n=viewing_chapter, title=ch_title)
+                    else:
+                        banner_text = t("chapters.viewing", L(), n=viewing_chapter)
+                    with ui.card().classes("w-full mb-2").style(
+                        "background: rgba(106,76,147,0.15); border: 1px solid var(--accent); border-radius: 8px"):
+                        with ui.row().classes("w-full items-center justify-between"):
+                            ui.label(banner_text).classes("text-sm font-semibold")
+                            def _exit_view():
+                                s["viewing_chapter"] = None; s["chapter_view_messages"] = None; s["chapter_view_title"] = None
+                                ui.navigate.reload()
+                            ui.button(t("chapters.back", L()), icon="arrow_back", on_click=_exit_view).props("flat dense size=sm no-caps").classes("text-xs")
+
                 last_scene_id = render_chat_messages(chat_container)
 
-                if render_momentum_burn():
-                    footer.set_value(False)
-                    await _scroll_chat_bottom(delay_ms=300)
-                    return
-                if render_game_over():
-                    footer.set_value(False)
-                    await _scroll_chat_bottom(delay_ms=300)
-                    return
-                if render_epilogue():
-                    footer.set_value(False)
-                    await _scroll_chat_bottom(delay_ms=300)
-                    return
-
-                game = s.get("game"); creation = s.get("creation")
-                if game is None or creation is not None:
-                    if render_creation_flow(chat_container):
+                # Skip game flow when viewing archived chapter
+                if not viewing_chapter:
+                    if render_momentum_burn():
                         footer.set_value(False)
+                        await _scroll_chat_bottom(delay_ms=300)
+                        return
+                    if render_game_over():
+                        footer.set_value(False)
+                        await _scroll_chat_bottom(delay_ms=300)
+                        return
+                    if render_epilogue():
+                        footer.set_value(False)
+                        await _scroll_chat_bottom(delay_ms=300)
                         return
 
-        # --- Populate footer (input bar) ---
+                    game = s.get("game"); creation = s.get("creation")
+                    if game is None or creation is not None:
+                        if render_creation_flow(chat_container):
+                            footer.set_value(False)
+                            return
+
+        # --- Populate footer (input bar or chapter view bar) ---
+        viewing_chapter = s.get("viewing_chapter")
         game = s.get("game")
-        if game and not game.game_over and chat_container:
+        if viewing_chapter and chat_container:
+            # Chapter view footer: export + back to game
+            footer_content.clear()
+            with footer_content:
+                with ui.row().classes("w-full items-center justify-center gap-3 rpg-input-bar").style("padding: 0.5rem 1rem"):
+                    ch_title = s.get("chapter_view_title", "")
+                    if ch_title:
+                        ui.label(ch_title).classes("text-sm").style("color: var(--text-secondary); opacity: 0.7")
+                    def _do_chapter_export():
+                        ch_msgs = s.get("chapter_view_messages", [])
+                        g = s.get("game")
+                        if g and ch_msgs:
+                            pdf_bytes = export_story_pdf(g, ch_msgs, lang=L())
+                            ch_n = s.get("viewing_chapter", 0)
+                            ui.download(pdf_bytes, f"{g.player_name}_Chapter_{ch_n}.pdf")
+                    ui.button(f"{E['book']} {t('chapters.export', L())}", on_click=_do_chapter_export).props("flat dense no-caps").classes("text-sm")
+                    def _exit_view_footer():
+                        s["viewing_chapter"] = None; s["chapter_view_messages"] = None; s["chapter_view_title"] = None
+                        ui.navigate.reload()
+                    ui.button(f"{t('chapters.back', L())}", icon="arrow_back", on_click=_exit_view_footer).props("flat dense no-caps").classes("text-sm")
+            footer.set_value(True)
+            # Trigger footer alignment (same as normal footer)
+            ui.run_javascript('setTimeout(() => { window._rpgAlignFooter && window._rpgAlignFooter(); }, 200)')
+        elif game and not game.game_over and chat_container:
             footer_content.clear()
             with footer_content:
                 # STT status line (hidden by default, shown during recording/transcription)

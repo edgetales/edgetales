@@ -5,6 +5,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.27]
+
+### Added
+- **Chapter Archives:** Separate JSON files per chapter (`chapters/<save>/<chapter_N>.json`) preserve full chat history when starting a new chapter. Read-only replay via sidebar inside the active save card — vertical list with "Chapter N — Title". Viewing mode renders archived messages with a banner + "Back to game" button, disabled input, and per-chapter PDF export. Cleanup on save deletion, new game, and full restart
+- **Chaos Interrupt UI Indicator:** `⚡ Chaos!` shown in dice display line (simple + detailed mode) alongside existing match/position indicators. CSS `white-space: nowrap; overflow: hidden; text-overflow: ellipsis` on `.dice-simple` prevents line wrapping on narrow screens
+- **Epilogue Scene Marker:** Epilogue now gets a proper `scene_marker` entry before the narration message, enabling two-step scroll targeting and visual separation in chat
+- **Chat Bottom Padding:** `padding-bottom: 5rem` on `.chat-scroll` across all three breakpoints (desktop, tablet, small mobile) prevents last chat content from hiding behind the fixed footer
+
+### Fixed
+- **Critical: Epilogue/Game-Over card never appeared during gameplay.** `render_epilogue()` and `render_game_over()` only ran on page load, but `process_player_input()` never triggered a reload after `story_complete` or `game_over` was set. Fix: auto-reload after TTS completes when these flags are newly active
+- **Closure bug in chapter archive buttons:** `sname` from outer save-list loop was captured by reference, causing chapter loads to search in the wrong save directory. Fix: capture via default argument `sn=sname`
+
+---
+
 ## [0.9.26]
 
 ### Improved

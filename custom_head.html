@@ -50,7 +50,7 @@ input, textarea, select, .q-field__native, .q-field__input { font-size: 16px !im
 .q-expansion-item .q-item__label { color: var(--text-primary); font-size: 0.9rem; padding-left: 1.8em; text-indent: -1.8em; }
 .q-separator { background: var(--border) !important; }
 /* --- Layout --- */
-.chat-scroll { padding: 1rem; flex: 1; }
+.chat-scroll { padding: 1rem; padding-bottom: 5rem; flex: 1; }
 .choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; width: 100%; }
 @media (min-width: 768px) { .choice-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 /* --- Choice buttons: subtle outline, min touch target --- */
@@ -81,7 +81,7 @@ input, textarea, select, .q-field__native, .q-field__input { font-size: 16px !im
 .track-fill.chaos { background: linear-gradient(90deg, #737373, #dc2626); }
 .track-fill.progress { background: linear-gradient(90deg, var(--accent), var(--accent-light)); }
 /* --- Dice display --- */
-.dice-simple { text-align: right; font-size: 0.8em; opacity: 0.8; margin-top: 0.5em; }
+.dice-simple { text-align: right; font-size: 0.8em; opacity: 0.8; margin-top: 0.5em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* --- Audio player (ui.audio) dark mode — scoped to chat area --- */
 .chat-scroll audio, .chat-msg audio { filter: invert(1) hue-rotate(180deg); opacity: 0.85; width: 100%; min-height: 40px; border-radius: 8px; }
 .dice-simple.success { color: #4ade80; } .dice-simple.warning { color: var(--accent-light); } .dice-simple.error { color: #f87171; }
@@ -126,7 +126,7 @@ input, textarea, select, .q-field__native, .q-field__input { font-size: 16px !im
     .stat-label { font-size: 0.75rem; }
     .stat-item { padding: 0.35rem 0.5rem; }
     /* --- Chat scroll: less horizontal padding --- */
-    .chat-scroll { padding: 0.5rem; }
+    .chat-scroll { padding: 0.5rem; padding-bottom: 5rem; }
     /* --- Scene markers: slightly smaller --- */
     .scene-marker { font-size: 0.8em; }
     /* --- Footer input bar: tighter on mobile --- */
@@ -150,6 +150,6 @@ input, textarea, select, .q-field__native, .q-field__input { font-size: 16px !im
     .choice-grid { gap: 0.35rem; }
     .choice-btn.q-btn { font-size: 0.8rem; min-height: 44px; padding: 0.4rem 0.5rem; }
     .chat-msg.user { padding: 0.4rem 0.6rem; border-radius: 8px; }
-    .chat-scroll { padding: 0.35rem; }
+    .chat-scroll { padding: 0.35rem; padding-bottom: 5rem; }
 }
 </style>

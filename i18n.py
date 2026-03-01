@@ -356,10 +356,19 @@ _STRINGS = {
         "epilogue.chapter_msg": "Kapitel {n}...",
         "epilogue.marker": "Epilog",
 
+        # Chapter Archives
+        "chapters.viewing": "\U0001F4D6 Kapitel {n}",
+        "chapters.viewing_title": "\U0001F4D6 Kapitel {n}: {title}",
+        "chapters.back": "Zur\u00fcck zum Spiel",
+        "chapters.export": "Kapitel exportieren",
+        "chapters.not_found": "Kapitelarchiv nicht gefunden",
+        "chapters.chapter_label": "Kapitel {n}",
+
         # Dice Display
         "dice.action": "**Aktion:** {d1}+{d2}+{stat_value} = **{score}** vs **{c1}|{c2}**",
         "dice.match": "\u2604\uFE0F **Schicksalswurf!** Beide Herausforderungsw\u00fcrfel zeigen {value}!",
         "dice.match_short": "\u2604\uFE0F Schicksalswurf!",
+        "dice.chaos_short": "\u26A1 Chaos!",
         "dice.position": "**Position:** {position} \u2014 **Effekt:** {effect}",
         "dice.consequences": "**Konsequenzen:** {text}",
 
@@ -645,10 +654,19 @@ _STRINGS = {
         "epilogue.chapter_msg": "Chapter {n}...",
         "epilogue.marker": "Epilogue",
 
+        # Chapter Archives
+        "chapters.viewing": "\U0001F4D6 Chapter {n}",
+        "chapters.viewing_title": "\U0001F4D6 Chapter {n}: {title}",
+        "chapters.back": "Back to game",
+        "chapters.export": "Export chapter",
+        "chapters.not_found": "Chapter archive not found",
+        "chapters.chapter_label": "Chapter {n}",
+
         # Dice Display
         "dice.action": "**Action:** {d1}+{d2}+{stat_value} = **{score}** vs **{c1}|{c2}**",
         "dice.match": "\u2604\uFE0F **Fateful Roll!** Both challenge dice show {value}!",
         "dice.match_short": "\u2604\uFE0F Fateful Roll!",
+        "dice.chaos_short": "\u26A1 Chaos!",
         "dice.position": "**Position:** {position} \u2014 **Effect:** {effect}",
         "dice.consequences": "**Consequences:** {text}",
 
