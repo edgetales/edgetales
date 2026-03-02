@@ -5,6 +5,34 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.28]
+
+### Added
+- **Savegame Diagnostics:** Three new diagnostic fields in session_log for post-game analysis:
+  - `director_trigger`: Why the Director ran (`"miss"`, `"chaos"`, `"new_npcs"`, `"reflection:Name"`, `"phase:climax"`, `"interval"`) — or absent if skipped
+  - `npc_activation`: Per-NPC activation details (`{score, reasons[], status}`) showing exactly why each NPC was/wasn't included in the prompt
+  - `_score_debug` on memory observations: How the importance score was derived (`"direct:terrified=7"`, `"de2en:verzweiflung→devastated=9"`, `"+event:death≥7"`)
+- **Director fills empty NPC profiles:** Mid-game NPCs created via `<new_npcs>` (which lack agenda/instinct) now get `needs_profile="true"` flag in `<reflect>` tags. Director suggests agenda + instinct on first reflection. Applied only when fields are empty — never overwrites existing data
+- **Director dual-tone system:** Reflections now carry two emotional fields: `tone` (1-3 word narrative compound like `"protective_guilt"`, `"reluctant_trust"`) for story arc nuance, and `tone_key` (single word from fixed enum) for machine-readable classification. Director prompt provides explicit guidance with examples for evolving emotional arcs across reflections
+- **Reflect tag `last_tone` attribute:** Director receives the previous reflection's emotional tone in `<reflect>` tags, enabling deliberate emotional arc evolution (e.g. `protective_guilt` → `complicit_resignation` instead of repeating `guilty` → `guilty`)
+
+### Improved
+- **Importance scoring robustness:** `score_importance()` now handles compound phrases (`"Angst und Verzweiflung"`), snake_case (`"moral_reckoning"`), and German emotional words via `_EMOTION_DE_EN` mapping (~65 entries). Splits on `und`/`and`/`gemischt mit`/`_`/`,`, scores each token independently, takes highest. Savegame analysis showed 95% of observations stuck at default importance 3 — now 68% score correctly
+- **Narrator emotional_weight format enforcement:** Both dialog and action prompts now instruct `"emotional_weight": "ONE English word: neutral|curious|wary|angry|..."` instead of free-form `"emotion"`. Prevents German compound phrases and mixed-language weights
+- **Director anti-echo reflections:** `<reflect>` tags now include `last_reflection="..."` attribute (max 200 chars, escaped) and `last_tone="..."`. Task instruction: "Write a NEW insight that builds on, deepens, or contradicts it. Do NOT repeat the same theme." Savegame analysis showed 6-8 near-identical reflections per NPC
+- **NPC keyword stopwords — library-based:** Replaced 72 hardcoded DE+EN stopwords with `stop-words` library (1,584 words DE+EN combined, 22× coverage). Language-aware: `_get_keyword_stopwords("French")` dynamically loads and caches French stopwords alongside DE+EN base. Supports all 18 EdgeTales narration languages except Thai. Graceful fallback to built-in set if library not installed
+- **Reflection scene tracking:** Reflections now store `game.scene_count` instead of `None`, enabling proper recency scoring in `retrieve_memories()`
+- **Brain null-safety:** `call_brain()` sanitizes all string fields after JSON parsing — `null` values become empty strings. Prevents `TypeError` in downstream joins and concatenations
+
+### Changed
+- `_should_call_director()` returns reason string (`Optional[str]`) instead of `bool` — enables `director_trigger` logging without additional logic
+- `activate_npcs_for_prompt()` returns 3-tuple `(activated, mentioned, activation_debug)` instead of 2-tuple
+- `score_importance()` accepts optional `debug=True` parameter → returns `(score, explanation)` tuple
+- `_auto_generate_keywords(npc, narration_lang="")` accepts optional narration language for language-aware stopword filtering
+- **New dependency:** `stop-words` (`pip install stop-words`) — zero-dependency, 156KB, lazy-loaded per language
+
+---
+
 ## [0.9.27]
 
 ### Added

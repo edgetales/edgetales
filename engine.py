@@ -33,6 +33,13 @@ from reportlab.platypus import (
 # Emoji/Unicode constants & languages — now defined in i18n.py
 from i18n import E, LANGUAGES, t as _t
 
+# Stop words library for NPC keyword filtering (zero-dependency, 34+ languages)
+try:
+    from stop_words import get_stop_words as _lib_get_stop_words
+    _HAS_STOP_WORDS_LIB = True
+except ImportError:
+    _HAS_STOP_WORDS_LIB = False
+
 # ===============================================================
 # CONFIGURATION
 # ===============================================================
@@ -83,6 +90,57 @@ IMPORTANCE_MAP = {
     # Critical importance (life-changing events)
     "betrayed": 9, "transformed": 10, "devastated": 9, "euphoric": 8,
     "sworn": 8, "sacrificial": 10, "reborn": 10,
+}
+
+# DE → EN mapping for emotional_weight normalization (covers common Narrator outputs)
+_EMOTION_DE_EN = {
+    # Fear/anxiety family
+    "angst": "terrified", "furcht": "terrified", "panik": "terrified",
+    "ängstlich": "nervous", "verängstigt": "terrified", "unheimlich": "uneasy",
+    "besorgt": "concerned", "beunruhigt": "concerned", "beunruhigend": "uneasy",
+    "nervös": "nervous", "ominös": "uneasy", "bedrohung": "suspicious",
+    "bedrohlich": "suspicious",
+    # Anger family
+    "wut": "furious", "zorn": "furious", "wütend": "angry",
+    # Sadness/despair family
+    "verzweiflung": "devastated", "verzweifelt": "devastated",
+    "trauer": "grief", "schuld": "guilty", "schuldgefühl": "guilty",
+    "scham": "guilty", "resignation": "conflicted", "resigniert": "conflicted",
+    # Trust/loyalty family
+    "vertrauen": "trusting", "loyalität": "loyal", "loyal": "loyal",
+    "pflicht": "loyal", "hingabe": "devoted",
+    # Betrayal/conflict family
+    "verrat": "betrayed", "misstrauen": "suspicious", "konflikt": "conflicted",
+    # Hope/relief family
+    "hoffnung": "hopeful", "erleichterung": "grateful",
+    "dankbar": "grateful", "dankbarkeit": "grateful",
+    # Respect/awe family
+    "respekt": "impressed", "ehrfurcht": "awed", "bewunderung": "awed",
+    # Protective/determined family
+    "entschlossenheit": "defiant", "entschlossen": "defiant",
+    "beschützerisch": "protective", "schützend": "protective",
+    # Shock/confusion family
+    "schock": "terrified", "erschüttert": "terrified",
+    "verwirrung": "confused", "verwirrt": "confused",
+    "desorientierung": "confused",
+    # Detachment family
+    "gleichgültigkeit": "indifferent", "kälte": "indifferent",
+    "kalt": "indifferent", "neutral": "neutral",
+    # Intensity markers (map to their emotional core)
+    "verzweifelte": "devastated", "existenzielle": "terrified",
+    "tiefe": "devoted", "wachsende": "concerned",
+    "dringend": "concerned", "dringlich": "concerned",
+    "tragisch": "grief", "bitter": "disappointed",
+    # English words that appear but aren't in IMPORTANCE_MAP directly
+    "desperation": "devastated", "dread": "terrified", "horror": "terrified",
+    "triumph": "euphoric", "duty": "loyal", "shame": "guilty",
+    "guilt": "guilty", "loyalty": "loyal", "resigned": "conflicted",
+    "realization": "conflicted", "recognition": "impressed",
+    "solidarity": "loyal", "respect": "impressed", "doubt": "suspicious",
+    "hunger": "defiant", "victory": "euphoric", "redemption": "devoted",
+    "rupture": "betrayed", "reckoning": "conflicted",
+    "protective": "protective", "defiance": "defiant",
+    "panic": "terrified", "determination": "defiant",
 }
 
 # Keywords that boost importance when found in event text
@@ -485,18 +543,60 @@ def _reactivate_npc(npc: dict, reason: str = ""):
 # NPC MEMORY SYSTEM — Importance, Retrieval, Consolidation
 # ===============================================================
 
-def score_importance(emotional_weight: str, event_text: str = "") -> int:
+def score_importance(emotional_weight: str, event_text: str = "",
+                     debug: bool = False):
     """Score the importance of a memory entry (1-10).
-    Uses emotional_weight as primary signal, with keyword boosts from event text."""
-    base = IMPORTANCE_MAP.get(emotional_weight.lower().strip(), 3)
+    Uses emotional_weight as primary signal, with keyword boosts from event text.
+    Handles compound phrases, snake_case, and German emotional words.
+    If debug=True, returns (score, explanation_string) instead of just score."""
+    raw = emotional_weight.lower().strip()
+    debug_info = ""
+
+    # Direct hit — fast path
+    if raw in IMPORTANCE_MAP:
+        base = IMPORTANCE_MAP[raw]
+        debug_info = f"direct:{raw}={base}"
+    else:
+        # Split compound phrases into individual tokens
+        import re
+        tokens = re.split(r'[_/,;:\s]+|(?:\s+und\s+)|(?:\s+and\s+)|'
+                          r'(?:\s+gemischt\s+mit\s+)|(?:\s+vermischt\s+mit\s+)|'
+                          r'(?:\s+mixed\s+with\s+)', raw)
+        tokens = [t.strip() for t in tokens if len(t.strip()) >= 3]
+
+        best = 3  # default
+        best_token = "default"
+        for token in tokens:
+            # Try direct match
+            if token in IMPORTANCE_MAP:
+                if IMPORTANCE_MAP[token] > best:
+                    best = IMPORTANCE_MAP[token]
+                    best_token = f"token:{token}={best}"
+                continue
+            # Try DE→EN mapping
+            mapped = _EMOTION_DE_EN.get(token)
+            if mapped and mapped in IMPORTANCE_MAP:
+                if IMPORTANCE_MAP[mapped] > best:
+                    best = IMPORTANCE_MAP[mapped]
+                    best_token = f"de2en:{token}→{mapped}={best}"
+        base = best
+        debug_info = best_token
+
     # Keyword boost from event text
     if event_text:
         event_lower = event_text.lower()
         for min_score, keywords in IMPORTANCE_BOOST_KEYWORDS.items():
-            if any(kw in event_lower for kw in keywords):
+            matched_kw = [kw for kw in keywords if kw in event_lower]
+            if matched_kw:
+                if min_score > base:
+                    debug_info += f"+event:{matched_kw[0]}≥{min_score}"
                 base = max(base, min_score)
                 break
-    return min(10, base)
+
+    result = min(10, base)
+    if debug:
+        return result, debug_info
+    return result
 
 
 def retrieve_memories(npc: dict, context_text: str = "", max_count: int = 5,
@@ -618,24 +718,86 @@ def _consolidate_memory(npc: dict):
             f"{len(kept_reflections)} reflections, {len(kept_observations)} observations)")
 
 
-def _auto_generate_keywords(npc: dict) -> list[str]:
+# --- NPC keyword stopwords (library-based, language-aware) ---
+# Maps narration language English names (LANGUAGES dict values) to ISO 639-1 codes
+_NARRATION_LANG_TO_ISO = {
+    "German": "de", "English": "en", "Spanish": "es", "French": "fr",
+    "Portuguese": "pt", "Italian": "it", "Dutch": "nl", "Russian": "ru",
+    "Chinese (Mandarin)": "zh", "Japanese": "ja", "Korean": "ko",
+    "Arabic": "ar", "Hindi": "hi", "Indonesian": "id", "Turkish": "tr",
+    "Polish": "pl", "Vietnamese": "vi", "Swedish": "sv", "Danish": "da",
+    # Thai not available in stop-words library — falls back to EN-only
+}
+
+# Cached stopword sets per ISO code
+_stopwords_cache: dict[str, frozenset] = {}
+
+def _load_stopwords(iso_code: str) -> frozenset:
+    """Load stopwords for a single ISO language code (cached)."""
+    if iso_code in _stopwords_cache:
+        return _stopwords_cache[iso_code]
+    if _HAS_STOP_WORDS_LIB:
+        try:
+            words = frozenset(_lib_get_stop_words(iso_code))
+            _stopwords_cache[iso_code] = words
+            return words
+        except Exception:
+            pass
+    _stopwords_cache[iso_code] = frozenset()
+    return frozenset()
+
+# Base stopwords: DE + EN (loaded once at import time)
+_BASE_KEYWORD_STOPWORDS: frozenset = frozenset()
+if _HAS_STOP_WORDS_LIB:
+    _BASE_KEYWORD_STOPWORDS = _load_stopwords("de") | _load_stopwords("en")
+else:
+    # Fallback if stop-words library not installed
+    _BASE_KEYWORD_STOPWORDS = frozenset({
+        "der", "die", "das", "den", "dem", "des", "ein", "eine", "einer", "einem",
+        "einen", "eines", "mit", "und", "oder", "für", "von", "vor", "bei", "aus",
+        "auf", "nach", "über", "unter", "aber", "als", "wie", "nicht", "sich",
+        "ist", "sind", "hat", "war", "wird", "kann", "sein", "ihre", "ihr",
+        "noch", "nur", "auch", "schon", "sehr", "dann", "wenn", "dass",
+        "the", "and", "for", "with", "from", "that", "this", "was", "are",
+        "has", "had", "not", "but", "his", "her", "its", "who", "whom",
+        "will", "can", "may", "been", "were", "into", "than", "then",
+    })
+
+def _get_keyword_stopwords(narration_lang: str = "") -> frozenset:
+    """Get combined stopwords for NPC keyword filtering.
+    Always includes DE+EN base. If narration_lang is provided (e.g. 'French'),
+    that language's stopwords are included too (cached after first load).
+    narration_lang: English name from LANGUAGES dict values."""
+    if not narration_lang or narration_lang in ("German", "English"):
+        return _BASE_KEYWORD_STOPWORDS
+    iso = _NARRATION_LANG_TO_ISO.get(narration_lang)
+    if not iso:
+        return _BASE_KEYWORD_STOPWORDS
+    return _BASE_KEYWORD_STOPWORDS | _load_stopwords(iso)
+
+
+def _auto_generate_keywords(npc: dict, narration_lang: str = "") -> list[str]:
     """Auto-generate activation keywords for an NPC from their data.
-    Includes name parts, aliases, description keywords, and agenda keywords."""
+    Includes name parts, aliases, description keywords, and agenda keywords.
+    narration_lang: English name (e.g. 'French') for language-aware stopword filtering."""
+    stopwords = _get_keyword_stopwords(narration_lang)
     keywords = set()
 
     # Name parts (split compound names)
     name = npc.get("name", "")
     for part in name.split():
-        if len(part) >= 3:
-            keywords.add(part.lower())
+        low = part.lower()
+        if len(low) >= 3 and low not in stopwords:
+            keywords.add(low)
     keywords.add(name.lower())
 
     # Aliases
     for alias in npc.get("aliases", []):
         keywords.add(alias.lower())
         for part in alias.split():
-            if len(part) >= 3:
-                keywords.add(part.lower())
+            low = part.lower()
+            if len(low) >= 3 and low not in stopwords:
+                keywords.add(low)
 
     # Key nouns from description (simple extraction: capitalize words, role words)
     desc = npc.get("description", "")
@@ -643,7 +805,8 @@ def _auto_generate_keywords(npc: dict) -> list[str]:
         # Extract likely-important words (capitalized, role-like, location-like)
         for word in desc.split():
             clean = word.strip(".,;:!?\"'()-").lower()
-            if len(clean) >= 4 and clean[0].isupper() if word[0:1].isupper() else False:
+            if (len(clean) >= 4 and clean not in stopwords
+                    and (clean[0].isupper() if word[0:1].isupper() else False)):
                 keywords.add(clean)
 
     # Agenda keywords
@@ -651,7 +814,7 @@ def _auto_generate_keywords(npc: dict) -> list[str]:
     if agenda:
         for word in agenda.split():
             clean = word.strip(".,;:!?\"'()-").lower()
-            if len(clean) >= 5:
+            if len(clean) >= 5 and clean not in stopwords:
                 keywords.add(clean)
 
     return list(keywords)[:20]  # Cap at 20 keywords
@@ -682,20 +845,22 @@ def _ensure_npc_memory_fields(npc: dict):
 # NPC KEYWORD-BASED CONTEXT ACTIVATION
 # ===============================================================
 
-def activate_npcs_for_prompt(game, brain: dict, player_input: str) -> tuple[list[dict], list[dict]]:
+def activate_npcs_for_prompt(game, brain: dict, player_input: str) -> tuple[list[dict], list[dict], dict]:
     """Decide which NPCs get full context vs name-only mention in narrator prompt.
-    Returns (activated_npcs, mentioned_npcs).
+    Returns (activated_npcs, mentioned_npcs, activation_debug).
     activated = full context (memories, secrets, agenda)
-    mentioned = name + disposition only"""
+    mentioned = name + disposition only
+    activation_debug = {npc_name: {score, reasons, status}} for diagnostics"""
     target_id = brain.get("target_npc")
 
     # Build scan text from all available context
+    # Use `or ""` pattern: brain.get(k, "") returns None when key exists with null value
     scan_parts = [
         player_input,
-        brain.get("player_intent", ""),
-        brain.get("approach", ""),
-        game.current_scene_context,
-        game.current_location,
+        brain.get("player_intent") or "",
+        brain.get("approach") or "",
+        game.current_scene_context or "",
+        game.current_location or "",
     ]
     # Last 2 session log entries
     for s in game.session_log[-2:]:
@@ -705,32 +870,39 @@ def activate_npcs_for_prompt(game, brain: dict, player_input: str) -> tuple[list
 
     activated = []
     mentioned = []
+    activation_debug = {}
 
     for npc in game.npcs:
         if npc.get("status") not in ("active", "background"):
             continue
 
         score = 0.0
-        npc_name_lower = npc.get("name", "").lower()
+        reasons = []
+        npc_name = npc.get("name", "")
+        npc_name_lower = npc_name.lower()
 
         # 1. Direct target from Brain (highest priority)
         if target_id and (npc.get("id") == target_id or npc_name_lower == target_id.lower()):
             score += 1.0
+            reasons.append("target")
 
         # 2. Name mentioned in scan text
         if npc_name_lower in scan_text:
             score += 0.8
+            reasons.append("name")
         else:
             # Check name parts (e.g. "Borin" in "Ich frage Borin")
             for part in npc_name_lower.split():
                 if len(part) >= 3 and part in scan_text:
                     score += 0.6
+                    reasons.append(f"part:{part}")
                     break
 
         # 3. Alias mentioned
         for alias in npc.get("aliases", []):
             if alias.lower() in scan_text:
                 score += 0.7
+                reasons.append(f"alias:{alias}")
                 break
 
         # 4. Keyword overlap
@@ -738,25 +910,33 @@ def activate_npcs_for_prompt(game, brain: dict, player_input: str) -> tuple[list
         kw_overlap = scan_words & npc_kws
         if kw_overlap:
             score += min(0.4, len(kw_overlap) * 0.15)
+            reasons.append(f"kw:{','.join(list(kw_overlap)[:3])}")
 
         # 5. Location match
         npc_desc = (npc.get("description", "") + " " + npc.get("agenda", "")).lower()
         if game.current_location and game.current_location.lower() in npc_desc:
             score += 0.3
+            reasons.append("location")
 
         # 6. Recent interaction bonus
         recent_scenes = [m.get("scene") or 0 for m in npc.get("memory", [])[-3:] if isinstance(m, dict)]
         if recent_scenes and max(recent_scenes) >= game.scene_count - 2:
             score += 0.2
+            reasons.append("recent")
 
         # Classify
         if score >= NPC_ACTIVATION_THRESHOLD:
             activated.append(npc)
+            activation_debug[npc_name] = {"score": round(score, 2), "reasons": reasons, "status": "activated"}
             # Auto-reactivate background NPCs that are contextually relevant
             if npc.get("status") == "background":
                 _reactivate_npc(npc, reason=f"keyword activation (score={score:.2f})")
         elif score >= NPC_MENTION_THRESHOLD:
             mentioned.append(npc)
+            activation_debug[npc_name] = {"score": round(score, 2), "reasons": reasons, "status": "mentioned"}
+        elif reasons:
+            # Below threshold but had some signal — log for diagnostics
+            activation_debug[npc_name] = {"score": round(score, 2), "reasons": reasons, "status": "inactive"}
 
     # Hard limit: max MAX_ACTIVATED_NPCS fully activated (beyond target)
     if len(activated) > MAX_ACTIVATED_NPCS:
@@ -792,7 +972,7 @@ def activate_npcs_for_prompt(game, brain: dict, player_input: str) -> tuple[list
     log(f"[NPC Activation] Activated: {[n['name'] for n in activated]}, "
         f"Mentioned: {[n['name'] for n in mentioned]}")
 
-    return activated, mentioned
+    return activated, mentioned, activation_debug
 
 
 # --- Kishōtenketsu tone mapping ---
@@ -1482,6 +1662,14 @@ time:{game.time_of_day or 'unspecified'} | prev_locations:{', '.join(game.locati
                     result.setdefault("dramatic_question", "")
                     result.setdefault("location_change", None)
                     result.setdefault("time_progression", "none")
+                    # Sanitize: Brain may return JSON null for string fields
+                    # dict.get(k, default) does NOT apply when value is None,
+                    # so downstream .join() / f-string calls would crash.
+                    for _sk in ("player_intent", "approach", "dramatic_question",
+                                "stat", "move", "position", "effect",
+                                "time_progression"):
+                        if result.get(_sk) is None:
+                            result[_sk] = ""
                     log(f"[Brain] Result: move={result.get('move')}, pos={result.get('position')}, "
                         f"effect={result.get('effect')}, intent={result.get('player_intent','')[:60]}")
                     return result
@@ -2122,35 +2310,36 @@ Always reply with valid JSON only. No markdown, no backticks."""
 def _should_call_director(game: GameState, roll_result: str = "",
                           chaos_used: bool = False,
                           new_npcs_found: bool = False,
-                          revelation_used: bool = False) -> bool:
+                          revelation_used: bool = False) -> Optional[str]:
     """Decide whether to call the Director after this scene.
-    Director runs lazily — not every turn, only when valuable."""
+    Director runs lazily — not every turn, only when valuable.
+    Returns a reason string if Director should run, None otherwise."""
     # 1. Significant game events → always
     if roll_result == "MISS":
-        return True
+        return "miss"
     if chaos_used:
-        return True
+        return "chaos"
     if new_npcs_found:
-        return True
+        return "new_npcs"
     if revelation_used:
-        return True
+        return "revelation"
 
     # 2. Any NPC needs reflection
     for npc in game.npcs:
         if npc.get("_needs_reflection") and npc.get("status") in ("active", "background"):
-            return True
+            return f"reflection:{npc.get('name', '?')}"
 
     # 3. Act phase change
     if game.story_blueprint and game.story_blueprint.get("acts"):
         act = get_current_act(game)
         if act.get("phase") in ("climax", "resolution", "ten_twist"):
-            return True
+            return f"phase:{act['phase']}"
 
     # 4. Regular interval
     if game.scene_count > 0 and game.scene_count % DIRECTOR_INTERVAL == 0:
-        return True
+        return "interval"
 
-    return False
+    return None
 
 
 def build_director_prompt(game: GameState, latest_narration: str,
@@ -2181,11 +2370,27 @@ def build_director_prompt(game: GameState, latest_narration: str,
         mem_text = "; ".join(
             f'{m.get("event", "")}({m.get("emotional_weight", "")})' for m in recent_obs
         )
+        # Include last reflection so Director can build on it, not repeat it
+        prev_reflections = [m for m in n.get("memory", [])
+                            if m.get("type") == "reflection"]
+        prev_ref_text = ""
+        prev_tone_text = ""
+        if prev_reflections:
+            escaped = prev_reflections[-1].get("event", "")[:200].replace('"', '&quot;')
+            prev_ref_text = f' last_reflection="{escaped}"'
+            # Show previous tone so Director can evolve the emotional arc
+            prev_tone = prev_reflections[-1].get("emotional_weight", "")
+            if prev_tone:
+                prev_tone_text = f' last_tone="{prev_tone}"'
         npc_desc = n.get("description", "").replace('"', '&quot;')
+        # Flag NPCs that lack agenda/instinct so Director can suggest them
+        needs_profile = ""
+        if not n.get("agenda", "").strip() or not n.get("instinct", "").strip():
+            needs_profile = ' needs_profile="true"'
         reflection_blocks.append(
             f'<reflect npc_id="{n.get("id","")}" name="{n.get("name","")}" '
             f'disposition="{n.get("disposition","")}" bond="{n.get("bond",0)}" '
-            f'description="{npc_desc}">'
+            f'description="{npc_desc}"{prev_ref_text}{prev_tone_text}{needs_profile}>'
             f'{mem_text}</reflect>'
         )
     reflection_section = "\n".join(reflection_blocks)
@@ -2232,10 +2437,12 @@ Reply ONLY with this JSON:
   "narrator_guidance": "Specific direction for the next 1-2 scenes (in {lang})",
   "npc_guidance": {{"npc_id": "what this NPC should do/feel next (in {lang})"}},
   "pacing": "tension_rising|building|climax|breather|resolution",
-  "npc_reflections": [{{"npc_id": "...", "reflection": "1-2 sentence higher-level insight (in {lang})", "tone": "emotional_weight", "updated_description": "SIDEBAR LABEL: 1 short sentence describing WHO this character IS — role, appearance, personality (in {lang}). Write like a cast list entry, NOT a scene description. NO actions, NO current posture, NO 'stands/sits/looks'. Example: 'Grumpy dwarf blacksmith with burn scars, secretly loyal'. Omit if character hasn't fundamentally changed."}}],
+  "npc_reflections": [{{"npc_id": "...", "reflection": "1-2 sentence higher-level insight (in {lang})", "tone": "1-3 English words capturing the emotional shift, e.g. 'protective_guilt', 'reluctant_trust', 'growing_dread'. Capture the NUANCE — how has this NPC's feeling evolved since their last reflection?", "tone_key": "ONE word from: neutral|curious|wary|suspicious|grateful|terrified|loyal|conflicted|betrayed|devastated|euphoric|defiant|guilty|protective|angry|devoted|impressed|hopeful", "updated_description": "STRICTLY in {lang}. Max 100 characters. Role + key visual traits (from existing description) + personality. Keep physical details like age, hair, build. Do NOT start with the NPC's name. NO actions, NO posture. Example: 'Grumpy dwarf blacksmith with burn scars, secretly loyal'. Omit if unchanged.", "agenda": "NPC's hidden goal (optional, only if needs_profile=true)", "instinct": "NPC's default behavior pattern (optional, only if needs_profile=true)"}}],
   "arc_notes": "Brief story arc progress observation"
 }}
 Only include npc_reflections for NPCs listed in <reflect> tags.
+If a <reflect> tag has a last_reflection attribute, write a NEW insight that builds on, deepens, or contradicts it. Do NOT repeat the same theme or emotional tone. If last_tone is present, evolve the emotion — show how the NPC's feelings have shifted, intensified, or transformed since then.
+If a <reflect> tag has needs_profile="true", include "agenda" (their hidden goal, max 8 words) and "instinct" (their default behavior, max 8 words) in the reflection object.
 npc_guidance keys should be NPC IDs like "npc_1".
 </task>"""
 
@@ -2455,9 +2662,10 @@ def _apply_director_guidance(game: GameState, guidance: dict):
             continue
 
         npc["memory"].append({
-            "scene": None,  # Reflections are timeless
+            "scene": game.scene_count,  # Track when reflection was generated
             "event": reflection_text,
-            "emotional_weight": ref.get("tone", "reflective"),
+            "emotional_weight": ref.get("tone", "reflective"),  # Narrative compound (e.g. "protective_guilt")
+            "tone_key": ref.get("tone_key", ""),  # Machine-readable single word from enum
             "importance": 8,  # Reflections are always important
             "type": "reflection",
         })
@@ -2465,8 +2673,32 @@ def _apply_director_guidance(game: GameState, guidance: dict):
         npc["importance_accumulator"] = 0
         npc["last_reflection_scene"] = game.scene_count
 
+        # Fill empty agenda/instinct if Director suggested them
+        suggested_agenda = ref.get("agenda", "").strip()
+        suggested_instinct = ref.get("instinct", "").strip()
+        if suggested_agenda and not npc.get("agenda", "").strip():
+            npc["agenda"] = suggested_agenda
+            log(f"[Director] Agenda set for {npc['name']}: '{suggested_agenda}'")
+        if suggested_instinct and not npc.get("instinct", "").strip():
+            npc["instinct"] = suggested_instinct
+            log(f"[Director] Instinct set for {npc['name']}: '{suggested_instinct}'")
+
         # Update description if Director provided a meaningful character description
         new_desc = ref.get("updated_description", "").strip()
+        # Safety net: strip prompt-leak prefixes the AI may copy literally
+        new_desc = re.sub(r'^(?:SIDEBAR\s*(?:LABEL)?[:\-—]\s*)', '', new_desc, flags=re.IGNORECASE).strip()
+        # Strip redundant NPC name prefix ("Detective Vance:", "Sarah Vance –", etc.)
+        npc_name = npc.get("name", "")
+        if npc_name:
+            # Match full name or any single word from the name, followed by : or – or -
+            name_parts = [re.escape(npc_name)] + [re.escape(p) for p in npc_name.split() if len(p) > 2]
+            name_pattern = '|'.join(name_parts)
+            new_desc = re.sub(
+                rf'^(?:{name_pattern})(?:\s+(?:{name_pattern}))*\s*[:\-—]\s*',
+                '', new_desc, count=1, flags=re.IGNORECASE
+            ).strip()
+        # Fix truncated descriptions: trim trailing comma, dash, open clause
+        new_desc = re.sub(r'[,;\-—–\s]+$', '', new_desc).strip()
         if new_desc and len(new_desc) > 10:
             # Reject scene snapshots: too long or starts with action verbs
             if len(new_desc) > 200:
@@ -2664,7 +2896,7 @@ def build_dialog_prompt(game: GameState, brain: dict, player_words: str = "",
                         config: Optional[EngineConfig] = None) -> str:
     _cfg = config or EngineConfig()
     lang = get_narration_lang(_cfg)
-    context_text = f"{player_words} {brain.get('player_intent', '')} {game.current_scene_context}"
+    context_text = f"{player_words} {brain.get('player_intent') or ''} {game.current_scene_context or ''}"
     npc = _npc_block(game, brain.get("target_npc"), context_text=context_text)
 
     # Three-tier NPC display
@@ -2721,7 +2953,7 @@ def build_dialog_prompt(game: GameState, brain: dict, player_words: str = "",
 </task>
 <npc_rename>[{{"npc_id":"id_or_name","new_name":"revealed true name"}}]</npc_rename>
 <new_npcs>[{{"name":"","description":"1 sentence in {lang}","disposition":"neutral|friendly|distrustful|hostile|loyal"}}]</new_npcs>
-<memory_updates>[{{"npc_id":"id_or_name","event":"what happened (in {lang})","emotional_weight":"emotion"}}]</memory_updates>
+<memory_updates>[{{"npc_id":"id_or_name","event":"what happened (in {lang})","emotional_weight":"ONE English word: neutral|curious|wary|angry|grateful|suspicious|terrified|loyal|conflicted|betrayed|devastated|euphoric"}}]</memory_updates>
 <scene_context>updated context</scene_context>"""
 
 
@@ -2733,7 +2965,7 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
                         config: Optional[EngineConfig] = None) -> str:
     _cfg = config or EngineConfig()
     lang = get_narration_lang(_cfg)
-    context_text = f"{player_words} {brain.get('player_intent', '')} {game.current_scene_context}"
+    context_text = f"{player_words} {brain.get('player_intent') or ''} {game.current_scene_context or ''}"
     npc = _npc_block(game, brain.get("target_npc"), context_text=context_text)
 
     # Three-tier NPC display
@@ -2818,7 +3050,7 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
 </task>
 <npc_rename>[{{"npc_id":"id_or_name","new_name":"revealed true name"}}]</npc_rename>
 <new_npcs>[{{"name":"","description":"1 sentence in {lang}","disposition":"neutral|friendly|distrustful|hostile|loyal"}}]</new_npcs>
-<memory_updates>[{{"npc_id":"id_or_name","event":"what happened (in {lang})","emotional_weight":"emotion"}}]</memory_updates>
+<memory_updates>[{{"npc_id":"id_or_name","event":"what happened (in {lang})","emotional_weight":"ONE English word: neutral|curious|wary|angry|grateful|suspicious|terrified|loyal|conflicted|betrayed|devastated|euphoric"}}]</memory_updates>
 <scene_context>updated context</scene_context>"""
 
 
@@ -3331,7 +3563,7 @@ def _apply_memory_updates(game: GameState, json_text: str):
 
                 event_text = u.get("event", "")
                 emotional = u.get("emotional_weight", "neutral")
-                importance = score_importance(emotional, event_text)
+                importance, score_debug = score_importance(emotional, event_text, debug=True)
 
                 npc["memory"].append({
                     "scene": game.scene_count,
@@ -3339,6 +3571,7 @@ def _apply_memory_updates(game: GameState, json_text: str):
                     "emotional_weight": emotional,
                     "importance": importance,
                     "type": "observation",
+                    "_score_debug": score_debug,
                 })
 
                 # Update importance accumulator for reflection triggering
@@ -4142,7 +4375,7 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
     _apply_brain_location_time(game, brain)
 
     # NPC Activation — determine who gets full context in prompt
-    activated_npcs, mentioned_npcs = activate_npcs_for_prompt(game, brain, player_message)
+    activated_npcs, mentioned_npcs, npc_activation_debug = activate_npcs_for_prompt(game, brain, player_message)
 
     # Track pending revelations before narration
     pending_revs = get_pending_revelations(game)
@@ -4176,7 +4409,8 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
                                  "summary": brain.get("player_intent", player_message),
                                  "result": "dialog", "consequences": [], "clock_events": [],
                                  "dramatic_question": brain.get("dramatic_question", ""),
-                                 "chaos_interrupt": chaos_interrupt})
+                                 "chaos_interrupt": chaos_interrupt,
+                                 "npc_activation": npc_activation_debug})
         if len(game.session_log) > MAX_SESSION_LOG:
             game.session_log = game.session_log[-MAX_SESSION_LOG:]
         # Check story completion
@@ -4184,11 +4418,14 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
 
         # Director — deferred to UI layer for non-blocking display
         director_ctx = None
-        if _should_call_director(game, roll_result="dialog",
+        director_reason = _should_call_director(game, roll_result="dialog",
                                   chaos_used=bool(chaos_interrupt),
                                   new_npcs_found='<new_npcs>' in raw,
-                                  revelation_used=bool(pending_revs)):
+                                  revelation_used=bool(pending_revs))
+        if director_reason:
             director_ctx = {"narration": narration, "config": config}
+            if game.session_log:
+                game.session_log[-1]["director_trigger"] = director_reason
         else:
             log(f"[Director] Skipped (no trigger at scene {game.scene_count})")
 
@@ -4257,7 +4494,8 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
                              "position": brain.get("position", "risky"),
                              "effect": brain.get("effect", "standard"),
                              "dramatic_question": brain.get("dramatic_question", ""),
-                             "chaos_interrupt": chaos_interrupt})
+                             "chaos_interrupt": chaos_interrupt,
+                             "npc_activation": npc_activation_debug})
     if len(game.session_log) > MAX_SESSION_LOG:
         game.session_log = game.session_log[-MAX_SESSION_LOG:]
     # Check story completion
@@ -4265,11 +4503,15 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
 
     # Director — deferred to UI layer for non-blocking display
     director_ctx = None
-    if _should_call_director(game, roll_result=roll.result,
+    director_reason = _should_call_director(game, roll_result=roll.result,
                               chaos_used=bool(chaos_interrupt),
                               new_npcs_found='<new_npcs>' in raw,
-                              revelation_used=bool(pending_revs)):
+                              revelation_used=bool(pending_revs))
+    if director_reason:
         director_ctx = {"narration": narration, "config": config}
+        # Store trigger reason in session_log for diagnostics
+        if game.session_log:
+            game.session_log[-1]["director_trigger"] = director_reason
     else:
         log(f"[Director] Skipped (no trigger at scene {game.scene_count})")
 
@@ -4300,10 +4542,13 @@ def _try_call_director(client: anthropic.Anthropic, game: GameState,
     Runs synchronously for now, but designed for future async execution.
     Fails gracefully — game works fine without Director."""
     try:
-        if _should_call_director(game, roll_result=roll_result,
+        director_reason = _should_call_director(game, roll_result=roll_result,
                                  chaos_used=chaos_used,
                                  new_npcs_found=new_npcs_found,
-                                 revelation_used=revelation_used):
+                                 revelation_used=revelation_used)
+        if director_reason:
+            if game.session_log:
+                game.session_log[-1]["director_trigger"] = director_reason
             guidance = call_director(client, game, narration, config)
             _apply_director_guidance(game, guidance)
         else:
@@ -4400,7 +4645,7 @@ def process_momentum_burn(client: anthropic.Anthropic, game: GameState,
     # Apply new consequences
     consequences, clock_events = apply_consequences(game, upgraded, brain_data)
     # Re-run NPC activation for the re-narrated scene
-    activated_npcs, mentioned_npcs = activate_npcs_for_prompt(game, brain_data, player_words)
+    activated_npcs, mentioned_npcs, _ = activate_npcs_for_prompt(game, brain_data, player_words)
     prompt = build_action_prompt(game, brain_data, upgraded, consequences, clock_events, [],
                                 player_words=player_words, chaos_interrupt=chaos_interrupt,
                                 activated_npcs=activated_npcs, mentioned_npcs=mentioned_npcs,

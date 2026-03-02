@@ -6,7 +6,7 @@
 [![NiceGUI](https://img.shields.io/badge/UI-NiceGUI-4CAF50?logo=vuedotjs&logoColor=white)](https://nicegui.io)
 [![Claude AI](https://img.shields.io/badge/AI-Claude%20Haiku%20%2B%20Sonnet-orange?logo=anthropic&logoColor=white)](https://anthropic.com)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-lightgrey)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-0.9.27-blueviolet)]()
+[![Version](https://img.shields.io/badge/Version-0.9.28-blueviolet)]()
 [![Mobile Ready](https://img.shields.io/badge/Mobile-PWA%20Ready-success?logo=pwa&logoColor=white)]()
 
 ---
@@ -86,10 +86,6 @@ Stories in EdgeTales have a narrative arc. The engine tracks pacing, tension, an
 
 **Campaign mode** carries your character, stats, NPCs, and world into a new chapter. The AI summarises the previous chapter, your NPC relationships and their memories carry over, and unresolved story threads feed into the new arc. Mechanics reset (health, spirit, supply are restored), but your character's identity and history remain intact. It's the same person, a new adventure.
 
-**Chapters are preserved and readable.** Every completed chapter is automatically archived with its full chat history. In the save slot management panel you'll see a list of your previous chapters — click any of them to re-read the story exactly as it unfolded, including dice results, scene markers, and narrator prose. A *Read Only* banner makes it clear you're viewing the archive rather than the live game. You can export any individual chapter to PDF directly from the chapter view.
-
-The chapter archive is stored per save slot in `users/<username>/saves/chapters/<save_name>/` — one file per chapter (`chapter_1.json`, `chapter_2.json`, ...). Deleting a save slot also removes all associated chapter archives.
-
 **Safety Tools - Wishes & Boundaries**
 
 During character creation, you can tell EdgeTales what you want in your story and what you absolutely don't want. These are saved to your profile and pre-filled automatically next time.
@@ -154,12 +150,7 @@ edgetales/
 ├── users/              # Per-user data (auto-created)
 │   └── <username>/
 │       ├── settings.json   # Personal preferences (TTS, language, dice display)
-│       └── saves/          # Save files (one JSON per slot)
-│           └── chapters/
-│               └── <save_name>/    # Chapter archives (one per completed chapter)
-│                   ├── chapter_1.json  # Full chat history + title of chapter 1
-│                   ├── chapter_2.json  # Full chat history + title of chapter 2
-│                   └── ...
+│       └── saves/          # Save files
 └── logs/               # Application logs (auto-created)
 ```
 
@@ -231,7 +222,7 @@ python3 -m venv venv
 source venv/bin/activate   # Windows: venv\Scripts\activate
 
 # 3. Install core dependencies
-pip install nicegui anthropic edge-tts
+pip install nicegui anthropic edge-tts stop-words
 
 # 4. Set up your config
 # Copy config.example.json to config.json, add your API key
@@ -251,7 +242,7 @@ Open your browser at **http://localhost:8080**
 ### Core (required)
 
 ```bash
-pip install nicegui anthropic edge-tts
+pip install nicegui anthropic edge-tts stop-words
 ```
 
 ### Optional packages
@@ -269,6 +260,7 @@ pip install cryptography                 # HTTPS auto-certificate generation
 | `nicegui` ≥ 1.4 | Web UI framework | **Required** |
 | `anthropic` ≥ 0.30 | Claude AI API client | **Required** |
 | `edge-tts` ≥ 6.1 | Online TTS (Microsoft Edge voices) | **Required** |
+| `stop-words` | NPC keyword stopword filtering (34+ languages) | **Required** — graceful fallback if missing |
 | `chatterbox-tts` | Offline TTS with voice cloning | **Python 3.11 only.** ~2 GB model download on first run |
 | `torchaudio` | Audio processing for Chatterbox | Match your PyTorch version |
 | `faster-whisper` | Speech-to-text (STT) | Models: tiny → large-v3 |
@@ -428,7 +420,6 @@ Environment=ANTHROPIC_API_KEY=sk-ant-YOUR-KEY-HERE
 4. **Grow** - build momentum, forge bonds with NPCs, survive escalating chaos
 5. **Conclude** - when the story reaches its climax, generate an epilogue or keep going
 6. **Continue** - start a new chapter with the same character and world, or begin fresh
-7. **Look back** - re-read any completed chapter from the save slot panel, or export it to PDF
 
 ---
 
