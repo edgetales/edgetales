@@ -6,7 +6,7 @@
 [![NiceGUI](https://img.shields.io/badge/UI-NiceGUI-4CAF50?logo=vuedotjs&logoColor=white)](https://nicegui.io)
 [![Claude AI](https://img.shields.io/badge/AI-Claude%20Haiku%20%2B%20Sonnet-orange?logo=anthropic&logoColor=white)](https://anthropic.com)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-lightgrey)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-0.9.29-blueviolet)]()
+[![Version](https://img.shields.io/badge/Version-0.9.30-blueviolet)]()
 [![Mobile Ready](https://img.shields.io/badge/Mobile-PWA%20Ready-success?logo=pwa&logoColor=white)]()
 
 ---
@@ -223,52 +223,65 @@ cd edgetales
 python3 -m venv venv
 source venv/bin/activate   # Windows: venv\Scripts\activate
 
-# 3. Install core dependencies
-pip install nicegui anthropic edge-tts stop-words
-
-# 4. Set up your config
+# 3. Set up your config
 # Copy config.example.json to config.json, add your API key
 
-# 5. Run
+# 4. Run — missing packages are installed automatically
 python app.py
 ```
 
 Open your browser at **http://localhost:8080**
 
-> 💡 **That's it.** All configuration lives in `config.json` - no batch files or environment variables needed for basic use.
+> 💡 **That's it.** Missing packages are installed automatically on first launch. All configuration lives in `config.json` - no batch files or environment variables needed for basic use.
 
 ---
 
 ## 📦 Installation
 
-### Core (required)
+### Automatic (recommended)
 
-```bash
-pip install nicegui anthropic edge-tts stop-words
+Simply run `python app.py`. On first launch, EdgeTales checks all required packages and installs anything missing via pip automatically. You'll see a status report in the console:
+
+```
+⚙️  Checking dependencies ...
+   ✅ Found: anthropic (0.52.0), nicegui (2.12.0), reportlab (4.4.0), edge-tts (6.1.18),
+            stop-words (2018.7.23), nameparser (1.1.3), cryptography (44.0.2), faster-whisper (1.1.0)
+   ℹ️  Optional (not installed): chatterbox-tts
+   ✅ All dependencies satisfied.
 ```
 
-### Optional packages
+If any required package is missing, it is installed automatically before the server starts.
 
-Install only what you need:
+### Manual pre-install
+
+If you prefer to install everything upfront:
 
 ```bash
-pip install chatterbox-tts torchaudio   # Offline AI TTS with voice cloning
-pip install faster-whisper               # Speech-to-Text (microphone input)
-pip install cryptography                 # HTTPS auto-certificate generation
-pip install nameparser                   # Enhanced NPC name/title detection (619 titles)
+pip install nicegui anthropic reportlab edge-tts stop-words nameparser cryptography faster-whisper
 ```
+
+### Optional: Chatterbox (offline AI TTS with voice cloning)
+
+Chatterbox is the only package that is **not** auto-installed — it requires Python 3.10–3.11 and PyTorch, which makes automatic installation impractical. If you want offline voice synthesis with voice cloning:
+
+```bash
+pip install chatterbox-tts torchaudio
+```
+
+If Chatterbox is not installed and you select it as your TTS backend in the settings, a hint card will show the install command.
 
 | Package | Purpose | Notes |
 |---|---|---|
-| `nicegui` ≥ 1.4 | Web UI framework | **Required** |
-| `anthropic` ≥ 0.30 | Claude AI API client | **Required** |
-| `edge-tts` ≥ 6.1 | Online TTS (Microsoft Edge voices) | **Required** |
-| `stop-words` | NPC keyword stopword filtering (34+ languages) | **Required** — graceful fallback if missing |
-| `chatterbox-tts` | Offline TTS with voice cloning | **Python 3.11 only.** ~2 GB model download on first run |
+| `nicegui` ≥ 1.4 | Web UI framework | **Required** — auto-installed |
+| `anthropic` ≥ 0.30 | Claude AI API client | **Required** — auto-installed |
+| `reportlab` | PDF story export | **Required** — auto-installed |
+| `edge-tts` ≥ 6.1 | Online TTS (Microsoft Edge voices) | **Required** — auto-installed |
+| `stop-words` | NPC keyword stopword filtering (34+ languages) | **Required** — auto-installed |
+| `nameparser` | NPC name/title detection (619 built-in titles) | **Required** — auto-installed |
+| `cryptography` | HTTPS auto-certificate generation | **Required** — auto-installed |
+| `faster-whisper` | Speech-to-text (STT) | **Required** — auto-installed. Models: tiny → large-v3 |
+| `chatterbox-tts` | Offline TTS with voice cloning | **Optional.** Python 3.10–3.11 only. ~2 GB model download on first run |
 | `torchaudio` | Audio processing for Chatterbox | Match your PyTorch version |
-| `faster-whisper` | Speech-to-text (STT) | Models: tiny → large-v3 |
-| `cryptography` | Auto TLS certificate generation | Only needed for HTTPS mode |
-| `nameparser` | NPC name/title detection (619 built-in titles) | Graceful fallback to ~60 manual titles if missing |
 
 ---
 

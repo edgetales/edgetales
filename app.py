@@ -6,6 +6,102 @@ Edge Tales - Narrative Solo RPG Engine
 NiceGUI UI and server logic
 """
 
+# ---------------------------------------------------------------------------
+# Auto-install required packages (runs once at startup before other imports)
+# ---------------------------------------------------------------------------
+def _ensure_requirements():
+    """Check all required packages and install missing ones via pip."""
+    import importlib
+    import subprocess
+    import sys
+
+    # Map: import_name → pip package name
+    _REQUIRED = {
+        "anthropic":      "anthropic",
+        "nicegui":        "nicegui",
+        "reportlab":      "reportlab",
+        "edge_tts":       "edge-tts",
+        "stop_words":     "stop-words",
+        "nameparser":     "nameparser",
+        "cryptography":   "cryptography",
+        "faster_whisper": "faster-whisper",
+    }
+
+    # Optional packages (hint only, no auto-install)
+    _OPTIONAL = {
+        "chatterbox":     "chatterbox-tts",
+    }
+
+    print("\u2699\uFE0F  Checking dependencies ...")
+
+    found = []
+    missing = []
+    for import_name, pip_name in _REQUIRED.items():
+        try:
+            mod = importlib.import_module(import_name)
+            ver = getattr(mod, "__version__", getattr(mod, "VERSION", ""))
+            ver_str = f" ({ver})" if ver else ""
+            found.append(f"{pip_name}{ver_str}")
+        except ImportError:
+            missing.append(pip_name)
+
+    # Check optional packages
+    optional_found = []
+    optional_missing = []
+    for import_name, pip_name in _OPTIONAL.items():
+        try:
+            mod = importlib.import_module(import_name)
+            ver = getattr(mod, "__version__", getattr(mod, "VERSION", ""))
+            ver_str = f" ({ver})" if ver else ""
+            optional_found.append(f"{pip_name}{ver_str}")
+        except ImportError:
+            optional_missing.append(pip_name)
+
+    # Console output
+    if found:
+        print(f"   \u2705 Found: {', '.join(found)}")
+    if optional_found:
+        print(f"   \u2705 Optional: {', '.join(optional_found)}")
+    if optional_missing:
+        print(f"   \u2139\uFE0F  Optional (not installed): {', '.join(optional_missing)}")
+    if missing:
+        print(f"   \u274C Missing: {', '.join(missing)}")
+
+    # Auto-install missing required packages
+    if missing:
+        print(f"\n   \u2B07\uFE0F  Installing: {', '.join(missing)} ...")
+        pip_cmd = [sys.executable, "-m", "pip", "install", *missing]
+        try:
+            subprocess.check_call(pip_cmd)
+        except subprocess.CalledProcessError:
+            # Retry with --break-system-packages (needed on Debian/Ubuntu with
+            # externally-managed Python environments, e.g. Raspberry Pi OS)
+            try:
+                subprocess.check_call(pip_cmd + ["--break-system-packages"])
+            except subprocess.CalledProcessError as e:
+                print(f"\n   \u274C Installation failed (exit code {e.returncode}).")
+                print(f"      Please install manually: pip install {' '.join(missing)}")
+                sys.exit(1)
+        print(f"   \u2705 Successfully installed: {', '.join(missing)}")
+    else:
+        print("   \u2705 All dependencies satisfied.")
+
+    # Store results for deferred logging (engine logger not yet initialized here)
+    import builtins
+    builtins._EDGETALES_DEP_CHECK = {
+        "found": found,
+        "missing_installed": missing,
+        "optional_found": optional_found,
+        "optional_missing": optional_missing,
+    }
+
+
+_ensure_requirements()
+
+
+# ---------------------------------------------------------------------------
+# Standard library imports
+# ---------------------------------------------------------------------------
 import asyncio
 import os
 import re
@@ -130,6 +226,19 @@ log(f"[Config] port={SERVER_PORT}, https={ENABLE_HTTPS}, "
     f"invite={'set' if INVITE_CODE else 'off'}, "
     f"default_ui_lang={DEFAULT_UI_LANG or DEFAULT_LANG}, "
     f"api_key={'ENV' if os.environ.get('ANTHROPIC_API_KEY') else ('config.json' if SERVER_API_KEY else 'not set')}")
+
+# Flush deferred dependency check results into log file
+import builtins
+_dep = getattr(builtins, "_EDGETALES_DEP_CHECK", None)
+if _dep:
+    log(f"[Deps] Found: {', '.join(_dep['found'])}")
+    if _dep["optional_found"]:
+        log(f"[Deps] Optional: {', '.join(_dep['optional_found'])}")
+    if _dep["optional_missing"]:
+        log(f"[Deps] Optional (not installed): {', '.join(_dep['optional_missing'])}")
+    if _dep["missing_installed"]:
+        log(f"[Deps] Auto-installed: {', '.join(_dep['missing_installed'])}")
+    del builtins._EDGETALES_DEP_CHECK
 
 # --- Tuning constants ---
 SCROLL_DELAY_MS = 500                  # Delay before auto-scroll to new content
@@ -1034,6 +1143,26 @@ def render_settings() -> None:
             cb_container = ui.column().classes("w-full gap-1")
             cb_container.bind_visibility_from(be_sel, "value", backward=lambda v: resolve_tts_backend(v) == "chatterbox")
             with cb_container:
+                # Hint if chatterbox is not installed
+                _cb_installed = True
+                try:
+                    import importlib as _il
+                    _il.import_module("chatterbox")
+                except ImportError:
+                    _cb_installed = False
+                if not _cb_installed:
+                    with ui.card().classes("w-full").style(
+                        "background: rgba(255,170,0,0.12); border: 1px solid rgba(255,170,0,0.4); padding: 8px 12px"
+                    ):
+                        ui.label(
+                            f"{E['warn']} {t('settings.cb_not_installed', lang)}"
+                        ).classes("text-sm font-bold").style("color: #ffaa00")
+                        ui.label(
+                            t("settings.cb_install_cmd", lang)
+                        ).classes("text-xs").style("font-family: monospace; color: #ccc; margin-top: 2px")
+                        ui.label(
+                            t("settings.cb_requires", lang)
+                        ).classes("text-xs").style("color: #999; margin-top: 2px")
                 cb_device_sel = ui.select(list(CHATTERBOX_DEVICE_OPTIONS.keys()), label=t("settings.device", lang), value=s.get("cb_device","Auto")).classes("w-full")
                 cb_exag_slider = ui.slider(min=0.0, max=1.0, step=0.05, value=s.get("cb_exaggeration",0.5)).props("label-always")
                 ui.label(t("settings.emotion", lang)).classes("text-xs").style("color: var(--text-secondary)")

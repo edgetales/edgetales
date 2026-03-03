@@ -5,6 +5,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.30]
+
+### Added
+- **Auto-Dependency Check & Install:** `_ensure_requirements()` runs at the very top of `app.py` before any package imports. Checks all 8 required packages via `importlib.import_module()` and auto-installs missing ones via pip. Retry with `--break-system-packages` for externally-managed Python environments (Raspberry Pi OS, Debian 12+). Exits with manual install instructions if both attempts fail
+- **Verbose Startup Output:** Console shows `⚙️ Checking dependencies ...` immediately on launch with per-package status (name + version), optional package hints, and install progress. Eliminates the previous silent black screen during import phase
+- **Deferred Dependency Logging:** Since the engine logger isn't available before imports, check results are stored in `builtins._EDGETALES_DEP_CHECK` and flushed to the log file as `[Deps]` entries immediately after engine import. Cleaned up after flush
+- **Chatterbox Missing Hint Card:** Amber warning card in TTS settings when Chatterbox backend is selected but not installed. Shows install command (`pip install chatterbox-tts`) and requirements (Python 3.10–3.11 + PyTorch). Fully localized via three new i18n keys (`settings.cb_not_installed`, `settings.cb_install_cmd`, `settings.cb_requires`)
+
+### Changed
+- **`cryptography`, `faster-whisper`, `nameparser` are now required:** Previously optional with graceful fallbacks, these three packages are now auto-installed alongside the core dependencies. Only `chatterbox-tts` (+ PyTorch) remains truly optional
+- **Dependency categories simplified:** 8 required packages (anthropic, nicegui, reportlab, edge-tts, stop-words, nameparser, cryptography, faster-whisper) + 1 optional (chatterbox-tts)
+
+---
+
 ## [0.9.29]
 
 ### Added
