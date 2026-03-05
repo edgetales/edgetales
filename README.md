@@ -6,7 +6,7 @@
 [![NiceGUI](https://img.shields.io/badge/UI-NiceGUI-4CAF50?logo=vuedotjs&logoColor=white)](https://nicegui.io)
 [![Claude AI](https://img.shields.io/badge/AI-Claude%20Haiku%20%2B%20Sonnet-orange?logo=anthropic&logoColor=white)](https://anthropic.com)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-lightgrey)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-0.9.34-blueviolet)]()
+[![Version](https://img.shields.io/badge/Version-0.9.35-blueviolet)]()
 [![Mobile Ready](https://img.shields.io/badge/Mobile-PWA%20Ready-success?logo=pwa&logoColor=white)]()
 
 ---
@@ -31,6 +31,7 @@ EdgeTales is a self-hosted, AI-driven solo tabletop RPG engine. Type what your c
 - Free-form player input - type anything, the AI understands your intent
 - Triple-AI architecture: fast *Brain* (Haiku) parses mechanics, creative *Narrator* (Sonnet) writes the scene, strategic *Director* (Haiku) steers story pacing and NPC development behind the scenes
 - Player Authorship guarantee - your exact words are never rewritten or reinterpreted by the AI
+- **`##` Correction system** — prefix any input with `##` to correct the last scene. The engine distinguishes between a *misread input* (Brain misunderstood what you did — full state rollback, re-roll if needed, narrator rewrites) and a *state error* (wrong NPC identity, location, relationship — world patched in-place, narrator rewrites with corrections applied). No scene is ever permanently broken by an AI misunderstanding
 - Dynamic NPC system with persistent memory, evolving dispositions, bonds, agendas, and mid-game discovery
 - NPC memory and reflection: characters remember what you did and form opinions over time - the Director periodically synthesises their accumulated experiences into higher-level insights that shape their future behaviour
 - AI-generated epilogues that wrap up your story with a satisfying conclusion
@@ -246,7 +247,8 @@ Simply run `python app.py`. On first launch, EdgeTales checks all required packa
 ```
 ⚙️  Checking dependencies ...
    ✅ Found: anthropic (0.52.0), nicegui (2.12.0), reportlab (4.4.0), edge-tts (6.1.18),
-            stop-words (2018.7.23), nameparser (1.1.3), cryptography (44.0.2), faster-whisper (1.1.0)
+            stop-words (2018.7.23), nameparser (1.1.3), cryptography (44.0.2),
+            faster-whisper (1.1.0), wonderwords (2.2.0)
    ℹ️  Optional (not installed): chatterbox-tts
    ✅ All dependencies satisfied.
 ```
@@ -258,7 +260,7 @@ If any required package is missing, it is installed automatically before the ser
 If you prefer to install everything upfront:
 
 ```bash
-pip install nicegui anthropic reportlab edge-tts stop-words nameparser cryptography faster-whisper
+pip install nicegui anthropic reportlab edge-tts stop-words nameparser cryptography faster-whisper wonderwords
 ```
 
 ### Optional: Chatterbox (offline AI TTS with voice cloning)
@@ -281,6 +283,7 @@ If Chatterbox is not installed and you select it as your TTS backend in the sett
 | `nameparser` | NPC name/title detection (619 built-in titles) | **Required** — auto-installed |
 | `cryptography` | HTTPS auto-certificate generation | **Required** — auto-installed |
 | `faster-whisper` | Speech-to-text (STT) | **Required** — auto-installed. Models: tiny → large-v3 |
+| `wonderwords` | Output diversity for character/scene generation | **Required** — auto-installed. Random word lists (offline) |
 | `chatterbox-tts` | Offline TTS with voice cloning | **Optional.** Python 3.10–3.11 only. ~2 GB model download on first run |
 | `torchaudio` | Audio processing for Chatterbox | Match your PyTorch version |
 

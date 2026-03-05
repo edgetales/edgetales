@@ -332,6 +332,10 @@ _STRINGS = {
         "game.retry_tooltip": "Erneut versuchen",
         "game.scene_marker": "Szene {n} \u2014 {location}",
 
+        # Correction
+        "correction.badge": "\u270e Korrigiert",
+        "correction.no_snapshot": "Kein letzter Zug im Speicher \u2014 Korrektur nicht m\u00f6glich.",
+
         # Momentum Burn
         "momentum.question": "**Momentum einsetzen?** {cost} \u2192 0 = **{result}**",
         "momentum.yes": "Ja!",
@@ -634,6 +638,10 @@ _STRINGS = {
         "game.still_processing": "One moment \u2014 still processing your previous input.",
         "game.retry_tooltip": "Retry",
         "game.scene_marker": "Scene {n} \u2014 {location}",
+
+        # Correction
+        "correction.badge": "\u270e Corrected",
+        "correction.no_snapshot": "No last turn in memory \u2014 correction not possible.",
 
         # Momentum Burn
         "momentum.question": "**Burn Momentum?** {cost} \u2192 0 = **{result}**",

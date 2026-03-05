@@ -7,6 +7,7 @@ Core Module (Framework-Independent)
 """
 
 import json
+import copy
 import re
 import random
 import math
@@ -48,11 +49,19 @@ try:
 except ImportError:
     _HAS_NAMEPARSER = False
 
+# Random word generation for creativity seeds (output diversity)
+try:
+    from wonderwords import RandomWord as _RandomWord
+    _rw = _RandomWord()
+    _HAS_WONDERWORDS = True
+except ImportError:
+    _HAS_WONDERWORDS = False
+
 # ===============================================================
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.34"
+VERSION = "0.9.35"
 
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-5-20250929"
@@ -79,6 +88,29 @@ NPC_MENTION_THRESHOLD = 0.3        # Minimum score for NPC name mention
 DIRECTOR_INTERVAL = 3              # Call director every N scenes (when no trigger)
 MEMORY_RECENCY_DECAY = 0.92        # Exponential decay factor for memory recency
 DIRECTOR_MODEL = BRAIN_MODEL       # Director uses same model as Brain (Haiku)
+
+# --- Creativity seed (output diversity for character/scene generation) ---
+_SEED_FALLBACK = [
+    "amber", "coyote", "furnace", "silk", "glacier", "compass",
+    "terracotta", "jasmine", "anvil", "cobalt", "driftwood", "saffron",
+    "limestone", "falcon", "obsidian", "cedar", "mercury", "lantern",
+    "basalt", "thistle", "copper", "monsoon", "flint", "orchid",
+    "pewter", "canyon", "quartz", "ember", "mahogany", "coral",
+]
+
+def _creativity_seed(n: int = 3) -> str:
+    """Generate random words to perturb LLM token probabilities for output diversity.
+    Uses wonderwords library if available, otherwise falls back to built-in word list."""
+    if _HAS_WONDERWORDS:
+        try:
+            words = [_rw.word(include_parts_of_speech=["nouns", "adjectives"],
+                              word_min_length=4, word_max_length=10,
+                              exclude_with_spaces=True)
+                     for _ in range(n)]
+            return " ".join(words)
+        except Exception:
+            pass
+    return " ".join(random.sample(_SEED_FALLBACK, min(n, len(_SEED_FALLBACK))))
 
 # --- Structured Output Schemas (constrained decoding, GA since Dec 2025) ---
 # These schemas guarantee valid JSON from the API — no parsing, repair, or retry needed.
@@ -2180,6 +2212,8 @@ class GameState:
     backstory: str = ""        # Raw player-authored backstory — canon facts, NOT plot seeds
     # v5.11: Director guidance (stored between turns)
     director_guidance: dict = field(default_factory=dict)  # Last DirectorGuidance output
+    # Transient — NOT in SAVE_FIELDS. Full pre-turn snapshot for ## correction flow.
+    last_turn_snapshot: Optional[dict] = field(default=None, repr=False)
 
     def get_stat(self, name: str) -> int:
         return getattr(self, name, 0)
@@ -2319,6 +2353,47 @@ def get_pacing_hint(game: GameState) -> str:
         return "action"
     return "neutral"
 
+
+def _build_turn_snapshot(game: GameState) -> dict:
+    """Build a complete snapshot of all turn-mutable GameState fields.
+    Called at the start of process_turn() BEFORE any mutations.
+    Used by the ## correction flow to fully restore pre-turn state.
+    Also used as the authoritative basis for the burn pre_snapshot.
+    NOT persisted to disk — transient only.
+    """
+    return {
+        # Resource tracks
+        "health": game.health,
+        "spirit": game.spirit,
+        "supply": game.supply,
+        "momentum": game.momentum,
+        "max_momentum": game.max_momentum,
+        # Counters & flags
+        "scene_count": game.scene_count,
+        "chaos_factor": game.chaos_factor,
+        "crisis_mode": game.crisis_mode,
+        "game_over": game.game_over,
+        "epilogue_shown": game.epilogue_shown,
+        "epilogue_dismissed": game.epilogue_dismissed,
+        # Spatial / temporal
+        "current_location": game.current_location,
+        "current_scene_context": game.current_scene_context,
+        "time_of_day": game.time_of_day,
+        "location_history": list(game.location_history),
+        # Narrative state — deepcopy because these are mutable nested structures
+        "npcs": copy.deepcopy(game.npcs),
+        "clocks": copy.deepcopy(game.clocks),
+        "director_guidance": copy.deepcopy(game.director_guidance),
+        "scene_intensity_history": list(game.scene_intensity_history),
+        # Log tails — only last entry needed for restore/replace
+        "session_log_tail": copy.deepcopy(game.session_log[-1]) if game.session_log else None,
+        "narration_history_tail": copy.deepcopy(game.narration_history[-1]) if game.narration_history else None,
+        # Turn inputs — filled in progressively by process_turn()
+        "player_input": "",   # set immediately in process_turn
+        "brain": None,          # set after Brain call
+        "roll": None,           # set after roll (None for dialog turns)
+        "narration": None,      # set after Narrator call
+    }
 
 def record_scene_intensity(game: GameState, scene_type: str):
     """Record a scene's intensity type for pacing analysis.
@@ -2686,14 +2761,19 @@ def call_setup_brain(client: anthropic.Anthropic, creation_data: dict,
         tone_info = f"custom: {creation_data['tone_description']}"
     name_override = creation_data.get('player_name', '')
     name_line = f"\ncharacter_name(USE EXACTLY): {name_override}" if name_override else ""
-    user_msg = f"""genre:{genre_info} tone:{tone_info} archetype:{creation_data.get('archetype','outsider')}{name_line}
-player_input: {creation_data.get('custom_desc','')}"""
+    raw_archetype = creation_data.get('archetype', 'outsider')
+    archetype_info = "custom — derive archetype and stats entirely from player_input below" if raw_archetype == "custom" else raw_archetype
+    seed = _creativity_seed()
+    user_msg = f"""genre:{genre_info} tone:{tone_info} archetype:{archetype_info}{name_line}
+player_input: {creation_data.get('custom_desc','')}
+creativity_seed: {seed} (Use as loose inspiration for names, locations, and details — not literally, but as creative anchors to avoid generic defaults)"""
 
     log(f"[Setup] Generating character: genre={genre_info}, tone={tone_info}, "
-        f"archetype={creation_data.get('archetype','?')}, "
+        f"archetype={archetype_info!r}, "
         f"name_override={name_override!r}, "
         f"has_desc={bool(creation_data.get('custom_desc'))}, "
-        f"has_wishes={bool(creation_data.get('wishes'))}")
+        f"has_wishes={bool(creation_data.get('wishes'))}, "
+        f"creativity_seed={seed!r}")
 
     try:
         response = _api_create_with_retry(
@@ -3548,12 +3628,13 @@ def build_director_prompt(game: GameState, latest_narration: str,
         thematic = bp.get("thematic_thread", "")
         scene_range = act.get("scene_range", [1, 20])
         past_range = game.scene_count > scene_range[1]
+        past_range_attr = ' PAST_RANGE="true"' if past_range else ""
         story_info = (
             f'\n<story_arc structure="{bp.get("structure_type", "3act")}" '
             f'act="{act["act_number"]}/{act["total_acts"]}" phase="{act["phase"]}" '
             f'progress="{act["progress"]}" '
             f'current_scene="{game.scene_count}" scene_range="{scene_range[0]}-{scene_range[1]}"'
-            f'{" PAST_RANGE=\"true\"" if past_range else ""} '
+            f'{past_range_attr} '
             f'conflict="{bp.get("central_conflict", "")}"'
         )
         if thematic:
@@ -3781,6 +3862,8 @@ def build_new_game_prompt(game: GameState) -> str:
     story = _story_context_block(game)
     time_ctx = f'\n<time>{game.time_of_day}</time>' if game.time_of_day else ""
     loc_hist = f'\n<prev_locations>{", ".join(game.location_history[-3:])}</prev_locations>' if game.location_history else ""
+    seed = _creativity_seed()
+    log(f"[Narrator] Opening creativity_seed={seed!r}")
     return f"""<scene type="opening">
 <world genre="{game.setting_genre}" tone="{game.setting_tone}">{game.setting_description}</world>
 <character name="{game.player_name}">{game.character_concept}</character>
@@ -3792,6 +3875,7 @@ Opening scene: 3-4 paragraphs. Introduce 2 NPCs through action/dialog. Immediate
 IMPORTANT: The <character> above is the PLAYER CHARACTER (the "you" in narration). Do NOT include them as an NPC. NPCs are OTHER people the player meets.
 If <backstory> exists in system context, treat those facts as established canon — reference naturally but don't retell.
 If player_wishes exist, do NOT address them in the opening — save them for later scenes. Focus on world and conflict first.
+creativity_seed: {seed} (Use as loose inspiration for NPC names, locations, and scene details — not literally, but as creative anchors to avoid generic defaults)
 After narration, append invisible structured data:
 </task>
 <game_data>
@@ -5087,6 +5171,9 @@ def build_new_chapter_prompt(game: GameState) -> str:
     story = _story_context_block(game)
     time_ctx = f'\n<time>{game.time_of_day}</time>' if game.time_of_day else ""
 
+    seed = _creativity_seed()
+    log(f"[Narrator] Chapter {game.chapter_number} opening creativity_seed={seed!r}")
+
     return f"""<scene type="chapter_opening" chapter="{game.chapter_number}">
 <world genre="{game.setting_genre}" tone="{game.setting_tone}">{game.setting_description}</world>
 <character name="{game.player_name}">{game.character_concept}</character>
@@ -5105,6 +5192,7 @@ Chapter {game.chapter_number} opening: 3-4 paragraphs. This is a NEW chapter in 
 - Introduce 1-2 NEW NPCs alongside returning characters
 - Create one new threat clock for this chapter
 IMPORTANT: The <character> above is the PLAYER CHARACTER. Do NOT include them as an NPC.
+creativity_seed: {seed} (Use as loose inspiration for NPC names, locations, and scene details — not literally, but as creative anchors to avoid generic defaults)
 After narration, append invisible structured data:
 </task>
 <game_data>
@@ -5234,7 +5322,13 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
                  player_message: str,
                  config: Optional[EngineConfig] = None) -> tuple[GameState, str, Optional[RollResult], Optional[dict], Optional[dict]]:
     log(f"[Turn] Scene {game.scene_count + 1} | Player: {player_message[:100]}")
+
+    # Snapshot BEFORE any mutation — used by ## correction flow and burn
+    game.last_turn_snapshot = _build_turn_snapshot(game)
+    game.last_turn_snapshot["player_input"] = player_message
+
     brain = call_brain(client, game, player_message, config)
+    game.last_turn_snapshot["brain"] = dict(brain)
 
     # Reactivate background NPC if Brain targets one
     tid = brain.get("target_npc")
@@ -5265,6 +5359,8 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
                                      config=config)
         raw = call_narrator(client, prompt, game, config)
         narration = parse_narrator_response(game, raw)
+        if game.last_turn_snapshot is not None:
+            game.last_turn_snapshot["narration"] = narration
         metadata = call_narrator_metadata(client, narration, game, config)
         _apply_narrator_metadata(game, metadata)
         # Mark first pending revelation as used (narrator was instructed to weave it in)
@@ -5313,13 +5409,16 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
     roll = roll_action(stat_name, game.get_stat(stat_name), brain.get("move", "face_danger"))
     if roll.match:
         log(f"[Turn] MATCH! Both challenge dice show {roll.c1} \u2014 {roll.result}")
+    if game.last_turn_snapshot is not None:
+        game.last_turn_snapshot["roll"] = roll
 
     # Check burn possibility BEFORE consequences reduce momentum
     burn_info = None
     if roll.result in ("MISS", "WEAK_HIT") and game.momentum > 0:
         potential_burn = can_burn_momentum(game, roll)
         if potential_burn:
-            # Snapshot state BEFORE consequences so burn can fully reverse them
+            # Use last_turn_snapshot as authoritative pre_snapshot — taken before
+            # any mutations (including _apply_brain_location_time and scene_count++)
             burn_info = {
                 "roll": roll,
                 "new_result": potential_burn,
@@ -5327,17 +5426,7 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
                 "brain": dict(brain),
                 "player_words": player_message,
                 "chaos_interrupt": chaos_interrupt,
-                "pre_snapshot": {
-                    "health": game.health,
-                    "spirit": game.spirit,
-                    "supply": game.supply,
-                    "momentum": game.momentum,
-                    "chaos_factor": game.chaos_factor,
-                    "crisis_mode": game.crisis_mode,
-                    "game_over": game.game_over,
-                    "npc_bonds": {n["id"]: n.get("bond", 0) for n in game.npcs},
-                    "clock_fills": {c["id"]: c["filled"] for c in game.clocks},
-                },
+                "pre_snapshot": game.last_turn_snapshot,
             }
 
     consequences, clock_events = apply_consequences(game, roll, brain)
@@ -5348,6 +5437,8 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
                                 config=config)
     raw = call_narrator(client, prompt, game, config)
     narration = parse_narrator_response(game, raw)
+    if game.last_turn_snapshot is not None:
+        game.last_turn_snapshot["narration"] = narration
     metadata = call_narrator_metadata(client, narration, game, config)
     _apply_narrator_metadata(game, metadata)
     # Update chaos factor based on result
@@ -5447,6 +5538,438 @@ def _check_story_completion(game: GameState):
         game.story_blueprint["story_complete"] = True
 
 
+
+# ===============================================================
+# CORRECTION SCHEMA + FLOW  (## prefix)
+# ===============================================================
+
+CORRECTION_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "correction_source": {
+            "type": "string",
+            "enum": ["input_misread", "state_error"],
+        },
+        # input_misread: how the input SHOULD have been understood
+        "corrected_input": {"type": "string"},
+        # input_misread: does the corrected interpretation need a different stat?
+        "reroll_needed": {"type": "boolean"},
+        "corrected_stat": {
+            "type": "string",
+            "enum": ["edge", "heart", "iron", "shadow", "wits", "none"],
+        },
+        # What the narrator should keep in mind when rewriting
+        "narrator_guidance": {"type": "string"},
+        # Whether a Director run is worthwhile (e.g. NPC state changed)
+        "director_useful": {"type": "boolean"},
+        # Ordered list of atomic state patches to apply after restore
+        "state_ops": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "op": {
+                        "type": "string",
+                        "enum": [
+                            "npc_edit",        # patch fields on existing NPC
+                            "npc_split",       # existing NPC → two separate NPCs
+                            "npc_merge",       # two NPCs → one (second removed)
+                            "location_edit",   # overwrite current_location
+                            "scene_context",   # overwrite current_scene_context
+                            "time_edit",       # overwrite time_of_day
+                            "backstory_append",# append text to game.backstory
+                        ],
+                    },
+                    # op=npc_edit / npc_split / npc_merge: id of affected NPC
+                    "npc_id": {"type": ["string", "null"]},
+                    # op=npc_split: name/desc for the NEW second NPC
+                    "split_name": {"type": ["string", "null"]},
+                    "split_description": {"type": ["string", "null"]},
+                    # op=npc_merge: id of the NPC to absorb into npc_id
+                    "merge_source_id": {"type": ["string", "null"]},
+                    # op=npc_edit: dict of fields to overwrite
+                    "fields": {"type": ["object", "null"]},
+                    # op=location_edit / scene_context / time_edit / backstory_append
+                    "value": {"type": ["string", "null"]},
+                },
+                "required": ["op", "npc_id", "split_name", "split_description",
+                             "merge_source_id", "fields", "value"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": [
+        "correction_source", "corrected_input", "reroll_needed",
+        "corrected_stat", "narrator_guidance", "director_useful", "state_ops",
+    ],
+    "additionalProperties": False,
+}
+
+
+def call_correction_brain(client: anthropic.Anthropic, game: GameState,
+                           correction_text: str,
+                           config: Optional[EngineConfig] = None) -> dict:
+    """Analyse a ## correction request against the last turn snapshot.
+    Returns a structured ops-dict that _apply_correction() will execute."""
+    snap = game.last_turn_snapshot
+    if not snap:
+        raise ValueError("No last_turn_snapshot available for correction")
+
+    _cfg = config or EngineConfig()
+    lang = get_narration_lang(_cfg)
+
+    # Build concise NPC summary for the model
+    def _npc_line(n):
+        return (f'id:{n["id"]} name:"{n["name"]}" '
+                f'disposition:{n["disposition"]} '
+                f'desc:"{n.get("description","")[:120]}"')
+    npc_lines = "\n".join(_npc_line(n) for n in game.npcs) or "(none)"
+
+    # Represent the last turn compactly
+    brain = snap.get("brain") or {}
+    roll = snap.get("roll")
+    roll_summary = (
+        f"{roll.result} ({roll.move}, {roll.stat_name}={roll.stat_value}, "
+        f"d1={roll.d1}+d2={roll.d2} vs c1={roll.c1}/c2={roll.c2})"
+        if roll else "dialog (no roll)"
+    )
+
+    system = f"""<role>RPG correction analyser. A player has used ## to correct something about the last scene.</role>
+<rules>
+- Determine whether the error is "input_misread" (Brain misunderstood WHAT the player did/said/thought)
+  OR "state_error" (the game world facts are wrong: wrong NPC, location, relationship, timeline).
+- For input_misread: rephrase the player's ORIGINAL input as it should have been understood → corrected_input.
+  Set reroll_needed=true only if the correction would change which stat applies.
+- For state_error: produce the minimal set of state_ops to fix the world facts.
+- narrator_guidance: one concise sentence telling the Narrator what to change in the rewrite.
+- director_useful: true if NPC state was meaningfully changed (split/merge/disposition change).
+- All text fields in {lang}.
+- If correction_source=input_misread and no state changes are needed, return state_ops=[].
+- If correction_source=state_error, corrected_input="" and reroll_needed=false.
+</rules>"""
+
+    user_msg = f"""## correction from player: {correction_text}
+
+<last_turn>
+player_input: {snap.get("player_input", "")}
+brain_interpretation: move={brain.get("move","?")} stat={brain.get("stat","?")} intent={brain.get("player_intent","")[:200]}
+roll: {roll_summary}
+narration (first 600 chars): {(snap.get("narration") or "")[:600]}
+</last_turn>
+
+<current_state>
+location: {game.current_location}
+scene_context: {game.current_scene_context[:200]}
+time: {game.time_of_day}
+npcs:
+{npc_lines}
+</current_state>"""
+
+    log(f"[Correction] Analysing: {correction_text[:100]}")
+    try:
+        response = _api_create_with_retry(
+            client, max_retries=2,
+            model=BRAIN_MODEL, max_tokens=800, system=system,
+            messages=[{"role": "user", "content": user_msg}],
+            output_config={"format": {"type": "json_schema",
+                                      "schema": CORRECTION_OUTPUT_SCHEMA}},
+        )
+        result = json.loads(response.content[0].text)
+        log(f"[Correction] source={result['correction_source']} "
+            f"reroll={result['reroll_needed']} ops={len(result['state_ops'])}")
+        return result
+    except Exception as e:
+        log(f"[Correction] Brain failed ({type(e).__name__}: {e}), "
+            f"falling back to no-op state_error", level="warning")
+        return {
+            "correction_source": "state_error",
+            "corrected_input": "",
+            "reroll_needed": False,
+            "corrected_stat": "none",
+            "narrator_guidance": correction_text,
+            "director_useful": False,
+            "state_ops": [],
+        }
+
+
+def _apply_correction_ops(game: GameState, ops: list) -> None:
+    """Apply the atomic state_ops returned by call_correction_brain."""
+    import uuid
+    for op_dict in ops:
+        op = op_dict.get("op")
+
+        if op == "npc_edit":
+            npc = _find_npc(game, op_dict.get("npc_id", ""))
+            if npc and op_dict.get("fields"):
+                allowed = {"name", "description", "disposition", "agenda",
+                           "instinct", "aliases", "bond", "details"}
+                for k, v in op_dict["fields"].items():
+                    if k in allowed:
+                        npc[k] = v
+                log(f"[Correction] npc_edit: {npc['name']} fields={list(op_dict['fields'].keys())}")
+
+        elif op == "npc_split":
+            existing = _find_npc(game, op_dict.get("npc_id", ""))
+            if existing:
+                new_name = op_dict.get("split_name") or "Unknown"
+                new_desc = op_dict.get("split_description") or ""
+                new_id = f"npc_{uuid.uuid4().hex[:8]}"
+                new_npc = {
+                    "id": new_id,
+                    "name": new_name,
+                    "description": new_desc,
+                    "disposition": "neutral",
+                    "bond": 0,
+                    "bond_max": 4,
+                    "status": "active",
+                    "introduced": True,
+                    "memory": [],
+                    "aliases": [],
+                    "details": {},
+                    "agenda": "",
+                    "instinct": "",
+                }
+                game.npcs.append(new_npc)
+                log(f"[Correction] npc_split: '{existing['name']}' → also '{new_name}' ({new_id})")
+
+        elif op == "npc_merge":
+            target = _find_npc(game, op_dict.get("npc_id", ""))
+            source = _find_npc(game, op_dict.get("merge_source_id", ""))
+            if target and source and target is not source:
+                # Absorb memories and aliases, then remove source
+                target["memory"].extend(source.get("memory", []))
+                for alias in source.get("aliases", []):
+                    if alias not in target.get("aliases", []):
+                        target.setdefault("aliases", []).append(alias)
+                if source["name"] not in target.get("aliases", []):
+                    target.setdefault("aliases", []).append(source["name"])
+                game.npcs = [n for n in game.npcs if n["id"] != source["id"]]
+                log(f"[Correction] npc_merge: '{source['name']}' absorbed into '{target['name']}'")
+
+        elif op == "location_edit":
+            if op_dict.get("value"):
+                game.current_location = op_dict["value"]
+                log(f"[Correction] location → {game.current_location}")
+
+        elif op == "scene_context":
+            if op_dict.get("value"):
+                game.current_scene_context = op_dict["value"]
+                log(f"[Correction] scene_context updated")
+
+        elif op == "time_edit":
+            if op_dict.get("value"):
+                game.time_of_day = op_dict["value"]
+                log(f"[Correction] time_of_day → {game.time_of_day}")
+
+        elif op == "backstory_append":
+            if op_dict.get("value"):
+                sep = "\n" if game.backstory else ""
+                game.backstory += sep + op_dict["value"]
+                log(f"[Correction] backstory appended")
+
+
+def _restore_from_snapshot(game: GameState, snap: dict) -> None:
+    """Fully restore all turn-mutable GameState fields from a last_turn_snapshot.
+    Used by the ## correction flow for input_misread corrections."""
+    game.health = snap["health"]
+    game.spirit = snap["spirit"]
+    game.supply = snap["supply"]
+    game.momentum = snap.get("momentum", game.momentum)
+    game.max_momentum = snap.get("max_momentum", game.max_momentum)
+    game.scene_count = snap.get("scene_count", game.scene_count)
+    game.chaos_factor = snap.get("chaos_factor", game.chaos_factor)
+    game.crisis_mode = snap.get("crisis_mode", game.crisis_mode)
+    game.game_over = snap.get("game_over", game.game_over)
+    game.epilogue_shown = snap.get("epilogue_shown", game.epilogue_shown)
+    game.epilogue_dismissed = snap.get("epilogue_dismissed", game.epilogue_dismissed)
+    game.current_location = snap.get("current_location", game.current_location)
+    game.current_scene_context = snap.get("current_scene_context", game.current_scene_context)
+    game.time_of_day = snap.get("time_of_day", game.time_of_day)
+    game.location_history = list(snap.get("location_history", game.location_history))
+    game.director_guidance = copy.deepcopy(snap.get("director_guidance", game.director_guidance))
+    game.scene_intensity_history = list(snap.get("scene_intensity_history", game.scene_intensity_history))
+    if "npcs" in snap:
+        game.npcs = copy.deepcopy(snap["npcs"])
+    if "clocks" in snap:
+        game.clocks = copy.deepcopy(snap["clocks"])
+    # Trim session_log and narration_history back by one entry
+    # (the turn being corrected will be re-appended by the re-run)
+    if snap.get("session_log_tail") is not None and game.session_log:
+        game.session_log.pop()
+    if snap.get("narration_history_tail") is not None and game.narration_history:
+        game.narration_history.pop()
+    log("[Correction] State fully restored from snapshot")
+
+
+def process_correction(client: anthropic.Anthropic, game: GameState,
+                        correction_text: str,
+                        config: Optional[EngineConfig] = None
+                        ) -> tuple[GameState, str, Optional[dict]]:
+    """Handle a ## correction request.
+    Returns (game, rewritten_narration, director_ctx).
+    The caller (UI layer) must:
+      - replace the last narrator chat message with the returned narration
+      - run the deferred director if director_ctx is not None
+      - call save_game() after display
+    """
+    snap = game.last_turn_snapshot
+    if not snap:
+        log("[Correction] No snapshot available — cannot correct", level="warning")
+        return game, "(Keine Korrektur möglich — kein letzter Zug im Speicher.)", None
+
+    _cfg = config or EngineConfig()
+
+    # Step 1: Analyse the correction
+    analysis = call_correction_brain(client, game, correction_text, _cfg)
+    source = analysis["correction_source"]
+
+    # Step 2a: input_misread → full state restore, then re-run Brain + optional Roll
+    if source == "input_misread":
+        _restore_from_snapshot(game, snap)
+        corrected_input = analysis.get("corrected_input") or snap.get("player_input", "")
+
+        # Re-run Brain with the corrected input interpretation
+        brain = call_brain(client, game, corrected_input, _cfg)
+        _apply_brain_location_time(game, brain)
+
+        if analysis.get("reroll_needed") and brain.get("stat", "none") != "none":
+            # Full action path with new roll
+            game.scene_count += 1
+            stat_name = brain.get("stat", "wits")
+            roll = roll_action(stat_name, game.get_stat(stat_name), brain.get("move", "face_danger"))
+            log(f"[Correction] Re-rolled: {roll.result} ({stat_name})")
+            consequences, clock_events = apply_consequences(game, roll, brain)
+            npc_agency = check_npc_agency(game)
+            activated_npcs, mentioned_npcs, _ = activate_npcs_for_prompt(game, brain, corrected_input)
+            prompt = build_action_prompt(game, brain, roll, consequences, clock_events, npc_agency,
+                                         player_words=corrected_input, config=_cfg,
+                                         activated_npcs=activated_npcs, mentioned_npcs=mentioned_npcs)
+        else:
+            # Dialog / intent-only path — no new roll
+            roll = None
+            game.scene_count += 1
+            activated_npcs, mentioned_npcs, _ = activate_npcs_for_prompt(game, brain, corrected_input)
+            prompt = build_dialog_prompt(game, brain, player_words=corrected_input,
+                                         activated_npcs=activated_npcs,
+                                         mentioned_npcs=mentioned_npcs, config=_cfg)
+
+    # Step 2b: state_error → patch state in-place, no re-roll
+    # IMPORTANT: do NOT call apply_consequences() here — consequences from the
+    # original turn are already baked into the GameState.  Re-applying would
+    # double-deduct health/spirit/supply/momentum and double-tick clocks.
+    else:
+        roll = snap.get("roll")           # keep original roll (may be None for dialog)
+        brain = snap.get("brain") or {}   # keep original brain output
+        _apply_correction_ops(game, analysis.get("state_ops", []))
+        activated_npcs, mentioned_npcs, _ = activate_npcs_for_prompt(
+            game, brain, snap.get("player_input", ""))
+        # Read original consequences from session_log for prompt-building only
+        _last_log = game.session_log[-1] if game.session_log else {}
+        if roll:
+            consequences = _last_log.get("consequences", [])
+            clock_events = _last_log.get("clock_events", [])
+            npc_agency = check_npc_agency(game)
+            prompt = build_action_prompt(game, brain, roll, consequences, clock_events, npc_agency,
+                                         player_words=snap.get("player_input", ""), config=_cfg,
+                                         activated_npcs=activated_npcs, mentioned_npcs=mentioned_npcs)
+        else:
+            prompt = build_dialog_prompt(game, brain, player_words=snap.get("player_input", ""),
+                                         activated_npcs=activated_npcs,
+                                         mentioned_npcs=mentioned_npcs, config=_cfg)
+
+    # Step 3: Narrator rewrite — inject correction context
+    correction_tag = (
+        f"\n<correction_context>{analysis['narrator_guidance']}</correction_context>"
+        f"\n<correction_instruction>Rewrite the scene incorporating the correction above. "
+        f"Same events and outcome — only adjust what the correction requires.</correction_instruction>"
+    )
+    prompt = prompt + correction_tag
+
+    raw = call_narrator(client, prompt, game, _cfg)
+    narration = parse_narrator_response(game, raw)
+
+    # Update snapshot with rewritten narration so a follow-up ## works correctly
+    if game.last_turn_snapshot is not None:
+        game.last_turn_snapshot["narration"] = narration
+        if source == "input_misread":
+            game.last_turn_snapshot["brain"] = dict(brain)
+            game.last_turn_snapshot["roll"] = roll
+
+    # Step 4: Metadata extraction (new NPCs, memories etc. from rewritten scene)
+    metadata = call_narrator_metadata(client, narration, game, _cfg)
+    _apply_narrator_metadata(game, metadata)
+
+    # Step 5: Update session_log / narration_history
+    intent = brain.get("player_intent", snap.get("player_input", ""))[:80]
+    narration_entry = {
+        "prompt_summary": f"[corrected] {intent}",
+        "narration": narration[:MAX_NARRATION_CHARS],
+    }
+
+    if source == "input_misread":
+        # Full re-run after rollback: chaos/intensity need fresh recording
+        if roll:
+            update_chaos_factor(game, roll.result)
+            scene_type = "action"
+        else:
+            scene_type = "breather"
+        record_scene_intensity(game, scene_type)
+        # _restore_from_snapshot popped the old entries → append new ones
+        game.narration_history.append(narration_entry)
+        if len(game.narration_history) > MAX_NARRATION_HISTORY:
+            game.narration_history = game.narration_history[-MAX_NARRATION_HISTORY:]
+        game.session_log.append({
+            "scene": game.scene_count,
+            "summary": f"[corrected] {intent}",
+            "move": brain.get("move", "dialog"),
+            "result": roll.result if roll else "dialog",
+            "consequences": [],
+            "clock_events": [],
+            "dramatic_question": brain.get("dramatic_question", ""),
+            "chaos_interrupt": None,
+            "npc_activation": "",
+        })
+        if len(game.session_log) > MAX_SESSION_LOG:
+            game.session_log = game.session_log[-MAX_SESSION_LOG:]
+    else:
+        # state_error: no rollback → chaos/intensity already recorded by original turn.
+        # Only update narration text; preserve original consequences/clock_events.
+        if game.narration_history:
+            game.narration_history[-1] = narration_entry
+        else:
+            game.narration_history.append(narration_entry)
+        if game.session_log:
+            game.session_log[-1]["summary"] = f"[corrected] {intent}"
+        else:
+            game.session_log.append({
+                "scene": game.scene_count,
+                "summary": f"[corrected] {intent}",
+                "move": brain.get("move", "dialog"),
+                "result": roll.result if roll else "dialog",
+                "consequences": [],
+                "clock_events": [],
+                "dramatic_question": brain.get("dramatic_question", ""),
+                "chaos_interrupt": None,
+                "npc_activation": "",
+            })
+
+    # Step 6: Director — only when useful and NPC state changed
+    director_ctx = None
+    if analysis.get("director_useful"):
+        director_reason = _should_call_director(
+            game, roll_result=roll.result if roll else "dialog",
+            chaos_used=False,
+            new_npcs_found=bool(metadata.get("new_npcs")),
+            revelation_used=False,
+        )
+        if director_reason:
+            director_ctx = {"narration": narration, "config": _cfg}
+            log(f"[Correction] Director queued (reason: {director_reason})")
+
+    log(f"[Correction] Complete: source={source}, rewrite done")
+    return game, narration, director_ctx
+
+
 def process_momentum_burn(client: anthropic.Anthropic, game: GameState,
                           old_roll: RollResult, new_result: str,
                           brain_data: dict, player_words: str = "",
@@ -5471,23 +5994,46 @@ def process_momentum_burn(client: anthropic.Anthropic, game: GameState,
 
     # --- Restore state from pre-consequence snapshot ---
     if pre_snapshot:
-        # Full restoration: health, spirit, supply to pre-consequence values
+        # Full restoration using last_turn_snapshot (authoritative, taken before any mutations)
         game.health = pre_snapshot["health"]
         game.spirit = pre_snapshot["spirit"]
         game.supply = pre_snapshot["supply"]
+        game.momentum = pre_snapshot.get("momentum", game.momentum)
+        game.max_momentum = pre_snapshot.get("max_momentum", game.max_momentum)
         game.chaos_factor = pre_snapshot.get("chaos_factor", game.chaos_factor)
         game.crisis_mode = pre_snapshot.get("crisis_mode", False)
         game.game_over = pre_snapshot.get("game_over", False)
-        # Restore NPC bonds
-        npc_bonds = pre_snapshot.get("npc_bonds", {})
-        for npc in game.npcs:
-            if npc["id"] in npc_bonds:
-                npc["bond"] = npc_bonds[npc["id"]]
-        # Restore clock fills (reverse any ticks from the old MISS)
-        clock_fills = pre_snapshot.get("clock_fills", {})
-        for clock in game.clocks:
-            if clock["id"] in clock_fills:
-                clock["filled"] = clock_fills[clock["id"]]
+        game.epilogue_shown = pre_snapshot.get("epilogue_shown", game.epilogue_shown)
+        game.epilogue_dismissed = pre_snapshot.get("epilogue_dismissed", game.epilogue_dismissed)
+        game.current_location = pre_snapshot.get("current_location", game.current_location)
+        game.current_scene_context = pre_snapshot.get("current_scene_context", game.current_scene_context)
+        game.time_of_day = pre_snapshot.get("time_of_day", game.time_of_day)
+        game.location_history = list(pre_snapshot.get("location_history", game.location_history))
+        game.director_guidance = copy.deepcopy(pre_snapshot.get("director_guidance", game.director_guidance))
+        # Restore full NPC state (not just bonds) — removes any NPCs introduced in MISS narration
+        if "npcs" in pre_snapshot:
+            game.npcs = copy.deepcopy(pre_snapshot["npcs"])
+        else:
+            # Legacy fallback: partial bond-only restore
+            npc_bonds = pre_snapshot.get("npc_bonds", {})
+            for npc in game.npcs:
+                if npc["id"] in npc_bonds:
+                    npc["bond"] = npc_bonds[npc["id"]]
+        # Restore clock fills
+        if "clocks" in pre_snapshot:
+            game.clocks = copy.deepcopy(pre_snapshot["clocks"])
+        else:
+            clock_fills = pre_snapshot.get("clock_fills", {})
+            for clock in game.clocks:
+                if clock["id"] in clock_fills:
+                    clock["filled"] = clock_fills[clock["id"]]
+        # Restore scene_count (was incremented before snapshot could capture post-increment state)
+        # Burn runs a full new narrator pass so scene_count will be re-incremented there
+        if "scene_count" in pre_snapshot:
+            game.scene_count = pre_snapshot["scene_count"]
+        # Fix Bug: scene_intensity_history got an entry from MISS narration — restore it
+        if "scene_intensity_history" in pre_snapshot:
+            game.scene_intensity_history = list(pre_snapshot["scene_intensity_history"])
         log(f"[Burn] Fully restored state from snapshot: H{game.health} Sp{game.spirit} Su{game.supply} Chaos{game.chaos_factor}")
     else:
         # Legacy fallback (old burn_info without snapshot — backward compat)

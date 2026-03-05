@@ -5,6 +5,33 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.35]
+
+### Added
+- **`##` Correction System:** Players can prefix any input with `##` to correct a misunderstanding or wrong game state from the last turn. Two correction types are handled automatically:
+  - **`input_misread`:** Brain misunderstood what the player did/said/thought. Full state rollback from `last_turn_snapshot`, Brain re-run with corrected intent, optional re-roll if the stat changes. Narrator rewrites the scene with a `<correction_context>` tag injecting specific guidance
+  - **`state_error`:** World facts are wrong (wrong NPC identity, location, relationship). State patched in-place via atomic `state_ops` — no rollback, no re-roll, Narrator rewrites with corrections applied
+- **`CORRECTION_OUTPUT_SCHEMA`:** Structured Output schema for the correction Brain. Fields: `correction_source`, `corrected_input`, `reroll_needed`, `corrected_stat`, `narrator_guidance`, `director_useful`, `state_ops[]`
+- **`call_correction_brain()`:** Haiku call that analyses the `##` text against the last turn snapshot (player_input, brain, roll, narration) and returns a structured ops-dict. Graceful fallback to no-op `state_error` on API failure
+- **`_apply_correction_ops()`:** Atomic state operation dispatcher. Supported ops: `npc_edit` (patch NPC fields), `npc_split` (one NPC → two, new UUID), `npc_merge` (absorb memories + aliases, remove source), `location_edit`, `scene_context`, `time_edit`, `backstory_append`
+- **`_restore_from_snapshot()`:** Full GameState rollback for `input_misread` corrections. Restores all turn-mutable fields (resources, counters, spatial, narrative state via deepcopy), trims `session_log` and `narration_history` by one entry
+- **`process_correction()`:** Main correction orchestrator. Dispatches by `correction_source`, re-runs Brain/Roll/Narrator as needed, updates session_log/narration_history in-place, optionally queues deferred Director when NPC state changed meaningfully
+- **Correction badge:** Corrected narrator messages show a subtle `✎ Korrigiert` / `✎ Corrected` badge (new `.correction-badge` CSS class). New i18n keys: `correction.badge`, `correction.no_snapshot`
+- **Turn snapshot system (`last_turn_snapshot`):** Transient GameState field (not in SAVE_FIELDS) capturing the full pre-turn state before any mutations — used by both the `##` correction flow and the existing momentum burn restore. Populated at the start of `process_turn()` via `_build_turn_snapshot()`
+- **Creativity seed for output diversity:** `_creativity_seed()` generates 3 random words (nouns/adjectives) via the `wonderwords` library to perturb LLM token probabilities during character and scene generation. Injected into `call_setup_brain()` (character/world), `build_new_game_prompt()` (opening scene), and `build_new_chapter_prompt()` (chapter opening). Each seed includes an explicit instruction `"Use as loose inspiration for NPC names, locations, and scene details"` — without this, generic random words only shifted setting/atmosphere but Sonnet still converged on the same NPC names. The instruction anchors the seed words to the name-token decision. Solves deterministic convergence where identical archetypes (e.g. "plumber") always produced the same NPC names and scenarios. Built-in 30-word fallback list if wonderwords is unavailable. All three injection points log the seed value for diagnostics (`[Setup] creativity_seed=...`, `[Narrator] Opening creativity_seed=...`, `[Narrator] Chapter N opening creativity_seed=...`)
+- **`wonderwords` dependency:** Added to `_REQUIRED` packages in `_ensure_requirements()` — auto-installed on first launch. Provides offline random English word generation (nouns, adjectives, verbs) with filtering by part of speech, length, and pattern
+
+### Changed
+- **`process_player_input()` (app.py):** `##` prefix detected before normal turn dispatch. If no snapshot is available, `ui.notify()` with `correction.no_snapshot` is shown and processing aborts early. Correction result replaces the last `assistant` message in `s["messages"]` (with `"corrected": True` flag) instead of appending. Chat container fully re-rendered via `render_chat_messages()` on correction
+
+### Fixed
+- **Double consequence application in `state_error` corrections:** `process_correction()` called `apply_consequences(game, roll, brain)` in the `state_error` path even though consequences were already applied by the original `process_turn()`. Without a rollback, this doubled all mechanical effects: health/spirit/supply/momentum deductions, clock ticks, bond changes, and crisis flags. Fix: read original consequences from `session_log[-1]` for prompt-building only, never re-apply them
+- **Double chaos factor / scene intensity update in `state_error` corrections:** `update_chaos_factor()` and `record_scene_intensity()` were called unconditionally in Step 5, but for `state_error` corrections the original turn already recorded both. Fix: chaos and intensity updates now only run for `input_misread` (fresh re-run after rollback)
+- **Session log / narration history corruption in `input_misread` corrections:** `_restore_from_snapshot()` correctly pops the last session_log and narration_history entries, but Step 5 used `[-1] = entry` (overwrite) instead of `append()` — replacing the entry *before* the corrected turn instead of adding the new one. Fix: `input_misread` now appends with proper length-cap trimming; `state_error` preserves original consequences/clock_events and only updates the summary text
+- **Python 3.11 f-string syntax error on startup:** `_story_context_block()` used a backslash-escaped quote inside an f-string expression (`f'{" PAST_RANGE=\"true\"" ...}'`) — valid in Python 3.12+ but crashes with `SyntaxError: f-string expression part cannot include a backslash` on Python 3.11. Fix: extracted the conditional to a variable before the f-string
+
+---
+
 ## [0.9.34]
 
 ### Added

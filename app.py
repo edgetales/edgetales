@@ -25,6 +25,7 @@ def _ensure_requirements():
         "nameparser":     "nameparser",
         "cryptography":   "cryptography",
         "faster_whisper": "faster-whisper",
+        "wonderwords":    "wonderwords",
     }
 
     # Optional packages (hint only, no auto-install)
@@ -130,7 +131,7 @@ from engine import (
     save_chapter_archive, load_chapter_archive, list_chapter_archives, delete_chapter_archives,
     get_current_act, setup_file_logging,
     call_setup_brain, start_new_game, start_new_chapter,
-    process_turn, process_momentum_burn, call_recap,
+    process_turn, process_momentum_burn, process_correction, call_recap,
     run_deferred_director, generate_epilogue,
 )
 from i18n import (
@@ -1389,6 +1390,8 @@ def render_chat_messages(container) -> Optional[str]:
         css = "recap" if msg.get("recap") else role
         prefix = f"{E['scroll']} **{t('actions.recap_prefix', L())}**\n\n" if msg.get("recap") else ""
         with ui.column().classes(f"chat-msg {css} w-full"):
+            if msg.get("corrected"):
+                ui.html(f'<div class="correction-badge">{t("correction.badge", L())}</div>')
             ui.markdown(f"{prefix}{_clean_narration(content)}")
             rd = msg.get("roll_data")
             if rd: render_dice_display(rd)
@@ -1809,7 +1812,23 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
         except TimeoutError:
             pass
         client=anthropic.Anthropic(api_key=s["api_key"])
-        game,narration,roll,burn_info,director_ctx=await asyncio.to_thread(process_turn,client,game,text,config)
+        # ## prefix → correction flow; otherwise normal turn
+        if text.startswith("##"):
+            if not game.last_turn_snapshot:
+                try: spinner.delete()
+                except Exception: pass
+                ui.notify(t("correction.no_snapshot", L()), type="warning", position="top")
+                s["processing"] = False
+                return
+            correction_text = text[2:].strip()
+            game,narration,director_ctx=await asyncio.to_thread(
+                process_correction,client,game,correction_text,config)
+            roll,burn_info=None,None
+            _is_correction=True
+        else:
+            game,narration,roll,burn_info,director_ctx=await asyncio.to_thread(
+                process_turn,client,game,text,config)
+            _is_correction=False
         # Staleness check: if user loaded a different save during processing, discard result
         if s.get("_turn_gen", 0) != turn_gen:
             log(f"[Turn] Discarding stale response (gen {turn_gen} → {s.get('_turn_gen', 0)})")
@@ -1831,7 +1850,7 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
                     render_sidebar_status(game, session=s)
             except Exception as e:
                 log(f"[Sidebar] Status refresh failed: {e}", level="warning")
-        if game.scene_count > 1:
+        if not _is_correction and game.scene_count > 1:
             s["messages"].append({"scene_marker":t("game.scene_marker", L(), n=game.scene_count, location=game.current_location)})
         roll_data=None
         if roll:
@@ -1840,22 +1859,37 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
                 clock_events=ll.get("clock_events",[]),
                 brain={"position":ll.get("position","risky"),"effect":ll.get("effect","standard")},
                 chaos_interrupt=ll.get("chaos_interrupt",""))
-        s["messages"].append({"role":"assistant","content":narration,"roll_data":roll_data})
+        if _is_correction:
+            # Replace last assistant message in history with the corrected narration
+            for i in range(len(s["messages"])-1, -1, -1):
+                if s["messages"][i].get("role") == "assistant":
+                    s["messages"][i] = {"role":"assistant","content":narration,
+                                        "roll_data":roll_data,"corrected":True}
+                    break
+        else:
+            s["messages"].append({"role":"assistant","content":narration,"roll_data":roll_data})
         save_game(game,username,s["messages"],s.get("active_save","autosave"))
         # Render AI response
-        scroll_target_id = f"msg-{len(s['messages'])}"
-        with chat_container:
-            if game.scene_count > 1:
-                ui.html(f'<div id="{scroll_target_id}" class="scene-marker">{E["dash"]} {t("game.scene_marker", L(), n=game.scene_count, location=game.current_location)} {E["dash"]}</div>')
-            else:
-                ui.html(f'<div id="{scroll_target_id}"></div>')
-            msg_col = ui.column().classes("chat-msg assistant w-full")
-            with msg_col:
-                ui.markdown(_clean_narration(narration))
-                if roll_data: render_dice_display(roll_data)
+        if _is_correction:
+            # Full re-render: replace last assistant bubble in the DOM
+            chat_container.clear()
+            render_chat_messages(chat_container)
+            scroll_target_id = None
+        else:
+            scroll_target_id = f"msg-{len(s['messages'])}"
+            with chat_container:
+                if game.scene_count > 1:
+                    ui.html(f'<div id="{scroll_target_id}" class="scene-marker">{E["dash"]} {t("game.scene_marker", L(), n=game.scene_count, location=game.current_location)} {E["dash"]}</div>')
+                else:
+                    ui.html(f'<div id="{scroll_target_id}"></div>')
+                msg_col = ui.column().classes("chat-msg assistant w-full")
+                with msg_col:
+                    ui.markdown(_clean_narration(narration))
+                    if roll_data: render_dice_display(roll_data)
         # Two-step scroll: bottom first (forces DOM render), then up to scene marker
         await _scroll_chat_bottom()
-        await _scroll_to_element(scroll_target_id)
+        if scroll_target_id:
+            await _scroll_to_element(scroll_target_id)
         # Fire Director in background — doesn't block narration display
         if director_ctx:
             _dc=director_ctx; _g=game; _u=username; _s=s; _gen=turn_gen
@@ -1877,7 +1911,9 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
             burn_info["roll"] = asdict(burn_info["roll"])
             s["pending_burn"]=burn_info; ui.navigate.reload()
         else:
-            await do_tts(narration, msg_col)
+            # For corrections msg_col is None (full re-render) — TTS still works, no container needed
+            tts_container = msg_col if not _is_correction else None
+            await do_tts(narration, tts_container)
             # Reload if game state now requires special UI (epilogue offer, game over)
             # These cards only render on page load, so a reload is needed to show them.
             bp = game.story_blueprint or {}
