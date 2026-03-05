@@ -1903,7 +1903,6 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
                     break
         else:
             s["messages"].append({"role":"assistant","content":narration,"roll_data":roll_data})
-        save_game(game,username,s["messages"],s.get("active_save","autosave"))
         # Render AI response
         if _is_correction:
             # Fade out the green correction input message before re-rendering
@@ -1938,6 +1937,8 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
         await _scroll_chat_bottom()
         if scroll_target_id:
             await _scroll_to_element(scroll_target_id)
+        # Save after rendering — player sees narration immediately, save doesn't block display
+        save_game(game,username,s["messages"],s.get("active_save","autosave"))
         # Fire Director in background — doesn't block narration display
         if director_ctx:
             _dc=director_ctx; _g=game; _u=username; _s=s; _gen=turn_gen

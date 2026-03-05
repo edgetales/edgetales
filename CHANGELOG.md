@@ -5,6 +5,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.37]
+
+### Changed
+- **Deferred save_game after rendering (app.py):** `save_game()` in `process_player_input()` moved from before rendering to after scroll completion. Player sees narration immediately — file I/O no longer blocks display. Save still runs before Director background task and TTS/burn paths
+- **Director max_tokens raised 1200 → 2800:** German prose with 2+ NPC reflections regularly exceeded 1200 tokens, causing `JSONDecodeError: Unterminated string` on Structured Output truncation. Diagnosed via real savegame: 2 NPCs with `_needs_reflection=True` + full `narrator_guidance` + `npc_guidance` for 4 NPCs exceeded the limit at char 3519. 2800 provides headroom for 4–5 simultaneous reflections in German
+- **All max_tokens limits raised for headroom:** German output requires ~15–20% more tokens than English. Previous limits were tuned for English and caused silent truncation on verbose German sessions. New values: `call_recap` 512 → 1200, `call_story_architect` 2500 → 4000, `call_narrator` 2500 → 3500, `call_narrator_metadata` 2000 → 2800, `call_chapter_summary` 800 → 1500, `call_correction_brain` 800 → 1500. `call_brain` and `call_setup_brain` remain at 512 (compact fixed schemas, no truncation risk). No cost impact — `max_tokens` is an upper bound, not a target
+
+---
+
 ## [0.9.36]
 
 ### Added

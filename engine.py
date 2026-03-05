@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.36"
+VERSION = "0.9.37"
 
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-5-20250929"
@@ -2854,7 +2854,7 @@ def call_recap(client: anthropic.Anthropic, game: GameState,
         try:
             response = _api_create_with_retry(
                 client, max_retries=1,
-                model=BRAIN_MODEL, max_tokens=512,
+                model=BRAIN_MODEL, max_tokens=1200,
                 system=f"""Recap an RPG story in {lang}. Second person singular.
 - 4-6 sentences, atmospheric, no game mechanics
 - Do NOT use markdown headings (#). Start directly with the recap text.
@@ -2957,7 +2957,7 @@ npcs:{npc_text}{campaign_ctx}{backstory_text}"""
     try:
         response = _api_create_with_retry(
             client, max_retries=2,
-            model=NARRATOR_MODEL, max_tokens=2500, system=system,
+            model=NARRATOR_MODEL, max_tokens=4000, system=system,
             messages=[{"role": "user", "content": user_msg}],
             output_config={"format": {"type": "json_schema", "schema": STORY_ARCHITECT_OUTPUT_SCHEMA}},
         )
@@ -3310,7 +3310,7 @@ def call_narrator(client: anthropic.Anthropic, prompt: str,
 
     response = _api_create_with_retry(
         client, max_retries=3,
-        model=NARRATOR_MODEL, max_tokens=2500,
+        model=NARRATOR_MODEL, max_tokens=3500,
         system=get_narrator_system(config or EngineConfig(), game),
         messages=messages,
     )
@@ -3426,7 +3426,7 @@ Extract all metadata from the narration above. Remember: {game.player_name} is t
     try:
         response = _api_create_with_retry(
             client, max_retries=2,
-            model=BRAIN_MODEL, max_tokens=2000,
+            model=BRAIN_MODEL, max_tokens=2800,
             system=system,
             messages=[{"role": "user", "content": prompt}],
             output_config={"format": {
@@ -3714,7 +3714,7 @@ def call_director(client: anthropic.Anthropic, game: GameState,
     try:
         response = _api_create_with_retry(
             client, max_retries=1,
-            model=DIRECTOR_MODEL, max_tokens=1200,
+            model=DIRECTOR_MODEL, max_tokens=2800,
             system=DIRECTOR_SYSTEM,
             messages=[{"role": "user", "content": prompt}],
             output_config={"format": {"type": "json_schema", "schema": DIRECTOR_OUTPUT_SCHEMA}},
@@ -5037,7 +5037,7 @@ def call_chapter_summary(client: anthropic.Anthropic, game: GameState,
     try:
         response = _api_create_with_retry(
             client, max_retries=1,
-            model=BRAIN_MODEL, max_tokens=800,
+            model=BRAIN_MODEL, max_tokens=1500,
             system=f"""Summarize an RPG chapter for campaign continuity.
 - Write in {lang}
 - "title": A short evocative title for this chapter (3-6 words)
@@ -5688,7 +5688,7 @@ npcs:
     try:
         response = _api_create_with_retry(
             client, max_retries=2,
-            model=BRAIN_MODEL, max_tokens=800, system=system,
+            model=BRAIN_MODEL, max_tokens=1500, system=system,
             messages=[{"role": "user", "content": user_msg}],
             output_config={"format": {"type": "json_schema",
                                       "schema": CORRECTION_OUTPUT_SCHEMA}},
