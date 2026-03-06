@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.37"
+VERSION = "0.9.38"
 
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-5-20250929"
@@ -846,6 +846,65 @@ def _normalize_npc_dispositions(npcs: list) -> None:
             n["disposition"] = _normalize_disposition(n["disposition"])
 
 
+# --- NPC name sanitization: strip parenthetical annotations ---
+_ALIAS_HINT_RE = re.compile(
+    r'\b(?:auch\s+bekannt\s+als|also\s+known\s+as|aka|genannt|called)\s+',
+    re.IGNORECASE,
+)
+
+def _sanitize_npc_name(name: str) -> tuple[str, list[str]]:
+    """Strip parenthetical annotations from NPC names.
+    Returns (clean_name, extracted_aliases).
+
+    Examples:
+        'Cremin (auch bekannt als Cremon)' → ('Cremin', ['Cremon'])
+        'Barrel (der Fass-Schläger)'       → ('Barrel', ['der Fass-Schläger'])
+        'Hauptmann Krahe'                  → ('Hauptmann Krahe', [])
+    """
+    if not name or '(' not in name:
+        return name.strip(), []
+    m = re.match(r'^(.+?)\s*\((.+)\)\s*$', name)
+    if not m:
+        return name.strip(), []
+    clean = m.group(1).strip()
+    paren = m.group(2).strip()
+    if not clean:
+        return name.strip(), []
+    # Check for explicit alias hints ("auch bekannt als ...", "aka ...")
+    alias_match = _ALIAS_HINT_RE.search(paren)
+    if alias_match:
+        alias = paren[alias_match.end():].strip().rstrip('.')
+        return clean, [alias] if alias else []
+    # Generic parenthetical (epithet, descriptor) → usable as alias
+    return clean, [paren] if paren else []
+
+
+def _apply_name_sanitization(npc: dict) -> None:
+    """Sanitize an NPC's name in-place: strip parentheticals, add as aliases."""
+    raw = npc.get("name", "")
+    if '(' not in raw:
+        return
+    clean, extracted = _sanitize_npc_name(raw)
+    if clean == raw:
+        return
+    npc["name"] = clean
+    npc.setdefault("aliases", [])
+    existing_lower = {a.lower() for a in npc["aliases"]}
+    # Add old raw name as alias so searches still find it
+    if raw.lower() not in existing_lower and raw.lower() != clean.lower():
+        npc["aliases"].append(raw)
+        existing_lower.add(raw.lower())
+    # Add extracted aliases (the parenthetical content)
+    for alias in extracted:
+        if alias.lower() not in existing_lower and alias.lower() != clean.lower():
+            npc["aliases"].append(alias)
+            existing_lower.add(alias.lower())
+    # Clean up self-aliases: name change may have made pre-existing aliases redundant
+    clean_lower = clean.lower()
+    npc["aliases"] = [a for a in npc["aliases"] if a.lower() != clean_lower]
+    log(f"[NPC] Sanitized name: '{raw}' → '{clean}' (aliases: {npc['aliases']})")
+
+
 def _find_npc(game, npc_ref: str) -> Optional[dict]:
     """Find an NPC by ID, name, alias, or substring match.
     Search order: exact ID → exact name → exact alias → substring name → substring alias.
@@ -1109,6 +1168,9 @@ def _merge_npc_identity(existing: dict, new_name: str, new_desc: str = ""):
     Old name becomes an alias, new name becomes primary."""
     old_name = existing["name"]
     new_name = new_name.strip()
+    # Strip parenthetical annotations from new name (e.g. "Cremin (auch bekannt als Cremon)")
+    clean_name, extra_aliases = _sanitize_npc_name(new_name)
+    new_name = clean_name
     # Guard: don't merge if names are identical (case-insensitive)
     if old_name.lower().strip() == new_name.lower():
         log(f"[NPC] Identity merge skipped: '{old_name}' → '{new_name}' (same name)")
@@ -1119,6 +1181,10 @@ def _merge_npc_identity(existing: dict, new_name: str, new_desc: str = ""):
     existing["name"] = new_name
     # Clean up: remove current name from aliases if present (prevents self-alias)
     existing["aliases"] = [a for a in existing["aliases"] if a.lower() != new_name.lower()]
+    # Add any aliases extracted from parenthetical
+    for alias in extra_aliases:
+        if alias.lower() not in {a.lower() for a in existing["aliases"]} and alias.lower() != new_name.lower():
+            existing["aliases"].append(alias)
     if new_desc and not existing.get("description"):
         existing["description"] = new_desc
     # Ensure active status
@@ -1294,6 +1360,11 @@ def _process_npc_details(game, json_text: str):
 
             # Update full name if provided and different
             new_name = d.get("full_name", "").strip()
+            # Strip parenthetical annotations before comparison
+            if new_name:
+                new_name, paren_aliases = _sanitize_npc_name(new_name)
+            else:
+                paren_aliases = []
             if new_name and new_name != npc["name"]:
                 old_name = npc["name"]
                 # Only update if the new name is an EXTENSION of the old name
@@ -1305,6 +1376,11 @@ def _process_npc_details(game, json_text: str):
                     if old_name and old_name not in npc["aliases"]:
                         npc["aliases"].append(old_name)
                     npc["name"] = new_name
+                    # Add any aliases extracted from parenthetical
+                    existing_lower = {a.lower() for a in npc["aliases"]}
+                    for alias in paren_aliases:
+                        if alias.lower() not in existing_lower and alias.lower() != new_name.lower():
+                            npc["aliases"].append(alias)
                     log(f"[NPC] Details update: '{old_name}' → '{new_name}' "
                         f"(surname established)")
                 else:
@@ -1419,10 +1495,13 @@ def _process_new_npcs(game, json_text: str):
             # Assign ID
             npc_id, _ = _next_npc_id(game)
 
+            # Sanitize name: strip parenthetical annotations → aliases
+            clean_name, paren_aliases = _sanitize_npc_name(nd["name"].strip())
+
             # Build full NPC entry with defaults
             npc = {
                 "id": npc_id,
-                "name": nd["name"].strip(),
+                "name": clean_name,
                 "description": nd.get("description", "").strip(),
                 "agenda": "",
                 "instinct": "",
@@ -1433,7 +1512,7 @@ def _process_new_npcs(game, json_text: str):
                 "status": "active",
                 "memory": [],
                 "introduced": True,  # They appeared in narration
-                "aliases": [],
+                "aliases": paren_aliases,
                 "keywords": [],
                 "importance_accumulator": 0,
                 "last_reflection_scene": 0,
@@ -2404,10 +2483,11 @@ def _build_turn_snapshot(game: GameState) -> dict:
 def record_scene_intensity(game: GameState, scene_type: str):
     """Record a scene's intensity type for pacing analysis.
     scene_type: 'action', 'breather', or 'interrupt'
+    Keeps last 5 entries — matches get_pacing_hint() window.
     """
     game.scene_intensity_history.append(scene_type)
-    if len(game.scene_intensity_history) > 10:
-        game.scene_intensity_history = game.scene_intensity_history[-10:]
+    if len(game.scene_intensity_history) > 5:
+        game.scene_intensity_history = game.scene_intensity_history[-5:]
 
 
 # ===============================================================
@@ -4236,6 +4316,9 @@ def _process_game_data(game: GameState, data: dict, force_npcs: bool = True):
             n for n in data["npcs"]
             if n.get("name", "").lower().strip() != player_lower
         ]
+        # Sanitize NPC names: strip parenthetical annotations → aliases
+        for nd in data["npcs"]:
+            _apply_name_sanitization(nd)
         if force_npcs or not game.npcs:
             game.npcs = data["npcs"]
             log(f"[NPC] Opening game_data: set {len(game.npcs)} NPCs: {[n.get('name','?') for n in game.npcs]}")
@@ -4607,6 +4690,9 @@ def load_game(username: str, name: str = "autosave") -> tuple[Optional[GameState
     # Clean up transient flags that should not persist across save/load
     for npc in game.npcs:
         npc.pop("_needs_reflection", None)
+    # Sanitize NPC names: strip parenthetical annotations from older saves
+    for npc in game.npcs:
+        _apply_name_sanitization(npc)
     # Backward compatibility: older saves don't have location_history/time_of_day
     if game.location_history is None:
         game.location_history = []
@@ -4980,15 +5066,36 @@ def start_new_game(client: anthropic.Anthropic, creation_data: dict,
         cfg["content_lines"] = game.content_lines
         save_user_config(username, cfg)
 
-    # Generate the opening scene
-    raw = call_narrator(client, build_new_game_prompt(game), game, config)
-    narration = parse_narrator_response(game, raw)
-
-    # Choose story structure based on tone probability
+    # Choose story structure based on tone probability (needed before parallel calls)
     structure = choose_story_structure(tone)
 
-    # Generate story blueprint AFTER opening (uses NPCs/setting from parsed response)
-    game.story_blueprint = call_story_architect(client, game, structure_type=structure, config=config)
+    # Prepare narrator prompt before launching parallel calls
+    narrator_prompt = build_new_game_prompt(game)
+
+    # --- Parallel execution: Narrator + Story Architect simultaneously ---
+    # The Story Architect uses genre/tone/setting/character from the GameState,
+    # which is fully populated from setup brain. It only gets "none yet" for NPCs
+    # (populated after narrator parse), but the blueprint is about story arcs and
+    # conflict structure — NPC names don't influence its quality.
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _run_narrator():
+        return call_narrator(client, narrator_prompt, game, config)
+
+    def _run_architect():
+        return call_story_architect(client, game, structure_type=structure, config=config)
+
+    raw = None
+    blueprint = None
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fut_narrator = pool.submit(_run_narrator)
+        fut_architect = pool.submit(_run_architect)
+        # Wait for both — exceptions are re-raised on .result()
+        raw = fut_narrator.result()
+        blueprint = fut_architect.result()
+
+    narration = parse_narrator_response(game, raw)
+    game.story_blueprint = blueprint
 
     # Record opening as neutral intensity
     record_scene_intensity(game, "action")
@@ -5292,9 +5399,38 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
     # Save returning NPCs before parse replaces them (active + background)
     returning_npcs = [dict(n) for n in game.npcs if n.get("status") in ("active", "background")]
 
-    # Generate opening scene with campaign context
-    raw = call_narrator(client, build_new_chapter_prompt(game), game, config)
+    # Choose story structure for new chapter (needed before parallel calls)
+    structure = choose_story_structure(game.setting_tone)
+
+    # Prepare narrator prompt before parallel calls
+    chapter_prompt = build_new_chapter_prompt(game)
+
+    # --- Parallel execution: Narrator + Story Architect simultaneously ---
+    # The architect gets the pre-parse state (returning NPCs, current context),
+    # which is actually ideal for campaign continuity. New chapter NPCs from the
+    # narrator's game_data are a bonus; the blueprint is about story arcs, not NPC details.
+    # We use copy.copy(game) so parse_narrator_response's mutations (replacing game.npcs,
+    # updating location/context) don't race with the architect's reads.
+    from concurrent.futures import ThreadPoolExecutor
+
+    architect_game = copy.copy(game)  # Shallow copy — frozen view for architect
+
+    def _run_narrator():
+        return call_narrator(client, chapter_prompt, game, config)
+
+    def _run_architect():
+        return call_story_architect(client, architect_game, structure_type=structure, config=config)
+
+    raw = None
+    blueprint = None
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fut_narrator = pool.submit(_run_narrator)
+        fut_architect = pool.submit(_run_architect)
+        raw = fut_narrator.result()
+        blueprint = fut_architect.result()
+
     narration = parse_narrator_response(game, raw)
+    game.story_blueprint = blueprint
 
     # Merge: parse_narrator_response replaces game.npcs with new NPCs from game_data.
     # Re-add returning NPCs that weren't mentioned in the new chapter's game_data.
@@ -5312,10 +5448,6 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
     # Seed location_history with the new chapter's starting location
     if game.current_location and not game.location_history:
         game.location_history.append(game.current_location)
-
-    # Choose story structure for new chapter
-    structure = choose_story_structure(game.setting_tone)
-    game.story_blueprint = call_story_architect(client, game, structure_type=structure, config=config)
 
     # Record opening
     record_scene_intensity(game, "action")

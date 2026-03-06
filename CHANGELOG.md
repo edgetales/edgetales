@@ -5,6 +5,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.38]
+
+### Added
+- **NPC name sanitization (`_sanitize_npc_name`, `_apply_name_sanitization`):** Strips parenthetical annotations from NPC names and extracts them as aliases. Recognizes explicit alias hints (`auch bekannt als`, `also known as`, `aka`, `genannt`, `called`) and generic epithets. Examples: `"Cremin (auch bekannt als Cremon)"` → name `"Cremin"`, alias `"Cremon"`; `"Barrel (der Fass-Schläger)"` → name `"Barrel"`, alias `"der Fass-Schläger"`. The raw annotated name is also preserved as an alias for backward search compatibility. Self-alias cleanup prevents the clean name from appearing in its own alias list
+- **Backward-compat NPC name cleanup in `load_game()`:** Existing saves with parenthetical NPC names are sanitized on load. The cleanup runs after self-alias removal and before other migrations
+
+### Changed
+- **Parallel Narrator + Story Architect in `start_new_game()`:** The opening scene narrator call (Sonnet, max_tokens=3500) and the story blueprint architect call (Sonnet, max_tokens=4000) now run simultaneously via `concurrent.futures.ThreadPoolExecutor`. Previously sequential (~30s total), now completes in `max(narrator, architect)` time (~15s). Safe because the architect uses genre/tone/setting/character (fully populated from setup brain) and gets `"none yet"` for NPCs — the blueprint is about story arcs, not NPC details
+- **Parallel Narrator + Story Architect in `start_new_chapter()`:** Same parallelization for chapter openings. Uses `copy.copy(game)` as a frozen snapshot for the architect thread, preventing race conditions with `parse_narrator_response()` which mutates `game.npcs`. The architect receives returning NPCs from the pre-parse state, ideal for campaign continuity
+- **`scene_intensity_history` cap reduced 10 → 5:** `record_scene_intensity()` now caps at 5 entries, matching the `get_pacing_hint()` read window (`[-5:]`). Reduces save file ballast. GameState field comment already said "Last 5"
+
+### Fixed
+- **Parenthetical annotations in NPC names:** AI-generated names like `"Barrel (der Fass-Schläger)"` or metadata-extractor merge artifacts like `"Cremin (auch bekannt als Cremon)"` no longer persist as display names. Root cause: `_merge_npc_identity()` and `_process_npc_details()` accepted the full annotated string because the substring check (`old_lower in new_lower`) matched. Fix: `_sanitize_npc_name()` applied at all four NPC name entry points: `_merge_npc_identity()`, `_process_npc_details()`, `_process_new_npcs()`, `_process_game_data()`
+
+---
+
 ## [0.9.37]
 
 ### Changed
