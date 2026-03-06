@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.38"
+VERSION = "0.9.39"
 
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-5-20250929"
@@ -209,12 +209,13 @@ DIRECTOR_OUTPUT_SCHEMA = {
                         "euphoric", "defiant", "guilty", "protective", "angry",
                         "devoted", "impressed", "hopeful",
                     ]},
+                    "about_npc":           {"type": ["string", "null"]},
                     "updated_description": {"type": ["string", "null"]},
                     "agenda":              {"type": ["string", "null"]},
                     "instinct":            {"type": ["string", "null"]},
                 },
                 "required": ["npc_id", "reflection", "tone", "tone_key",
-                             "updated_description", "agenda", "instinct"],
+                             "about_npc", "updated_description", "agenda", "instinct"],
                 "additionalProperties": False,
             },
         },
@@ -322,8 +323,9 @@ NARRATOR_METADATA_SCHEMA = {
                     "npc_id":           {"type": "string"},
                     "event":            {"type": "string"},
                     "emotional_weight": {"type": "string"},
+                    "about_npc":        {"type": ["string", "null"]},
                 },
-                "required": ["npc_id", "event", "emotional_weight"],
+                "required": ["npc_id", "event", "emotional_weight", "about_npc"],
                 "additionalProperties": False,
             },
         },
@@ -1658,9 +1660,11 @@ def score_importance(emotional_weight: str, event_text: str = "",
 
 
 def retrieve_memories(npc: dict, context_text: str = "", max_count: int = 5,
-                      current_scene: int = 0) -> list[dict]:
+                      current_scene: int = 0,
+                      present_npc_ids: set = None) -> list[dict]:
     """Retrieve the most relevant memories for an NPC using weighted scoring.
     Score = 0.40 × recency + 0.35 × importance + 0.25 × relevance
+    If present_npc_ids is given, memories about those NPCs get a relevance boost.
     Always includes at least 1 reflection if available."""
     memories = npc.get("memory", [])
     if not memories:
@@ -1674,6 +1678,7 @@ def retrieve_memories(npc: dict, context_text: str = "", max_count: int = 5,
     context_words = set()
     if context_text:
         context_words = {w.lower() for w in context_text.split() if len(w) >= 3}
+    _present = present_npc_ids or set()
 
     def _score_memory(mem):
         """Calculate retrieval score for a single memory."""
@@ -1696,6 +1701,11 @@ def retrieve_memories(npc: dict, context_text: str = "", max_count: int = 5,
             overlap = context_words & event_words
             if overlap:
                 relevance = min(1.0, len(overlap) / max(3, len(context_words)) * 2)
+
+        # NPC-relationship boost: if this memory is about an NPC present in the scene,
+        # it becomes more relevant (they're right there — the NPC would think of it)
+        if _present and mem.get("about_npc") in _present:
+            relevance = min(1.0, relevance + 0.6)
 
         return 0.40 * recency + 0.35 * importance + 0.25 * relevance
 
@@ -3494,6 +3504,8 @@ new_npcs: ONLY for characters who are PHYSICALLY PRESENT in the scene AND active
 If a NAMED person is mentioned in dialog but a DIFFERENT unnamed person is physically present, create the NPC for the PHYSICAL person with their own appropriate name/description — do NOT assign the mentioned person's name to the physical person's description.
 description must be a PHYSICAL/ROLE description (appearance, occupation, species), NOT what they did in this scene.
 memory_updates: for EACH NPC who participated in or witnessed this scene. Use their npc_id from the known list. NEVER create memory_updates for the player character. NEVER create memory_updates for NPCs marked [DECEASED] or for absent characters — only for NPCs physically present and alive in the scene.
+about_npc (in memory_updates): If the memory is primarily ABOUT ANOTHER NPC (not the player), set about_npc to that other NPC's npc_id. Examples: NPC A is told something about NPC B → memory on A with about_npc=B's id. NPC A witnesses NPC B doing something → memory on A with about_npc=B's id. If the memory is about the player or a general event, set about_npc to null.
+IMPORTANT: If the player directly tells an NPC something about another NPC (gossip, warning, lie, compliment, romantic suggestion), this MUST be captured as its own memory_update with about_npc set — even if other events also happened to that NPC in the same scene. An NPC can have multiple memories per scene if distinctly different events occurred.
 deceased_npcs: list NPCs (by npc_id) who DIED or were KILLED in THIS scene's narration. Only include deaths that happen on-screen in the narration text — not previously dead characters already marked [DECEASED]. This is critical for game state tracking."""
 
     prompt = f"""<narration>{narration}</narration>
@@ -3606,10 +3618,13 @@ Think like a showrunner, not a writer:
 - Which NPCs have untapped potential? Who should appear next?
 - Is the pacing right? Does the player need a breather or escalation?
 - Are there narrative threads that risk being forgotten?
+- How do NPCs feel about EACH OTHER, not just the player? NPC-to-NPC dynamics
+  (alliances, rivalries, attraction, distrust) create a living world.
 
 For NPC reflections: Synthesize their accumulated memories into a higher-level
 insight about how they view the player character. Write in the story language.
-Focus on relationship evolution, not event recaps.
+Focus on relationship evolution, not event recaps. If an NPC's memories show
+strong feelings about another NPC, the reflection can be about that relationship.
 
 Be SPECIFIC in narrator_guidance. Not "make things interesting" but
 "Borin should test the player's loyalty with a dangerous request before
@@ -3770,6 +3785,7 @@ Field instructions:
   - tone: 1-3 English words capturing the emotional shift (e.g. 'protective_guilt', 'reluctant_trust')
   - tone_key: ONE word from the enum (neutral, curious, wary, suspicious, grateful, terrified, loyal, conflicted, betrayed, devastated, euphoric, defiant, guilty, protective, angry, devoted, impressed, hopeful)
   - updated_description: STRICTLY in {lang}. Max 100 characters. Role + key visual traits + personality. Keep physical details like age, hair, build. Do NOT start with the NPC's name. NO actions, NO posture. Example: 'Grumpy dwarf blacksmith with burn scars, secretly loyal'. null if unchanged.
+  - about_npc: If this reflection is primarily about the NPC's feelings toward ANOTHER NPC (not the player), set to that NPC's npc_id. Example: Sophie reflects on her growing attraction to Bruce → about_npc="npc_2". null if the reflection is about the player or general.
   - agenda: NPC's hidden goal (max 8 words, only if needs_profile="true"), null otherwise
   - instinct: NPC's default behavior pattern (max 8 words, only if needs_profile="true"), null otherwise
 - arc_notes: Brief story arc progress observation
@@ -3878,6 +3894,7 @@ def _apply_director_guidance(game: GameState, guidance: dict):
             "tone_key": ref.get("tone_key", ""),  # Machine-readable single word from enum
             "importance": 8,  # Reflections are always important
             "type": "reflection",
+            "about_npc": ref.get("about_npc") or None,
         })
         npc["_needs_reflection"] = False
         npc["importance_accumulator"] = 0
@@ -3970,7 +3987,8 @@ After narration, append invisible structured data:
 
 
 def _npc_block(game: GameState, target_id: Optional[str],
-               context_text: str = "") -> str:
+               context_text: str = "",
+               present_npc_ids: set = None) -> str:
     """Build full context block for the target NPC using weighted memory retrieval."""
     target = _find_npc(game, target_id) if target_id else None
     if not target:
@@ -3978,7 +3996,8 @@ def _npc_block(game: GameState, target_id: Optional[str],
     _ensure_npc_memory_fields(target)
     # Retrieve best memories using weighted scoring
     memories = retrieve_memories(target, context_text=context_text,
-                                max_count=5, current_scene=game.scene_count)
+                                max_count=5, current_scene=game.scene_count,
+                                present_npc_ids=present_npc_ids)
     # Separate reflections and observations for structured display
     reflections = [m for m in memories if m.get("type") == "reflection"]
     observations = [m for m in memories if m.get("type") != "reflection"]
@@ -3993,6 +4012,21 @@ def _npc_block(game: GameState, target_id: Optional[str],
             f'{m.get("event","")}({m.get("emotional_weight","")})' for m in observations
         )
         mem_parts.append(f"recent: {obs_text}")
+
+    # NPC-to-NPC views: memories about other NPCs present in the scene
+    if present_npc_ids:
+        npc_view_parts = []
+        for m in memories:
+            about = m.get("about_npc")
+            if about and about in present_npc_ids:
+                # Find the referenced NPC's name for readability
+                ref_npc = _find_npc(game, about)
+                ref_name = ref_npc["name"] if ref_npc else about
+                npc_view_parts.append(
+                    f'{ref_name}: {m.get("event", "")[:80]}({m.get("emotional_weight", "")})')
+        if npc_view_parts:
+            mem_parts.append(f"npc_views: {' | '.join(npc_view_parts)}")
+
     mem_str = "\n".join(mem_parts) if mem_parts else "(no memories)"
 
     secs = json.dumps(target.get("secrets", []), ensure_ascii=False)
@@ -4005,7 +4039,8 @@ secrets(weave subtly,never reveal):{secs}
 
 
 def _activated_npcs_block(activated: list[dict], target_id: Optional[str],
-                          game: GameState, context_text: str = "") -> str:
+                          game: GameState, context_text: str = "",
+                          present_npc_ids: set = None) -> str:
     """Build context blocks for activated NPCs (not the target — those get _npc_block).
     Lighter context than target: name, disposition, bond, and 1-2 key memories."""
     parts = []
@@ -4017,7 +4052,8 @@ def _activated_npcs_block(activated: list[dict], target_id: Optional[str],
         _ensure_npc_memory_fields(npc)
         # Get 2 best memories
         memories = retrieve_memories(npc, context_text=context_text,
-                                     max_count=2, current_scene=game.scene_count)
+                                     max_count=2, current_scene=game.scene_count,
+                                     present_npc_ids=present_npc_ids)
         mem_hint = ""
         if memories:
             reflections = [m for m in memories if m.get("type") == "reflection"]
@@ -4127,13 +4163,25 @@ def build_dialog_prompt(game: GameState, brain: dict, player_words: str = "",
     _cfg = config or EngineConfig()
     lang = get_narration_lang(_cfg)
     context_text = f"{player_words} {brain.get('player_intent') or ''} {game.current_scene_context or ''}"
-    npc = _npc_block(game, brain.get("target_npc"), context_text=context_text)
+
+    # Collect IDs of all NPCs present in the scene (for NPC-to-NPC memory boost)
+    target_id = brain.get("target_npc")
+    _present_ids = set()
+    if target_id:
+        t = _find_npc(game, target_id)
+        if t:
+            _present_ids.add(t.get("id"))
+    if activated_npcs:
+        _present_ids.update(n.get("id") for n in activated_npcs if n.get("id"))
+
+    npc = _npc_block(game, target_id, context_text=context_text,
+                     present_npc_ids=_present_ids)
 
     # Three-tier NPC display
-    target_id = brain.get("target_npc")
     if activated_npcs is not None:
         # New system: activated NPCs get context, rest are just names
-        activated_block = _activated_npcs_block(activated_npcs, target_id, game, context_text)
+        activated_block = _activated_npcs_block(activated_npcs, target_id, game,
+                                                context_text, present_npc_ids=_present_ids)
         exclude_ids = {n.get("id") for n in activated_npcs}
         if target_id:
             t = _find_npc(game, target_id)
@@ -4186,12 +4234,24 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
     _cfg = config or EngineConfig()
     lang = get_narration_lang(_cfg)
     context_text = f"{player_words} {brain.get('player_intent') or ''} {game.current_scene_context or ''}"
-    npc = _npc_block(game, brain.get("target_npc"), context_text=context_text)
+
+    # Collect IDs of all NPCs present in the scene (for NPC-to-NPC memory boost)
+    target_id = brain.get("target_npc")
+    _present_ids = set()
+    if target_id:
+        t = _find_npc(game, target_id)
+        if t:
+            _present_ids.add(t.get("id"))
+    if activated_npcs:
+        _present_ids.update(n.get("id") for n in activated_npcs if n.get("id"))
+
+    npc = _npc_block(game, target_id, context_text=context_text,
+                     present_npc_ids=_present_ids)
 
     # Three-tier NPC display
-    target_id = brain.get("target_npc")
     if activated_npcs is not None:
-        activated_block = _activated_npcs_block(activated_npcs, target_id, game, context_text)
+        activated_block = _activated_npcs_block(activated_npcs, target_id, game,
+                                                context_text, present_npc_ids=_present_ids)
         exclude_ids = {n.get("id") for n in activated_npcs}
         if target_id:
             t = _find_npc(game, target_id)
@@ -4572,6 +4632,7 @@ def _apply_memory_updates(game: GameState, json_text: str):
                     "emotional_weight": emotional,
                     "importance": importance,
                     "type": "observation",
+                    "about_npc": u.get("about_npc") or None,
                     "_score_debug": score_debug,
                 })
 

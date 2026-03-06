@@ -5,6 +5,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.39]
+
+### Added
+- **NPC-to-NPC relationships via `about_npc` field:** NPC memories can now reference another NPC they are about. When the player tells Sophie that Bruce is attractive, or when Sophie witnesses Bruce doing something notable, the resulting memory is tagged with `about_npc: "npc_2"`. This creates a web of NPC-to-NPC opinions that emerges organically from gameplay without a separate relationship system
+- **`about_npc` in `NARRATOR_METADATA_SCHEMA`:** New optional field (`string|null`) on `memory_updates`. The metadata extractor tags memories that are primarily about another NPC (gossip, warnings, witnessed actions) with that NPC's id. Memories about the player or general events get `null`
+- **`about_npc` in `DIRECTOR_OUTPUT_SCHEMA`:** New optional field (`string|null`) on `npc_reflections`. Director can now write reflections about an NPC's feelings toward another NPC (e.g. Sophie reflecting on her growing attraction to Bruce), tagged with the referenced NPC's id
+- **NPC-relationship memory boost in `retrieve_memories()`:** New `present_npc_ids` parameter. Memories with `about_npc` matching a present NPC get a +0.6 relevance boost (capped at 1.0). Effect: when Sophie has an old memory about Bruce and Bruce is in the current scene, that memory rises in ranking — Sophie "thinks of it" because he's right there
+- **`npc_views:` line in `_npc_block()`:** When building the target NPC's prompt context, memories tagged with `about_npc` for a present NPC are collected into a dedicated `npc_views:` line. The narrator sees e.g. `npc_views: Bruce: Player told me Bruce is attractive(intrigued)` and can weave the NPC's opinion into the scene naturally
+- **Player gossip extraction rule in metadata extractor prompt:** Explicit instruction that player-initiated NPC-to-NPC communication (gossip, warnings, lies, compliments, romantic suggestions) MUST be captured as a separate `memory_update` with `about_npc` set — even if other events also happened to that NPC in the same scene. An NPC can now receive multiple memories per scene for distinctly different events
+
+### Changed
+- **`present_npc_ids` threaded through prompt builders:** `build_dialog_prompt()` and `build_action_prompt()` now collect the IDs of all NPCs present in the scene (target + activated) and pass them through `_npc_block()`, `_activated_npcs_block()`, and `retrieve_memories()`. Zero additional API cost — the set is computed once and reused
+- **Director system prompt expanded for NPC-to-NPC dynamics:** `DIRECTOR_SYSTEM` now instructs the Director to consider how NPCs feel about each other (alliances, rivalries, attraction, distrust), not just about the player. Reflection prompt includes `about_npc` field documentation with example
+
+---
+
 ## [0.9.38]
 
 ### Added

@@ -6,7 +6,7 @@
 [![NiceGUI](https://img.shields.io/badge/UI-NiceGUI-4CAF50?logo=vuedotjs&logoColor=white)](https://nicegui.io)
 [![Claude AI](https://img.shields.io/badge/AI-Claude%20Haiku%20%2B%20Sonnet-orange?logo=anthropic&logoColor=white)](https://anthropic.com)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-lightgrey)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-0.9.36-blueviolet)]()
+[![Version](https://img.shields.io/badge/Version-0.9.39-blueviolet)]()
 [![Mobile Ready](https://img.shields.io/badge/Mobile-PWA%20Ready-success?logo=pwa&logoColor=white)]()
 
 ---
@@ -32,7 +32,7 @@ EdgeTales is a self-hosted, AI-driven solo tabletop RPG engine. Type what your c
 - Triple-AI architecture: fast *Brain* (Haiku) parses mechanics, creative *Narrator* (Sonnet) writes the scene, strategic *Director* (Haiku) steers story pacing and NPC development behind the scenes
 - Player Authorship guarantee - your exact words are never rewritten or reinterpreted by the AI
 - **`##` Correction system** — prefix any input with `##` to correct the last scene. The engine distinguishes between a *misread input* (Brain misunderstood what you did — full state rollback, re-roll if needed, narrator rewrites) and a *state error* (wrong NPC identity, location, relationship — world patched in-place, narrator rewrites with corrections applied). No scene is ever permanently broken by an AI misunderstanding
-- Dynamic NPC system with persistent memory, evolving dispositions, bonds, agendas, and mid-game discovery
+- Dynamic NPC system with persistent memory, evolving dispositions, bonds, agendas, NPC-to-NPC relationships, and mid-game discovery
 - NPC memory and reflection: characters remember what you did and form opinions over time - the Director periodically synthesises their accumulated experiences into higher-level insights that shape their future behaviour
 - AI-generated epilogues that wrap up your story with a satisfying conclusion
 - Story arc intelligence: each chapter gets a blueprint with act goals, transition triggers (narrative conditions, not scene numbers), a thematic thread, and possible endings - the Director steers act transitions based on what actually happens in the story
@@ -202,6 +202,8 @@ The engine guarantees a strict separation: **dice determine outcomes, the AI onl
 ### NPC Memory System
 
 NPCs in EdgeTales don't just exist in the moment — they remember. Every significant interaction is recorded as a memory event with emotional weight and importance scoring. Over time, the Director synthesises accumulated memories into reflections that capture how the NPC's perspective is shifting. A merchant who watched you defend their shop three times will remember that — and their behaviour will change accordingly, not because of a simple friendship counter, but because the AI has a rich history of specific events to draw from.
+
+NPCs also form opinions about *each other*. Tell a character that another NPC is trustworthy — or dangerous, or attractive — and that opinion is stored as a tagged memory. When both NPCs are present in the same scene, those inter-NPC memories surface automatically, creating dynamic social situations the player set in motion but no longer controls.
 
 NPC descriptions in the sidebar update dynamically when a character undergoes meaningful development, so the cast list reflects who they've become, not just who they were when you first met them.
 
