@@ -392,6 +392,7 @@ def load_user_settings(username: str) -> None:
         raw_dice = _dice_string_to_index(raw_dice)
     s["dice_display"] = raw_dice
     s["kid_friendly"] = cfg.get("kid_friendly", False)
+    s["sr_chat"] = cfg.get("sr_chat", True)
     saved_backend = cfg.get("tts_backend", "")
     backend_code = resolve_tts_backend(saved_backend) if saved_backend else "edge_tts"
     s["tts_backend"] = find_tts_backend_label(backend_code, lang)
@@ -463,6 +464,7 @@ def render_audio_player(audio_bytes: bytes, fmt: str = "audio/mp3", autoplay: bo
     url = app.add_media_file(local_file=tmp)
     log(f"[Audio] Serving {len(audio_bytes)} bytes as {url}")
     a = ui.audio(url, autoplay=autoplay).classes("w-full").style("margin: 0.4em 0;")
+    a.props(f'aria-label="{t("aria.narration_audio", L())}"')
     # Autoplay fallback: if browser blocks autoplay, retry on next user interaction
     if autoplay:
         ui.run_javascript(f'''
@@ -524,6 +526,7 @@ async def do_tts(narration: str, chat_container=None, autoplay: bool = True) -> 
     if chat_container:
         with chat_container:
             tts_indicator = ui.row().classes("w-full items-center gap-2")
+            tts_indicator.props('role="status"')
             with tts_indicator:
                 ui.spinner("audio", size="sm", color="primary")
                 ui.label(t("tts.generating", L())).classes("text-xs").style("color: var(--text-secondary)")
@@ -588,11 +591,14 @@ def _setup_stt_button(mic_btn, inp, chat_container, stt_status, stt_status_conte
             # Start recording
             recording_state["active"] = True
             recording_state["_stt_chunks"] = {}
-            mic_btn.props("color=red")
+            mic_btn.props(f'color=red aria-label="{t("aria.stop_recording", L())}"')
             mic_btn._props["icon"] = "stop"
             mic_btn.update()
             _show_status(f'{_WAVEFORM_HTML} <span style="color: #ef4444">{t("stt.recording", L())} <span id="_sttTimer">0:00</span></span>')
-            await ui.run_javascript(f'''
+            # Fire-and-forget: getUserMedia may show a permission dialog that blocks JS.
+            # Wrapping in an async IIFE prevents Python from waiting on the dialog.
+            ui.run_javascript(f'''
+                (async () => {{
                 if (window._rpgRecorder && window._rpgRecorder.state === "recording") return;
                 try {{
                     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {{
@@ -649,11 +655,13 @@ def _setup_stt_button(mic_btn, inp, chat_container, stt_status, stt_status_conte
                 }} catch(err) {{
                     getElement({mic_btn.id}).$emit("stt_error", {{error: err.message}});
                 }}
+                }})();
             ''')
         else:
             # Stop recording — reset UI immediately (don't wait for audio processing)
             recording_state["active"] = False
             mic_btn.props(remove="color")
+            mic_btn.props(f'aria-label="{t("aria.start_recording", L())}"')
             mic_btn._props["icon"] = "mic"
             mic_btn.update()
             _show_status(f'<span class="stt-spinner-inline"></span> {t("stt.transcribing", L())}')
@@ -716,6 +724,7 @@ def _setup_stt_button(mic_btn, inp, chat_container, stt_status, stt_status_conte
         """Handle microphone access errors."""
         recording_state["active"] = False
         mic_btn.props(remove="color")
+        mic_btn.props(f'aria-label="{t("aria.start_recording", L())}"')
         mic_btn._props["icon"] = "mic"
         mic_btn.update()
         err = e.args.get("error", t("stt.unknown", L())) if isinstance(e.args, dict) else t("stt.unknown", L())
@@ -727,6 +736,7 @@ def _setup_stt_button(mic_btn, inp, chat_container, stt_status, stt_status_conte
         if recording_state["active"]:
             recording_state["active"] = False
             mic_btn.props(remove="color")
+            mic_btn.props(f'aria-label="{t("aria.start_recording", L())}"')
             mic_btn._props["icon"] = "mic"
             mic_btn.update()
             _show_status(f'<span class="stt-spinner-inline"></span> {t("stt.transcribing", L())}')
@@ -774,37 +784,41 @@ def render_sidebar_status(game: GameState, session=None) -> None:
     ui.separator()
     # Stats
     ui.html(f'''<div class="stat-grid">
-    <div class="stat-item"><div class="stat-label">{sl['edge']}</div><div class="stat-value">{game.get_stat('edge')}</div></div>
-    <div class="stat-item"><div class="stat-label">{sl['shadow']}</div><div class="stat-value">{game.get_stat('shadow')}</div></div>
-    <div class="stat-item"><div class="stat-label">{sl['heart']}</div><div class="stat-value">{game.get_stat('heart')}</div></div>
-    <div class="stat-item"><div class="stat-label">{sl['wits']}</div><div class="stat-value">{game.get_stat('wits')}</div></div>
-    <div class="stat-item"><div class="stat-label">{sl['iron']}</div><div class="stat-value">{game.get_stat('iron')}</div></div>
-    <div class="stat-item"><div class="stat-label">{t('sidebar.momentum', lang)}</div><div class="stat-value">{game.momentum}/{game.max_momentum}</div></div>
+    <div class="stat-item"><span class="sr-only">{t('aria.stat_item', lang, label=sl['edge'], value=int(game.get_stat('edge')))}</span><div aria-hidden="true"><div class="stat-label">{sl['edge']}</div><div class="stat-value">{game.get_stat('edge')}</div></div></div>
+    <div class="stat-item"><span class="sr-only">{t('aria.stat_item', lang, label=sl['shadow'], value=int(game.get_stat('shadow')))}</span><div aria-hidden="true"><div class="stat-label">{sl['shadow']}</div><div class="stat-value">{game.get_stat('shadow')}</div></div></div>
+    <div class="stat-item"><span class="sr-only">{t('aria.stat_item', lang, label=sl['heart'], value=int(game.get_stat('heart')))}</span><div aria-hidden="true"><div class="stat-label">{sl['heart']}</div><div class="stat-value">{game.get_stat('heart')}</div></div></div>
+    <div class="stat-item"><span class="sr-only">{t('aria.stat_item', lang, label=sl['wits'], value=int(game.get_stat('wits')))}</span><div aria-hidden="true"><div class="stat-label">{sl['wits']}</div><div class="stat-value">{game.get_stat('wits')}</div></div></div>
+    <div class="stat-item"><span class="sr-only">{t('aria.stat_item', lang, label=sl['iron'], value=int(game.get_stat('iron')))}</span><div aria-hidden="true"><div class="stat-label">{sl['iron']}</div><div class="stat-value">{game.get_stat('iron')}</div></div></div>
+    <div class="stat-item"><span class="sr-only">{t('aria.momentum_stat', lang, current=int(game.momentum), max=int(game.max_momentum))}</span><div aria-hidden="true"><div class="stat-label">{t('sidebar.momentum', lang)}</div><div class="stat-value">{game.momentum}/{game.max_momentum}</div></div></div>
     </div>''').classes("w-full")
     ui.separator()
-    # Tracks
+    # Tracks — label already communicates value, progressbar is visual-only
     for track, label, cls in [("health",f"{E['heart_red']} {t('sidebar.health', lang)}","health"),("spirit",f"{E['heart_blue']} {t('sidebar.spirit', lang)}","spirit"),("supply",f"{E['yellow_dot']} {t('sidebar.supply', lang)}","supply")]:
-        val = getattr(game, track)
+        val = int(getattr(game, track))
         pct = max(0, val / 5 * 100)
         ui.label(f"{label}: {val}/5").classes("text-sm font-semibold")
-        ui.html(f'<div class="track-bar"><div class="track-fill {cls}" style="width:{pct}%"></div></div>').classes("w-full")
-    # Chaos
+        ui.html(f'<div class="track-bar" aria-hidden="true"><div class="track-fill {cls}" style="width:{pct:.0f}%"></div></div>').classes("w-full")
+    # Chaos — label + sr-only danger level; progressbar visual-only
     ui.separator()
-    chaos = game.chaos_factor
+    chaos = int(game.chaos_factor)
     ci = {3:E['green_circle'],4:E['green_circle'],5:E['orange_circle'],6:E['orange_circle'],7:E['red_circle'],8:E['red_circle'],9:E['skull']}.get(chaos, E['white_circle'])
     pct = max(0, chaos / 9 * 100)
-    ui.label(f"{E['tornado']} {t('sidebar.chaos', lang)}: {ci} {chaos}/9").classes("text-sm font-semibold")
-    ui.html(f'<div class="track-bar"><div class="track-fill chaos" style="width:{pct}%"></div></div>').classes("w-full")
-    # Clocks
+    _chaos_level_key = "aria.chaos_low" if chaos <= 4 else ("aria.chaos_medium" if chaos <= 6 else ("aria.chaos_high" if chaos <= 8 else "aria.chaos_critical"))
+    _chaos_level = t(_chaos_level_key, lang)
+    ui.html(f'<div class="text-sm font-semibold">{E["tornado"]} {t("sidebar.chaos", lang)}: {ci} {chaos}/9<span class="sr-only"> — {_chaos_level}</span></div>').classes("w-full")
+    ui.html(f'<div class="track-bar" aria-hidden="true"><div class="track-fill chaos" style="width:{pct:.0f}%"></div></div>').classes("w-full")
+    # Clocks — label already communicates value, progressbar is visual-only
     active = [c for c in game.clocks if c["filled"] < c["segments"]]
     if active:
         ui.separator()
         ui.label(f"{E['clock']} {t('sidebar.clocks', lang)}").classes("text-sm font-semibold")
         for c in active:
             em = E['red_circle'] if c["clock_type"]=="threat" else E['purple_circle']
-            p = c["filled"]/c["segments"]*100
-            ui.label(f"{em} {c['name']}: {c['filled']}/{c['segments']}").classes("text-xs")
-            ui.html(f'<div class="track-bar"><div class="track-fill progress" style="width:{p}%"></div></div>').classes("w-full")
+            _c_filled = int(c["filled"])
+            _c_segs = int(c["segments"])
+            p = _c_filled / _c_segs * 100
+            ui.label(f"{em} {c['name']}: {_c_filled}/{_c_segs}").classes("text-xs")
+            ui.html(f'<div class="track-bar" aria-hidden="true"><div class="track-fill progress" style="width:{p:.0f}%"></div></div>').classes("w-full")
     # Story arc
     if game.story_blueprint and game.story_blueprint.get("acts"):
         bp = game.story_blueprint
@@ -822,8 +836,9 @@ def render_sidebar_status(game: GameState, session=None) -> None:
             if an < act["act_number"]: ui.label(f"{act_l} {an} {E['check']}").classes("text-xs text-gray-500")
             elif an == act["act_number"]:
                 p = max(0,min(100,(game.scene_count-sr[0])/max(1,sr[1]-sr[0])*100))
+                _act_aria = t("aria.story_progress", lang, n=an)
                 ui.label(f"{E['play']} {act_l} {an} {E['dash']} {phase}").classes("text-xs font-bold")
-                ui.html(f'<div class="track-bar"><div class="track-fill progress" style="width:{p}%"></div></div>').classes("w-full")
+                ui.html(f'<div class="track-bar" role="progressbar" aria-valuenow="{int(p)}" aria-valuemin="0" aria-valuemax="100" aria-label="{_act_aria}"><div class="track-fill progress" style="width:{p:.0f}%"></div></div>').classes("w-full")
             else: ui.label(f"{act_l} {an}").classes("text-xs text-gray-500")
         if bp.get("story_complete"):
             ui.label(f"{E['star']} {t('sidebar.story_complete', lang)}").classes("text-xs text-amber-400 font-bold mt-1")
@@ -895,8 +910,11 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                     prefix = f"{E['scroll']} **{t('actions.recap_prefix', lang)}**\n\n"
                     with cc:
                         recap_el = ui.column().classes("chat-msg recap w-full")
+                        if not s.get("sr_chat", True):
+                            recap_el.props('aria-hidden="true"')
                         with recap_el:
-                            ui.markdown(f"{prefix}{_clean_narration(recap)}")
+                            _sr_prefix = f'<span class="sr-only">{t("aria.recap_says", lang)}</span>' if s.get("sr_chat", True) else ""
+                            ui.markdown(f"{_sr_prefix}{prefix}{_clean_narration(recap)}")
                     s["_recap_element"] = recap_el
                     await _scroll_chat_bottom()
                     await do_tts(recap, recap_el)
@@ -1011,7 +1029,8 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                                         s["messages"].append({"role":"assistant","content":f"*{E['checkmark']} {t('actions.game_loaded', lang, name=loaded.player_name, scene=loaded.scene_count)}*"})
                                         ui.navigate.reload()
                                 return do_load
-                            ui.button(icon="play_arrow", on_click=make_load(sname)).props("flat round dense size=sm").tooltip(t("actions.load", lang))
+                            _load_aria = t("aria.load_save", lang, name=display_name)
+                            ui.button(icon="play_arrow", on_click=make_load(sname)).props(f'flat round dense size=sm aria-label="{_load_aria}"').tooltip(t("actions.load", lang))
 
                             if sname != "autosave":
                                 def make_delete(n=sname):
@@ -1030,7 +1049,8 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                                                 ui.button(t("user.no", lang), on_click=dlg.close)
                                         dlg.open()
                                     return do_delete
-                                ui.button(icon="delete_outline", on_click=make_delete(sname)).props("flat round dense size=sm").tooltip(t("actions.delete", lang)).style("color: #ef4444")
+                                _del_aria = t("aria.delete_save", lang, name=display_name)
+                                ui.button(icon="delete_outline", on_click=make_delete(sname)).props(f'flat round dense size=sm aria-label="{_del_aria}"').tooltip(t("actions.delete", lang)).style("color: #ef4444")
                         # --- Chapter archives (inside active save card) ---
                         if is_active and chapter > 1:
                             archived = list_chapter_archives(username, sname)
@@ -1236,6 +1256,13 @@ def render_settings() -> None:
         whisper_sel = ui.select(whisper_display, label=t("settings.whisper_model", lang), value=cur_whisper_display).classes("w-full")
         whisper_sel.bind_visibility_from(stt_sw, "value")
         ui.separator()
+        # --- Screen reader chat toggle ---
+        with ui.row().classes("w-full items-center justify-between"):
+            sr_chat_sw = ui.switch(t("settings.sr_chat", lang), value=s.get("sr_chat", True))
+            _tip = t("settings.sr_chat_tooltip", lang)
+            with ui.icon("info_outline").classes("text-gray-400 cursor-help"):
+                ui.tooltip(_tip)
+        ui.separator()
         dice_opts = get_dice_display_options(lang)
         dice_options_map = {label: i for i, label in enumerate(dice_opts)}
         cur_dice_idx = s.get("dice_display", 0)
@@ -1255,6 +1282,7 @@ def render_settings() -> None:
             s["tts_enabled"]=tts_sw.value;s["tts_backend"]=be_sel.value;s["voice_select"]=v_sel.value
             s["tts_rate"]=rate_sel.value;s["stt_enabled"]=stt_sw.value
             s["dice_display"]=dice_options_map.get(dice_sel.value, 0)
+            s["sr_chat"]=sr_chat_sw.value
             s["cb_device"]=cb_device_sel.value;s["cb_exaggeration"]=cb_exag_slider.value
             s["cb_cfg_weight"]=cb_cfg_slider.value;s["cb_voice_sample"]=cb_voice_sel.value
             s["whisper_size"]=whisper_map.get(whisper_sel.value, "medium")
@@ -1270,7 +1298,8 @@ def render_settings() -> None:
                          "tts_rate":rate_sel.value,"dice_display":dice_options_map.get(dice_sel.value, 0),
                          "cb_device":cb_device_sel.value,"cb_exaggeration":cb_exag_slider.value,
                          "cb_cfg_weight":cb_cfg_slider.value,"cb_voice_sample":sample_value,
-                         "whisper_size":whisper_map.get(whisper_sel.value, "medium")})
+                         "whisper_size":whisper_map.get(whisper_sel.value, "medium"),
+                         "sr_chat":sr_chat_sw.value})
             save_user_config(username, ucfg)
             # UI language change requires full reload to re-render all labels
             if new_ui_lang != old_ui_lang:
@@ -1376,6 +1405,8 @@ def render_help() -> None:
 def render_chat_messages(container) -> Optional[str]:
     """Render chat history. Returns the ID of the last scene marker (for scroll targeting)."""
     s = S()
+    lang = L()
+    _sr_chat = s.get("sr_chat", True)
     viewing = s.get("viewing_chapter")
     messages = s.get("chapter_view_messages", []) if viewing else s.get("messages", [])
     last_scene_marker_id = None
@@ -1383,18 +1414,30 @@ def render_chat_messages(container) -> Optional[str]:
         if msg.get("scene_marker"):
             marker_id = f"msg-{i}"
             last_scene_marker_id = marker_id
-            ui.html(f'<div id="{marker_id}" class="scene-marker">{E["dash"]} {msg["scene_marker"]} {E["dash"]}</div>').classes("w-full")
+            ui.html(f'<h2 id="{marker_id}" class="scene-marker">{E["dash"]} {msg["scene_marker"]} {E["dash"]}</h2>').classes("w-full")
             continue
         role = msg.get("role","assistant")
         content = msg.get("content","")
         css = "recap" if msg.get("recap") else role
         if msg.get("correction_input"):
             css += " correction"
-        prefix = f"{E['scroll']} **{t('actions.recap_prefix', L())}**\n\n" if msg.get("recap") else ""
-        with ui.column().classes(f"chat-msg {css} w-full"):
+        prefix = f"{E['scroll']} **{t('actions.recap_prefix', lang)}**\n\n" if msg.get("recap") else ""
+        _msg_col = ui.column().classes(f"chat-msg {css} w-full")
+        if not _sr_chat:
+            _msg_col.props('aria-hidden="true"')
+        with _msg_col:
+            _sr_prefix = ""
+            if _sr_chat:
+                # Screen-reader role attribution (embedded in content, not a separate element)
+                if msg.get("recap"):
+                    _sr_prefix = f'<span class="sr-only">{t("aria.recap_says", lang)}</span>'
+                elif role == "user":
+                    _sr_prefix = f'<span class="sr-only">{t("aria.player_says", lang)}</span>'
+                else:
+                    _sr_prefix = f'<span class="sr-only">{t("aria.narrator_says", lang)}</span>'
             if msg.get("corrected"):
-                ui.html(f'<div class="correction-badge">{t("correction.badge", L())}</div>')
-            ui.markdown(f"{prefix}{_clean_narration(content)}")
+                ui.html(f'<div class="correction-badge" aria-label="{t("aria.correction_badge", lang)}">{t("correction.badge", lang)}</div>')
+            ui.markdown(f"{_sr_prefix}{prefix}{_clean_narration(content)}")
             rd = msg.get("roll_data")
             if rd: render_dice_display(rd)
     return last_scene_marker_id
@@ -1455,7 +1498,7 @@ def render_creation_flow(chat_container) -> bool:
     if game is None and creation is None:
         ui.markdown(t("creation.welcome", lang))
         genres = get_genres(lang)
-        with ui.element("div").classes("choice-grid w-full"):
+        with ui.element("div").classes("choice-grid w-full").props(f'role="group" aria-label="{t("aria.genre_selection", lang)}"'):
             for label,code in genres.items():
                 ui.button(label, on_click=lambda l=label,c=code: _pick_genre(l,c)).props("flat unelevated").classes("w-full choice-btn")
             ui.button(f"{E['pen']} {t('creation.custom_idea', lang)}", on_click=_pick_genre_custom).props("flat unelevated").classes("w-full choice-btn")
@@ -1464,7 +1507,7 @@ def render_creation_flow(chat_container) -> bool:
     step = creation.get("step","")
     if step == "genre_custom":
         ui.markdown(t("creation.custom_genre_title", lang))
-        inp = ui.input(placeholder=t("creation.genre_placeholder", lang)).classes("w-full")
+        inp = ui.input(placeholder=t("creation.genre_placeholder", lang)).classes("w-full").props(f'aria-label="{t("creation.genre_placeholder", lang)}"')
         async def go():
             if inp.value.strip(): _finish_genre_custom(inp.value.strip())
         inp.on("keydown.enter", go); ui.button(t("creation.next", lang), on_click=go, color="primary")
@@ -1472,14 +1515,14 @@ def render_creation_flow(chat_container) -> bool:
     if step == "tone":
         ui.markdown(t("creation.tone_question", lang, genre=creation['genre_label']))
         tones = get_tones(lang)
-        with ui.element("div").classes("choice-grid w-full"):
+        with ui.element("div").classes("choice-grid w-full").props(f'role="group" aria-label="{t("aria.tone_selection", lang)}"'):
             for label,code in tones.items():
                 ui.button(label, on_click=lambda l=label,c=code: _pick_tone(l,c)).props("flat unelevated").classes("w-full choice-btn")
             ui.button(f"{E['pen']} {t('creation.custom_tone_btn', lang)}", on_click=_pick_tone_custom).props("flat unelevated").classes("w-full choice-btn")
         return True
     if step == "tone_custom":
         ui.markdown(t("creation.custom_tone_title", lang))
-        inp = ui.input(placeholder=t("creation.tone_placeholder", lang)).classes("w-full")
+        inp = ui.input(placeholder=t("creation.tone_placeholder", lang)).classes("w-full").props(f'aria-label="{t("creation.tone_placeholder", lang)}"')
         async def go():
             if inp.value.strip(): _finish_tone_custom(inp.value.strip())
         inp.on("keydown.enter", go); ui.button(t("creation.next", lang), on_click=go, color="primary")
@@ -1487,16 +1530,16 @@ def render_creation_flow(chat_container) -> bool:
     if step == "archetype":
         ui.markdown(t("creation.archetype_question", lang, tone=creation['tone_label']))
         archetypes = get_archetypes(lang)
-        with ui.element("div").classes("choice-grid w-full"):
+        with ui.element("div").classes("choice-grid w-full").props(f'role="group" aria-label="{t("aria.archetype_selection", lang)}"'):
             for label,code in archetypes.items():
                 ui.button(label, on_click=lambda l=label,c=code: _pick_archetype(l,c)).props("flat unelevated").classes("w-full choice-btn")
             ui.button(f"{E['pen']} {t('creation.custom_idea', lang)}", on_click=_pick_archetype_custom).props("flat unelevated").classes("w-full choice-btn")
         return True
     if step == "personalize":
         ui.markdown(t("creation.name_question", lang))
-        name_inp = ui.input(placeholder=t("creation.name_placeholder", lang)).classes("w-full")
+        name_inp = ui.input(placeholder=t("creation.name_placeholder", lang)).classes("w-full").props(f'aria-label="{t("creation.name_placeholder", lang)}"')
         ui.markdown(t("creation.desc_question", lang))
-        desc_inp = ui.textarea(placeholder=t("creation.desc_placeholder", lang)).props("rows=2").classes("w-full")
+        desc_inp = ui.textarea(placeholder=t("creation.desc_placeholder", lang)).props("rows=2").classes("w-full").props(f'aria-label="{t("creation.desc_placeholder", lang)}"')
         async def go():
             if name_inp.value.strip(): _finish_personalize(name_inp.value.strip(), desc_inp.value.strip() if desc_inp.value else "")
         name_inp.on("keydown.enter", go); ui.button(t("creation.next", lang), on_click=go, color="primary")
@@ -1549,10 +1592,10 @@ def _render_wishes():
     if "wishes" not in creation: creation["wishes"]=""
     ui.markdown(t("creation.almost_done", lang))
     ui.markdown(f"{E['star']} {t('creation.wishes_label', lang)}")
-    w_inp = ui.textarea(placeholder=t("creation.wishes_placeholder", lang), value=creation.get("wishes","")).classes("w-full")
+    w_inp = ui.textarea(placeholder=t("creation.wishes_placeholder", lang), value=creation.get("wishes","")).classes("w-full").props(f'aria-label="{t("creation.wishes_placeholder", lang)}"')
     ui.label(f"{E['star']} {t('creation.wishes_hint', lang)}").classes("text-xs text-gray-500")
     ui.markdown(f"{E['shield']} {t('creation.boundaries_label', lang)}")
-    l_inp = ui.textarea(placeholder=t("creation.boundaries_placeholder", lang), value=creation.get("content_lines","")).classes("w-full")
+    l_inp = ui.textarea(placeholder=t("creation.boundaries_placeholder", lang), value=creation.get("content_lines","")).classes("w-full").props(f'aria-label="{t("creation.boundaries_placeholder", lang)}"')
     ui.label(f"{E['shield']} {t('creation.boundaries_hint', lang)}").classes("text-xs text-gray-500")
     btn_container = ui.column().classes("w-full mt-4 gap-2")
     async def proceed():
@@ -1560,7 +1603,7 @@ def _render_wishes():
         creation["content_lines"]=l_inp.value.strip() if l_inp.value else ""
         # Show spinner below button
         with btn_container:
-            with ui.row().classes("w-full items-center gap-3"):
+            with ui.row().classes("w-full items-center gap-3").props('role="status"'):
                 ui.spinner("dots", size="md", color="primary")
                 ui.label(t("creation.generating", lang)).classes("text-sm").style("color: var(--text-secondary)")
         await _scroll_chat_bottom()
@@ -1745,7 +1788,7 @@ def _render_confirm():
                     ui.notify(t("game.invalid_api_key", lang), type="negative")
                     return
                 with confirm_container:
-                    with ui.row().classes("w-full items-center gap-3"):
+                    with ui.row().classes("w-full items-center gap-3").props('role="status"'):
                         ui.spinner("dots", size="md", color="primary")
                         loading_label = ui.label(t("creation.world_awakens", lang)) \
                             .classes("text-sm creation-loading-label") \
@@ -1831,9 +1874,16 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
         s["messages"].append(msg_entry)
         with chat_container:
             css_corr = " correction" if _is_corr_input else ""
-            with ui.column().classes(f"chat-msg user{css_corr} w-full"): ui.markdown(display_text)
+            _user_col = ui.column().classes(f"chat-msg user{css_corr} w-full")
+            if not s.get("sr_chat", True):
+                _user_col.props('aria-hidden="true"')
+            with _user_col:
+                _sr_prefix = f'<span class="sr-only">{t("aria.player_says", L())}</span>' if s.get("sr_chat", True) else ""
+                ui.markdown(f"{_sr_prefix}{display_text}")
     try:
-        with chat_container: spinner=ui.spinner("dots", size="lg")
+        with chat_container:
+            spinner=ui.spinner("dots", size="lg")
+            spinner.props('role="status" aria-label="%s"' % t("aria.loading", L()))
         # Scroll down so player sees their message + spinner
         await _scroll_chat_bottom()
         # Stop any playing audio
@@ -1926,12 +1976,15 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
             scroll_target_id = f"msg-{len(s['messages'])}"
             with chat_container:
                 if game.scene_count > 1:
-                    ui.html(f'<div id="{scroll_target_id}" class="scene-marker">{E["dash"]} {t("game.scene_marker", L(), n=game.scene_count, location=game.current_location)} {E["dash"]}</div>')
+                    ui.html(f'<h2 id="{scroll_target_id}" class="scene-marker">{E["dash"]} {t("game.scene_marker", L(), n=game.scene_count, location=game.current_location)} {E["dash"]}</h2>')
                 else:
                     ui.html(f'<div id="{scroll_target_id}"></div>')
                 msg_col = ui.column().classes("chat-msg assistant w-full")
+                if not s.get("sr_chat", True):
+                    msg_col.props('aria-hidden="true"')
                 with msg_col:
-                    ui.markdown(_clean_narration(narration))
+                    _sr_prefix = f'<span class="sr-only">{t("aria.narrator_says", L())}</span>' if s.get("sr_chat", True) else ""
+                    ui.markdown(f"{_sr_prefix}{_clean_narration(narration)}")
                     if roll_data: render_dice_display(roll_data)
         # Two-step scroll: bottom first (forces DOM render), then up to scene marker
         await _scroll_chat_bottom()
@@ -1984,6 +2037,7 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
                 "background: rgba(255,80,80,0.1); border: 1px solid rgba(255,80,80,0.3); "
                 "border-radius: 8px; margin: 0.25rem 0"
             )
+            retry_row.props('role="alert"')
             with retry_row:
                 err_short = str(e)[:120]
                 ui.label(f"{E['warn']} {err_short}").classes("text-xs text-red-300 flex-grow").style("word-break: break-word")
@@ -1991,7 +2045,7 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
                     try: rr.delete()
                     except Exception: pass
                     await process_player_input(rt, rc, sidebar_refresh=rs, is_retry=True)
-                ui.button(icon="refresh", on_click=_do_retry).props("flat dense round").classes(
+                ui.button(icon="refresh", on_click=_do_retry).props(f'flat dense round aria-label="{t("aria.retry", L())}"').classes(
                     "text-red-300 hover:text-white"
                 ).style("min-width: 40px; min-height: 40px").tooltip(t("game.retry_tooltip", L()))
     finally:
@@ -2012,6 +2066,7 @@ def render_momentum_burn() -> bool:
     pre_momentum = bd.get("pre_snapshot", {}).get("momentum", bd["cost"])
     rl=t("momentum.weak_hit", lang) if nr=="WEAK_HIT" else t("momentum.strong_hit", lang)
     with ui.card().classes("w-full p-4").style("background: var(--accent-dim); border: 1px solid var(--accent)") as burn_card:
+        burn_card.props('role="alertdialog"')
         ui.markdown(t("momentum.question", lang, cost=pre_momentum, result=rl))
         with ui.row().classes("gap-4 mt-4") as btn_row:
             async def burn():
@@ -2020,6 +2075,7 @@ def render_momentum_burn() -> bool:
                     btn_row.set_visibility(False)
                     with burn_card:
                         burn_spinner = ui.row().classes("w-full items-center gap-2")
+                        burn_spinner.props('role="status"')
                         with burn_spinner:
                             ui.spinner("dots", size="lg")
                             ui.label(t("momentum.gathering", lang)).classes("text-sm").style("color: var(--text-secondary)")
@@ -2316,34 +2372,69 @@ async def main_page(client: Client):
     setup_file_logging()
     s = S()
 
+    # Accessibility: set HTML lang attribute for screen reader language/accent detection
+    _init_lang = L()  # Default or previously stored UI language
+    try:
+        await ui.run_javascript(f'document.documentElement.lang="{_init_lang}"', timeout=3.0)
+    except TimeoutError:
+        pass
+
     # ==================================================================
     # PAGE SKELETON — created once at page build, shown/hidden per phase
     # ==================================================================
 
+    # Skip-to-content link (accessibility: lets keyboard/screen-reader users jump to chat)
+    _skip_label = t("aria.skip_to_content", L())
+    ui.html(f'<a href="#chat-log" class="skip-link">{_skip_label}</a>')
+
     # Slim header with hamburger menu (hidden until main app phase)
     with ui.header(fixed=True).classes("rpg-slim-header items-center").style("padding: 0 0.5rem") as header:
-        ui.button(icon="menu", on_click=lambda: drawer.toggle()) \
-            .props("flat round dense").classes("text-gray-400 hover:text-white") \
+        _hamburger_btn = ui.button(icon="menu", on_click=lambda: drawer.toggle()) \
+            .props(f'flat round dense aria-label="{t("aria.menu_open", L())}"') \
+            .classes("text-gray-400 hover:text-white") \
             .style("min-width: 44px; min-height: 44px")
     header.set_value(False)
 
     # Left drawer (created at page level, hidden initially, populated in main phase)
-    with ui.left_drawer(value=False).props("width=320 breakpoint=768") as drawer:
+    with ui.left_drawer(value=False).props(f'width=320 breakpoint=768 aria-label="{t("aria.sidebar", L())}"') as drawer:
         drawer_content = ui.column().classes("w-full")
+
+    # Accessibility: hide main content from screen readers when drawer overlays (mobile < 768px)
+    drawer.on('show', lambda: ui.run_javascript('''
+        if (window.innerWidth < 768) {
+            document.querySelector('.q-page')?.setAttribute('aria-hidden','true');
+            document.querySelector('.q-footer')?.setAttribute('aria-hidden','true');
+        }
+    '''))
+    drawer.on('hide', lambda: ui.run_javascript('''
+        document.querySelector('.q-page')?.removeAttribute('aria-hidden');
+        document.querySelector('.q-footer')?.removeAttribute('aria-hidden');
+    '''))
 
     # Footer (created at page level, hidden initially, populated in main phase)
     with ui.footer(fixed=True).classes("q-pa-none").style(
         "background: var(--bg-primary); border-top: 1px solid var(--border)"
     ) as footer:
+        footer.props(f'aria-label="{t("aria.input_area", L())}"')
         footer_content = ui.column().classes("w-full")
     footer.set_value(False)
 
     # Main content area
     content_area = ui.column().classes("w-full max-w-4xl mx-auto px-4 sm:px-0")
+    content_area.props(f'role="main" aria-label="{t("aria.main_content", L())}"')
 
     # ==================================================================
     # PHASE FUNCTIONS — transition without ui.navigate.reload()
     # ==================================================================
+
+    def _focus_element(css_selector: str, delay_ms: int = 400):
+        """Move keyboard/screen-reader focus to the first matching element after a short delay."""
+        ui.run_javascript(f'''
+            setTimeout(() => {{
+                const el = document.querySelector('{css_selector}');
+                if (el) {{ el.focus(); }}
+            }}, {delay_ms});
+        ''')
 
     def _show_login_phase():
         """Phase 1: Invite code login (no reload on success)."""
@@ -2359,6 +2450,7 @@ async def main_page(client: Client):
                 ui.label(t("login.subtitle", lang)).classes("text-gray-400 text-sm")
                 code_inp = ui.input(t("login.code_label", lang), password=True, password_toggle_button=True).classes("w-full")
                 error_label = ui.label("").classes("text-red-400 text-sm")
+                error_label.props('role="alert"')
                 error_label.set_visibility(False)
                 async def check_code():
                     client_ip = client.ip or "unknown"
@@ -2378,6 +2470,7 @@ async def main_page(client: Client):
                         error_label.set_visibility(True)
                 code_inp.on("keydown.enter", check_code)
                 ui.button(t("login.submit", lang), on_click=check_code, color="primary").classes("w-full")
+        _focus_element('.q-page input', delay_ms=500)
 
     def _show_user_selection_phase():
         """Phase 2: User selection (no reload on select)."""
@@ -2424,6 +2517,7 @@ async def main_page(client: Client):
                 if not s.get("api_key"):
                     ui.separator().classes("my-4 w-96")
                     ui.label(f"{E['gear']} {t('user.api_hint', lang)}").classes("text-sm text-gray-400 w-96 text-center")
+        _focus_element('.q-page .q-btn', delay_ms=500)
 
     async def _select_user(name: str):
         """Handle user selection → transition to main phase without reload."""
@@ -2455,12 +2549,24 @@ async def main_page(client: Client):
             load_user_settings(s["current_user"])
             s["user_config_loaded"] = True
 
+        # Accessibility: update HTML lang + skeleton ARIA labels to match user's UI language
+        _user_lang = L()
+        try:
+            await ui.run_javascript(f'document.documentElement.lang="{_user_lang}"', timeout=3.0)
+        except TimeoutError:
+            pass
+        # Re-set skeleton ARIA labels (were set at build time with default language)
+        _hamburger_btn.props(f'aria-label="{t("aria.menu_open", _user_lang)}"')
+        drawer.props(f'aria-label="{t("aria.sidebar", _user_lang)}"')
+        footer.props(f'aria-label="{t("aria.input_area", _user_lang)}"')
+        content_area.props(f'role="main" aria-label="{t("aria.main_content", _user_lang)}"')
+
         # --- Populate drawer ---
         drawer_content.clear()
         with drawer_content:
             with ui.row().classes("w-full items-center justify-between mb-2"):
                 ui.label(s["current_user"]).classes("text-lg font-semibold")
-                ui.button(icon="chevron_left", on_click=drawer.hide).props("flat round dense").classes("text-gray-500 hover:text-white").style("min-width: 44px; min-height: 44px")
+                ui.button(icon="chevron_left", on_click=drawer.hide).props(f'flat round dense aria-label="{t("aria.menu_close", L())}"').classes("text-gray-500 hover:text-white").style("min-width: 44px; min-height: 44px")
             sidebar_status_container = ui.column().classes("w-full")
             game = s.get("game")
             if game:
@@ -2495,6 +2601,11 @@ async def main_page(client: Client):
                 return
 
             chat_container = ui.column().classes("chat-scroll w-full")
+            _sr_chat = s.get("sr_chat", True)
+            _chat_aria_props = f'id="chat-log" aria-label="{t("aria.chat_log", L())}"'
+            if _sr_chat:
+                _chat_aria_props += ' role="log" aria-live="polite"'
+            chat_container.props(_chat_aria_props)
             s["_chat_container"] = chat_container  # Store reference for sidebar actions (recap etc.)
             with chat_container:
                 # Chapter viewing banner
@@ -2568,10 +2679,11 @@ async def main_page(client: Client):
             with footer_content:
                 # STT status line (hidden by default, shown during recording/transcription)
                 stt_status = ui.row().classes("stt-status-row rpg-input-bar hidden w-full items-center")
+                stt_status.props('role="status" aria-live="polite"')
                 with stt_status:
                     stt_status_content = ui.html("").style("display: inline")
                 with ui.row().classes("w-full items-center gap-2 rpg-input-bar").style("padding: 0.5rem 1rem"):
-                    inp = ui.input(placeholder=t("game.input_placeholder", L())).classes("flex-grow").props("outlined dense dark")
+                    inp = ui.input(placeholder=t("game.input_placeholder", L())).classes("flex-grow").props(f'outlined dense dark aria-label="{t("game.input_placeholder", L())}"')
                     _cc = chat_container  # capture reference for closure
                     _sr = _refresh_sidebar  # capture sidebar refresh callback
                     async def send():
@@ -2582,11 +2694,11 @@ async def main_page(client: Client):
                     inp.on("keydown.enter", send)
                     # --- STT Microphone button ---
                     if s.get("stt_enabled", False):
-                        mic_btn = ui.button(icon="mic", on_click=lambda: None).props("flat dense") \
+                        mic_btn = ui.button(icon="mic", on_click=lambda: None).props(f'flat dense aria-label="{t("aria.start_recording", L())}"') \
                             .classes("text-gray-400 hover:text-white stt-mic-btn") \
                             .style("border: 1px solid var(--border-light); border-radius: 8px; min-width: 44px; height: 44px")
                         _setup_stt_button(mic_btn, inp, _cc, stt_status, stt_status_content, sidebar_refresh=_sr)
-                    ui.button(icon="send", on_click=send).props("flat dense").classes("text-gray-400 hover:text-white").style("border: 1px solid var(--border-light); border-radius: 8px; min-width: 44px; height: 44px")
+                    ui.button(icon="send", on_click=send).props(f'flat dense aria-label="{t("aria.send_message", L())}"').classes("text-gray-400 hover:text-white").style("border: 1px solid var(--border-light); border-radius: 8px; min-width: 44px; height: 44px")
             footer.set_value(True)
             # Dynamically align footer input bar with page content
             ui.run_javascript('''
@@ -2632,6 +2744,24 @@ async def main_page(client: Client):
         pending = s.pop("pending_tts", None)
         if pending and chat_container:
             await do_tts(pending, chat_container)
+
+        # Accessibility: move focus to the most relevant interactive element
+        # Priority: footer input (game active) → creation buttons → creation input → card buttons
+        ui.run_javascript('''
+            setTimeout(() => {
+                const targets = [
+                    '.q-footer input',
+                    '.q-page .choice-btn',
+                    '.q-page .q-card .q-btn',
+                    '.q-page input',
+                    '.q-page textarea'
+                ];
+                for (const sel of targets) {
+                    const el = document.querySelector(sel);
+                    if (el && el.offsetParent !== null) { el.focus(); return; }
+                }
+            }, 600);
+        ''')
 
     # ==================================================================
     # DETERMINE INITIAL PHASE

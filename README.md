@@ -6,7 +6,7 @@
 [![NiceGUI](https://img.shields.io/badge/UI-NiceGUI-4CAF50?logo=vuedotjs&logoColor=white)](https://nicegui.io)
 [![Claude AI](https://img.shields.io/badge/AI-Claude%20Haiku%20%2B%20Sonnet-orange?logo=anthropic&logoColor=white)](https://anthropic.com)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-lightgrey)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-0.9.39-blueviolet)]()
+[![Version](https://img.shields.io/badge/Version-0.9.40-blueviolet)]()
 [![Mobile Ready](https://img.shields.io/badge/Mobile-PWA%20Ready-success?logo=pwa&logoColor=white)]()
 
 ---
@@ -19,7 +19,9 @@ EdgeTales is a self-hosted, AI-driven solo tabletop RPG engine. Type what your c
 
 **You love story-driven roleplaying, but can't always find other players.** Scheduling a group campaign is hard. EdgeTales is designed for exactly those moments - a full RPG experience, solo, whenever you want, for as long as you want.
 
-**You have accessibility needs that make traditional tabletop difficult.** Reading long text or typing for extended periods can be exhausting. EdgeTales supports full voice input and output: speak your actions aloud, and have the narrator read every scene back to you. It works well for people with visual impairments, motor difficulties, dyslexia, or anyone who simply finds listening easier than reading.
+**You want to test a character concept before bringing it to your group.** Got an idea for a brooding alchemist or a fast-talking smuggler, but not sure if the concept has legs? EdgeTales is a great sandbox for trying out character concepts, backstories, and play styles before your next pen & paper session with real players. See how a character *feels* in actual play — their strengths, blind spots, and how their personality emerges under pressure — without spending a full group session on an experiment.
+
+**You have accessibility needs that make traditional tabletop difficult.** Reading long text or typing for extended periods can be exhausting. EdgeTales supports full voice input and output: speak your actions aloud, and have the narrator read every scene back to you. The entire UI is screen reader accessible with comprehensive ARIA support — blind users can navigate the sidebar, settings, and save system with VoiceOver, NVDA, or any other assistive technology. A dedicated "Screen reader in chat" toggle lets you disable screen reader announcements for the game log when using TTS for narration, preventing double-reading and giving you the best of both worlds: the screen reader for menus and navigation, TTS for the story itself.
 
 **You want a real game, not just a chatbot.** Unlike asking an AI to "run a D&D campaign," EdgeTales has an actual rules engine running underneath. Hidden dice mechanics, momentum, chaos, NPC relationship tracking, and narrative arc management all happen in the background - structuring the story without you ever needing to think about them. The AI doesn't freestyle; it operates within a framework that ensures tension, consequences, and satisfying story beats.
 
@@ -62,10 +64,32 @@ EdgeTales doesn't invent its own rules from scratch. It draws on proven, beloved
 - Mobile-first PWA - add to iOS/Android home screen
 - 20+ narration languages - UI in English and German
 - Voice I/O: Text-to-Speech (EdgeTTS online / Chatterbox offline with voice cloning) + Speech-to-Text (Whisper)
+- Screen reader accessible (ARIA landmarks, live regions, heading navigation, focus management — see below)
 - Optional invite code for shared/public deployments - protect your API budget
 - HTTPS with auto-generated self-signed certificates
 - Kid-friendly mode (ages 8–12, see below)
 - Multiple save slots with full story export to PDF
+
+**Accessibility — Screen Reader & Voice Support**
+
+EdgeTales is designed to be fully usable by blind and visually impaired players. The entire UI is annotated with ARIA attributes, all localized in German and English:
+
+- **Screen reader navigation:** Page landmarks (main, sidebar, footer), skip-to-content link, heading-based scene navigation (press H to jump between scenes), labeled icon buttons, and focus management on every phase transition
+- **Stat & track readout:** Character attributes are read as "Geschick: 2" / "Finesse: 2" with a single swipe — no redundant information. Track bars (health, spirit, supply) are hidden from the screen reader since the adjacent text label already states the value. Chaos includes a danger level ("hoch" / "critical")
+- **TTS + Screen reader combo:** The recommended setup for blind users is to enable Text-to-Speech for narration and disable the "Screen reader in chat" toggle in settings. This way, the TTS reads the story with natural voice and intonation, while the screen reader handles only menu navigation, settings, and the sidebar. Scene markers remain visible to the screen reader as headings even when chat reading is off, providing orientation within the story
+- **Toast notifications:** Error messages and status updates from popup notifications are announced by the screen reader automatically
+- **Focus indicators:** High-contrast keyboard focus outlines (amber/gold) on all interactive elements, visible only during keyboard navigation
+
+**`##` Correction System — Fix AI Misunderstandings**
+
+Sometimes the AI gets something wrong. Maybe it interpreted "I talk to the bartender" as a fight, or it confused two NPCs. Rather than replaying the entire scene, prefix your next input with `##` and describe what should have happened differently.
+
+The engine analyses your correction and automatically chooses the right repair strategy:
+
+- **Misread input** — the AI misunderstood what you did or said. The engine rolls back the entire game state to before the mistake, re-runs the mechanics with your corrected intent (including a re-roll if the stat changes), and the narrator rewrites the scene. It's as if the mistake never happened.
+- **State error** — the world facts are wrong (wrong NPC name, wrong location, confused relationships). The engine patches the specific errors in-place without rolling back, and the narrator rewrites the scene with corrections applied. Your dice results and consequences stay the same.
+
+Corrected messages are marked with a subtle "✎ Corrected" badge. The original correction input fades out and is never saved — your story stays clean.
 
 **Dice Display - choose your level of crunch**
 

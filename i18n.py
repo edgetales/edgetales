@@ -437,6 +437,43 @@ _STRINGS = {
         "help.kid_title": "**Kindermodus**",
         "help.kid_text": "Kinderfreundliche Inhalte (8\u201312 Jahre). Keine Gewalt, keine Erwachsenenthemen, "
                          "hoffnungsvoller Ton. Spannung bleibt erhalten!",
+
+        # Accessibility (ARIA labels — screen-reader only, invisible)
+        "aria.skip_to_content": "Zum Spielverlauf springen",
+        "aria.menu_open": "Men\u00fc \u00f6ffnen",
+        "aria.menu_close": "Men\u00fc schlie\u00dfen",
+        "aria.send_message": "Nachricht senden",
+        "aria.start_recording": "Aufnahme starten",
+        "aria.stop_recording": "Aufnahme stoppen",
+        "aria.chat_log": "Spielverlauf",
+        "aria.sidebar": "Charakter-\u00dcbersicht",
+        "aria.main_content": "Hauptbereich",
+        "aria.input_area": "Eingabebereich",
+        "aria.player_says": "Spieler:",
+        "aria.narrator_says": "Erz\u00e4hler:",
+        "aria.recap_says": "Zusammenfassung:",
+        "aria.chaos_low": "niedrig",
+        "aria.chaos_medium": "mittel",
+        "aria.chaos_high": "hoch",
+        "aria.chaos_critical": "kritisch",
+        "aria.story_progress": "Akt {n} Fortschritt",
+        "aria.stat_item": "{label}: {value}",
+        "aria.momentum_stat": "Momentum: {current} von {max}",
+        "aria.correction_badge": "Diese Nachricht wurde korrigiert",
+        "aria.retry": "Erneut versuchen",
+        "aria.loading": "Wird geladen",
+        "aria.narration_audio": "Sprachausgabe",
+        "aria.genre_selection": "Genre ausw\u00e4hlen",
+        "aria.tone_selection": "Stimmung ausw\u00e4hlen",
+        "aria.archetype_selection": "Archetyp ausw\u00e4hlen",
+        "aria.load_save": "Spielstand {name} laden",
+        "aria.delete_save": "Spielstand {name} l\u00f6schen",
+
+        # Settings
+        "settings.sr_chat": "Screenreader im Chat",
+        "settings.sr_chat_tooltip": "Wenn deaktiviert, ignoriert der Screenreader den Spielverlauf "
+                                    "(Erz\u00e4hlertext und eigene Eingaben). Ideal wenn TTS aktiviert ist \u2014 "
+                                    "die Sprachausgabe liest die Geschichte vor, der Screenreader navigiert nur die Men\u00fcs.",
     },
 
     # ── ENGLISH ──────────────────────────────────────────────
@@ -746,6 +783,43 @@ _STRINGS = {
         "help.kid_title": "**Kid Mode**",
         "help.kid_text": "Kid-friendly content (ages 8\u201312). No violence, no adult themes, "
                          "hopeful tone. Tension is preserved!",
+
+        # Accessibility (ARIA labels — screen-reader only, invisible)
+        "aria.skip_to_content": "Skip to game log",
+        "aria.menu_open": "Open menu",
+        "aria.menu_close": "Close menu",
+        "aria.send_message": "Send message",
+        "aria.start_recording": "Start recording",
+        "aria.stop_recording": "Stop recording",
+        "aria.chat_log": "Game log",
+        "aria.sidebar": "Character overview",
+        "aria.main_content": "Main content",
+        "aria.input_area": "Input area",
+        "aria.player_says": "Player:",
+        "aria.narrator_says": "Narrator:",
+        "aria.recap_says": "Recap:",
+        "aria.chaos_low": "low",
+        "aria.chaos_medium": "moderate",
+        "aria.chaos_high": "high",
+        "aria.chaos_critical": "critical",
+        "aria.story_progress": "Act {n} progress",
+        "aria.stat_item": "{label}: {value}",
+        "aria.momentum_stat": "Momentum: {current} of {max}",
+        "aria.correction_badge": "This message was corrected",
+        "aria.retry": "Retry",
+        "aria.loading": "Loading",
+        "aria.narration_audio": "Narration audio",
+        "aria.genre_selection": "Select genre",
+        "aria.tone_selection": "Select tone",
+        "aria.archetype_selection": "Select archetype",
+        "aria.load_save": "Load save {name}",
+        "aria.delete_save": "Delete save {name}",
+
+        # Settings
+        "settings.sr_chat": "Screen reader in chat",
+        "settings.sr_chat_tooltip": "When disabled, the screen reader skips the game log "
+                                    "(narrator text and your inputs). Ideal with TTS enabled \u2014 "
+                                    "the voice reads the story, the screen reader navigates only menus.",
     },
 }
 

@@ -36,6 +36,45 @@
 .q-drawer__content::-webkit-scrollbar-thumb, .chat-scroll::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
 .q-drawer__content:hover::-webkit-scrollbar-thumb, .chat-scroll:hover::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); }
 .q-drawer__content:hover::-webkit-scrollbar-thumb:hover, .chat-scroll:hover::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
+/* --- Accessibility: screen-reader-only text (visually hidden, announced by assistive tech) --- */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+}
+/* --- Skip-to-content link (visible on focus for keyboard/screen-reader users) --- */
+.skip-link {
+    position: absolute;
+    top: -100%;
+    left: 0;
+    z-index: 10000;
+    padding: 0.75rem 1.5rem;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+    font-size: 1rem;
+    text-decoration: none;
+    border-radius: 0 0 8px 0;
+}
+.skip-link:focus {
+    top: 0;
+}
+/* --- Accessibility: high-contrast focus indicator for keyboard navigation --- */
+*:focus-visible {
+    outline: 2px solid var(--accent-light) !important;
+    outline-offset: 2px;
+}
+/* Quasar buttons: override their internal focus handling */
+.q-btn:focus-visible, .q-item:focus-visible, .q-expansion-item__toggle-icon:focus-visible {
+    outline: 2px solid var(--accent-light) !important;
+    outline-offset: 2px;
+}
 /* --- Global overrides --- */
 .q-drawer { background: var(--bg-sidebar) !important; border-right: 1px solid var(--border) !important; }
 .q-page { background: var(--bg-primary) !important; }
@@ -69,9 +108,11 @@ input, textarea, select, .q-field__native, .q-field__input { font-size: 16px !im
 .chat-msg h1, .chat-msg h2, .chat-msg h3 { font-size: 1.1rem !important; font-weight: 600; margin: 0.5em 0 0.3em 0; }
 .scene-marker { text-align: center; color: var(--text-secondary); font-size: 0.85em; margin: 0.5em 0;
                  padding: 0.3em 0; }
+/* Reset h2 defaults when used as scene-marker (accessibility: enables heading navigation) */
+h2.scene-marker { font-weight: normal; line-height: inherit; letter-spacing: normal; }
 /* --- Stat grid --- */
 .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
-.stat-item { padding: 0.4rem 0.6rem; background: transparent; border-radius: 8px; text-align: center; }
+.stat-item { padding: 0.4rem 0.6rem; background: transparent; border-radius: 8px; text-align: center; position: relative; }
 .stat-value { font-size: 1.8rem; font-weight: 700; line-height: 1.2; color: var(--text-primary); }
 .stat-label { font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.1rem; }
 /* --- Track bars --- */
@@ -155,3 +196,16 @@ input, textarea, select, .q-field__native, .q-field__input { font-size: 16px !im
     .chat-scroll { padding: 0.35rem; padding-bottom: 5rem; }
 }
 </style>
+<script>
+/* --- Accessibility: make Quasar toast notifications announce to screen readers --- */
+(function(){
+    var observer = new MutationObserver(function(){
+        document.querySelectorAll('.q-notifications__list:not([aria-live])').forEach(function(el){
+            el.setAttribute('role', 'log');
+            el.setAttribute('aria-live', 'assertive');
+            el.setAttribute('aria-atomic', 'false');
+        });
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+})();
+</script>

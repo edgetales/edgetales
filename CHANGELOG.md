@@ -5,6 +5,45 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.40]
+
+### Added
+- **Screen reader accessibility (ARIA):** Comprehensive WCAG-informed accessibility layer for blind and visually impaired users. All ARIA labels are localized (DE + EN) via the `t()` i18n system
+  - **Page landmarks:** Skip-to-content link, `role="main"` on content area, `aria-label` on header, sidebar drawer, and footer
+  - **Chat log:** `role="log"` + `aria-live="polite"` on chat container — screen readers announce new narration automatically. Scene markers use `<h2>` elements enabling heading navigation (H-key on VoiceOver/NVDA) for scene-jumping
+  - **sr-only role prefixes:** Every chat message is prefixed with an invisible "Spieler:" / "Erzähler:" / "Zusammenfassung:" label, embedded directly in the markdown string (no extra DOM element, no layout impact)
+  - **Stat grid:** Each stat item contains a sr-only span with the combined label+value ("Geschick: 2"), with the visual children marked `aria-hidden="true"`. All numeric values explicitly cast to `int()` to prevent VoiceOver reading "2 Punkt null null"
+  - **Track bars (Health, Spirit, Supply, Clocks):** `aria-hidden="true"` — the adjacent text label already conveys the same information, preventing double-reading
+  - **Chaos track:** sr-only danger level suffix ("— hoch" / "— critical") appended to the visible label. Progressbar hidden from screen readers
+  - **Story arc progressbar:** Retains `role="progressbar"` with `aria-valuenow/min/max` + `aria-label` — unique information not conveyed by adjacent text
+  - **Icon-only buttons:** `aria-label` on hamburger menu, drawer close, send, mic, retry, save-load, save-delete buttons. All localized. Mic button label toggles dynamically between "Aufnahme starten" / "Aufnahme stoppen"
+  - **Save slot buttons:** `aria-label` includes the save name ("Spielstand MeinAbenteuer laden" / "Spielstand MeinAbenteuer löschen")
+  - **Creation flow:** `role="group"` + `aria-label` on genre/tone/archetype choice grids. All text inputs and textareas have `aria-label` matching their placeholder text
+  - **Toast notifications:** `MutationObserver` in `custom_head.html` sets `aria-live="assertive"` on Quasar's notification container — all `ui.notify()` toasts are now announced by screen readers
+  - **Error states:** `role="alert"` on login error label and inline retry row. STT status row has `role="status"` + `aria-live="polite"`
+  - **Loading states:** `role="status"` on all spinner containers (TTS indicator, creation spinners, momentum burn, turn processing)
+  - **Momentum burn card:** `role="alertdialog"` for immediate screen reader attention
+  - **Correction badge:** `aria-label` on the "✎ Korrigiert" badge
+  - **Audio player:** `aria-label` ("Sprachausgabe" / "Narration audio")
+- **"Screen reader in chat" toggle** (`settings.sr_chat`): New setting in user preferences (default: on). When disabled, narrator text, player inputs, and recaps get `aria-hidden="true"` and the chat container loses `role="log"` / `aria-live`. Scene markers remain accessible (h2 headings). Designed for blind users who prefer TTS for story narration and the screen reader only for UI navigation — prevents double-reading of every passage
+- **Dynamic `lang` attribute:** `document.documentElement.lang` is set via JS after session init and updated in `_show_main_phase()` to match the user's UI language. Fixes VoiceOver speaking with the wrong accent (e.g. English accent for German UI)
+- **Drawer `aria-hidden` toggle:** When the sidebar drawer opens on mobile (< 768px overlay mode), `aria-hidden="true"` is set on `.q-page` and `.q-footer` to prevent screen reader bleed-through. Removed on drawer close
+- **Skeleton ARIA label refresh:** All skeleton elements (hamburger button, drawer, footer, content area) have their `aria-label` re-set in `_show_main_phase()` with the correct user language, fixing stale labels from the default-language page build
+- **Focus management on phase transitions:** New `_focus_element()` helper. Login phase → focus on invite code input. User selection → focus on first player button. Main phase → cascading focus priority (footer input → choice buttons → card buttons → text inputs)
+- **Focus-visible indicators:** `:focus-visible` CSS with `2px solid var(--accent-light)` on all elements + Quasar overrides. Only appears on keyboard navigation, not on mouse click
+- **`.sr-only` CSS class** in `custom_head.html`: Standard visually-hidden pattern (1px, absolute, clipped)
+- **`.skip-link` CSS** in `custom_head.html`: Hidden link that appears on Tab focus, jumps to `#chat-log`
+
+### Changed
+- **STT recording no longer blocks on permission dialog:** `await ui.run_javascript(...)` for the `getUserMedia` call replaced with fire-and-forget `ui.run_javascript(...)` wrapping an async IIFE. Previously, Chrome's microphone permission dialog caused a full page deadlock (JS blocked → Python blocked → NiceGUI event loop frozen → all UI unresponsive until permission granted). Now Python returns immediately to the event loop, and all communication happens via `$emit` events as before
+- **`position: relative` on `.stat-item`:** Fixes VoiceOver's focus rectangle being offset from the actual stat element (sr-only span's `position: absolute` needs a positioned parent for correct bounding box calculation)
+
+### i18n
+- **31 new `aria.*` keys** (DE + EN): `skip_to_content`, `menu_open`, `menu_close`, `send_message`, `start_recording`, `stop_recording`, `chat_log`, `sidebar`, `main_content`, `input_area`, `player_says`, `narrator_says`, `recap_says`, `chaos_low/medium/high/critical`, `story_progress`, `stat_item`, `momentum_stat`, `correction_badge`, `retry`, `loading`, `narration_audio`, `genre_selection`, `tone_selection`, `archetype_selection`, `load_save`, `delete_save`
+- **4 new `settings.*` keys** (DE + EN): `sr_chat`, `sr_chat_tooltip`
+
+---
+
 ## [0.9.39]
 
 ### Added
