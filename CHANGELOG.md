@@ -5,6 +5,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.44]
+
+### Fixed
+- **False deceased marking from dialog claims (Leo-Lausemaus-Bug):** When an NPC's death was only *claimed* by another character in dialog (e.g. Brenner says "Leo ist tot" as a bluff/test), the Metadata Extractor incorrectly reported the NPC as deceased. Once marked deceased, the NPC was excluded from all processing — and the fragile resurrection path (requiring exact npc_id match in `new_npcs` or `memory_updates`) rarely triggered, leaving the NPC permanently dead even after the player explicitly contradicted the claim
+- **Two-layer fix — prompt + code guard:**
+  1. **Extractor prompt rewritten:** `deceased_npcs` instruction now explicitly distinguishes narrator-depicted deaths (NPC collapses, is killed on-screen) from dialog claims/reports/allegations. The key sentence: *"Do NOT mark an NPC as deceased if their death is only CLAIMED, REPORTED, or ALLEGED by another character in dialog"*
+  2. **Presence guard in `_process_deceased_npcs()`:** New `scene_present_ids` parameter (set of activated NPC IDs) passed from all 4 call sites (`process_turn` dialog/action paths, `process_correction`, `process_momentum_burn`). If the NPC was not activated in the current scene AND has no memory from the current scene (which would indicate a mid-scene introduction via `new_npcs`), the deceased report is rejected with a warning log. This catches cases where the prompt fix alone might not suffice — belt-and-suspenders approach
+- **Narrator truncation despite `end_turn` stop reason:** Sonnet occasionally returns `end_turn` (not `max_tokens`) with text that ends mid-word or mid-sentence. Previously, `_salvage_truncated_narration()` only ran on `max_tokens`. Now `call_narrator()` also checks if the prose ends on a non-sentence-ending character (`.!?"»«…)–—*`) and applies the same salvage logic. Logs a distinct warning: `"Response appears truncated despite end_turn"`
+- **Mid-sentence truncation not salvaged on `end_turn`:** Sonnet occasionally returns `stop_reason="end_turn"` despite cutting off mid-word (e.g. narration ending with "...ein dick"). Previously `_salvage_truncated_narration()` only triggered on `stop_reason="max_tokens"`, so these broken endings passed through to the player. Now `call_narrator()` checks all `end_turn` responses for incomplete prose endings (last character not in sentence-terminal set `.!?"»«…)–—*`). If detected, the same salvage function trims to the last complete sentence
+
+---
+
 ## [0.9.43]
 
 ### Added

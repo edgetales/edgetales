@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.43"
+VERSION = "0.9.44"
 
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-5-20250929"
@@ -3468,6 +3468,14 @@ def call_narrator(client: anthropic.Anthropic, prompt: str,
         log(f"[Narrator] WARNING: Response truncated at max_tokens ({len(raw)} chars)",
             level="warning")
         raw = _salvage_truncated_narration(raw)
+    else:
+        # Detect mid-sentence/mid-word cutoff despite end_turn (rare Sonnet bug)
+        _prose = raw[:raw.find('<game_data>')] if '<game_data>' in raw else raw
+        _stripped = _prose.rstrip()
+        if _stripped and _stripped[-1] not in '.!?"\u201c\u201d\u00bb\u00ab\u2026)\u2013\u2014*':
+            log(f"[Narrator] WARNING: Response appears truncated despite end_turn "
+                f"({len(raw)} chars, ends with '{_stripped[-20:]}')", level="warning")
+            raw = _salvage_truncated_narration(raw)
 
     log(f"[Narrator] Raw response ({len(raw)} chars): {raw[:500]}")
     # Log if game_data present (opening scene/chapter only)
@@ -3562,7 +3570,8 @@ description must be a PHYSICAL/ROLE description (appearance, occupation, species
 memory_updates: for EACH NPC who participated in or witnessed this scene. Use their npc_id from the known list. NEVER create memory_updates for the player character. NEVER create memory_updates for NPCs marked [DECEASED] or for absent characters — only for NPCs physically present and alive in the scene.
 about_npc (in memory_updates): If the memory is primarily ABOUT ANOTHER NPC (not the player), set about_npc to that other NPC's npc_id. Examples: NPC A is told something about NPC B → memory on A with about_npc=B's id. NPC A witnesses NPC B doing something → memory on A with about_npc=B's id. If the memory is about the player or a general event, set about_npc to null.
 IMPORTANT: If the player directly tells an NPC something about another NPC (gossip, warning, lie, compliment, romantic suggestion), this MUST be captured as its own memory_update with about_npc set — even if other events also happened to that NPC in the same scene. An NPC can have multiple memories per scene if distinctly different events occurred.
-deceased_npcs: list NPCs (by npc_id) who DIED or were KILLED in THIS scene's narration. Only include deaths that happen on-screen in the narration text — not previously dead characters already marked [DECEASED]. This is critical for game state tracking."""
+deceased_npcs: list NPCs (by npc_id) whose death is DEPICTED BY THE NARRATOR as it happens — they collapse, are killed, stop breathing, etc. in the narrative prose.
+CRITICAL: Do NOT mark an NPC as deceased if their death is only CLAIMED, REPORTED, or ALLEGED by another character in dialog (e.g. someone says "Leo ist tot"). Dialog claims about death are unreliable information — characters lie, bluff, or may be wrong. Only narrator-described, physically-witnessed deaths count. Never include NPCs already marked [DECEASED]."""
 
     prompt = f"""<narration>{narration}</narration>
 <player_character>{game.player_name}</player_character>
@@ -3595,8 +3604,12 @@ Extract all metadata from the narration above. Remember: {game.player_name} is t
                 "deceased_npcs": []}
 
 
-def _apply_narrator_metadata(game: GameState, metadata: dict):
-    """Apply structured metadata from the metadata extractor to game state."""
+def _apply_narrator_metadata(game: GameState, metadata: dict,
+                              scene_present_ids: set = None):
+    """Apply structured metadata from the metadata extractor to game state.
+    scene_present_ids: set of NPC IDs that were activated/present in the scene.
+    If provided, deceased reports are restricted to present NPCs (prevents
+    false positives from dialog claims like 'Leo ist tot')."""
     # Scene context (always present)
     ctx = metadata.get("scene_context", "").strip()
     if ctx:
@@ -3635,7 +3648,7 @@ def _apply_narrator_metadata(game: GameState, metadata: dict):
     # Deceased NPCs (process BEFORE memory updates so dead NPCs are skipped)
     deceased = metadata.get("deceased_npcs", [])
     if deceased:
-        _process_deceased_npcs(game, deceased)
+        _process_deceased_npcs(game, deceased, scene_present_ids=scene_present_ids)
 
     # Memory updates
     mem_updates = metadata.get("memory_updates", [])
@@ -3643,10 +3656,14 @@ def _apply_narrator_metadata(game: GameState, metadata: dict):
         _apply_memory_updates(game, json.dumps(mem_updates, ensure_ascii=False))
 
 
-def _process_deceased_npcs(game: GameState, deceased_list: list):
+def _process_deceased_npcs(game: GameState, deceased_list: list,
+                           scene_present_ids: set = None):
     """Mark NPCs as deceased based on metadata extractor report.
     Sets status='deceased' — this excludes them from all active processing:
-    prompts, memories, reflections, sidebar, reactivation."""
+    prompts, memories, reflections, sidebar, reactivation.
+    If scene_present_ids is provided, only NPCs that were activated in this scene
+    (or introduced mid-scene via new_npcs) can be marked deceased. This prevents
+    false positives from dialog claims (e.g. an NPC saying 'Leo is dead')."""
     for entry in deceased_list:
         npc_id = entry.get("npc_id", "")
         if not npc_id:
@@ -3657,6 +3674,18 @@ def _process_deceased_npcs(game: GameState, deceased_list: list):
             continue
         if npc.get("status") == "deceased":
             continue  # Already marked
+        # Presence guard: NPC must have been in-scene to die on-screen
+        if scene_present_ids is not None and npc["id"] not in scene_present_ids:
+            # Allow if NPC was just introduced this scene (walk-in + die edge case)
+            has_current_scene_memory = any(
+                m.get("scene") == game.scene_count
+                for m in npc.get("memory", [])
+            )
+            if not has_current_scene_memory:
+                log(f"[NPC] Deceased report REJECTED for '{npc['name']}' — "
+                    f"not present in scene {game.scene_count} (likely a dialog claim)",
+                    level="warning")
+                continue
         old_status = npc.get("status", "active")
         npc["status"] = "deceased"
         log(f"[NPC] Marked as deceased: {npc['name']} ({npc['id']}, was {old_status})")
@@ -5620,6 +5649,7 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
 
     # NPC Activation — determine who gets full context in prompt
     activated_npcs, mentioned_npcs, npc_activation_debug = activate_npcs_for_prompt(game, brain, player_message)
+    _scene_present_ids = {n["id"] for n in activated_npcs}  # For deceased-NPC guard
 
     # Track pending revelations before narration
     pending_revs = get_pending_revelations(game)
@@ -5640,7 +5670,7 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
         if game.last_turn_snapshot is not None:
             game.last_turn_snapshot["narration"] = narration
         metadata = call_narrator_metadata(client, narration, game, config)
-        _apply_narrator_metadata(game, metadata)
+        _apply_narrator_metadata(game, metadata, scene_present_ids=_scene_present_ids)
         # Mark first pending revelation as used (narrator was instructed to weave it in)
         if pending_revs:
             mark_revelation_used(game, pending_revs[0]["id"])
@@ -5718,7 +5748,7 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
     if game.last_turn_snapshot is not None:
         game.last_turn_snapshot["narration"] = narration
     metadata = call_narrator_metadata(client, narration, game, config)
-    _apply_narrator_metadata(game, metadata)
+    _apply_narrator_metadata(game, metadata, scene_present_ids=_scene_present_ids)
     # Update chaos factor based on result
     update_chaos_factor(game, roll.result)
     # Record pacing
@@ -6194,8 +6224,9 @@ def process_correction(client: anthropic.Anthropic, game: GameState,
             game.last_turn_snapshot["roll"] = roll
 
     # Step 4: Metadata extraction (new NPCs, memories etc. from rewritten scene)
+    _scene_present_ids = {n["id"] for n in activated_npcs}
     metadata = call_narrator_metadata(client, narration, game, _cfg)
-    _apply_narrator_metadata(game, metadata)
+    _apply_narrator_metadata(game, metadata, scene_present_ids=_scene_present_ids)
 
     # Step 5: Update session_log / narration_history
     intent = brain.get("player_intent", snap.get("player_input", ""))[:80]
@@ -6377,7 +6408,8 @@ def process_momentum_burn(client: anthropic.Anthropic, game: GameState,
     raw = call_narrator(client, prompt, game, config)
     narration = parse_narrator_response(game, raw)
     metadata = call_narrator_metadata(client, narration, game, config)
-    _apply_narrator_metadata(game, metadata)
+    _scene_present_ids = {n["id"] for n in activated_npcs}
+    _apply_narrator_metadata(game, metadata, scene_present_ids=_scene_present_ids)
 
     # Update chaos after burn (new result counts)
     update_chaos_factor(game, new_result)
