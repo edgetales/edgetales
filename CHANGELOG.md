@@ -5,6 +5,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.42]
+
+### Fixed
+- **`CORRECTION_OUTPUT_SCHEMA` broken since introduction — `##` corrections now actually work:** The `fields` property in `state_ops` items was defined as `{"type": ["object", "null"]}` without `properties` or `additionalProperties: false`. Anthropic's Structured Outputs API rejects schemas where any object type lacks these. Every `call_correction_brain()` call failed with a 400 error, falling back to a no-op `state_error` that only rewrote the narration without applying any state patches (`npc_edit`, `npc_split`, `npc_merge`, etc.). The `fields` object now defines all 7 editable NPC properties (`name`, `description`, `disposition`, `agenda`, `instinct`, `aliases`, `bond`) as nullable — null meaning "unchanged". The `_apply_correction_ops()` handler filters out null values before applying edits
+
+---
+
 ## [0.9.41]
 
 ### Fixed

@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.41"
+VERSION = "0.9.42"
 
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-5-20250929"
@@ -5865,8 +5865,25 @@ CORRECTION_OUTPUT_SCHEMA = {
                     "split_description": {"type": ["string", "null"]},
                     # op=npc_merge: id of the NPC to absorb into npc_id
                     "merge_source_id": {"type": ["string", "null"]},
-                    # op=npc_edit: dict of fields to overwrite
-                    "fields": {"type": ["object", "null"]},
+                    # op=npc_edit: dict of fields to overwrite (null for non-edit ops)
+                    "fields": {
+                        "type": ["object", "null"],
+                        "properties": {
+                            "name": {"type": ["string", "null"]},
+                            "description": {"type": ["string", "null"]},
+                            "disposition": {"type": ["string", "null"]},
+                            "agenda": {"type": ["string", "null"]},
+                            "instinct": {"type": ["string", "null"]},
+                            "aliases": {
+                                "type": ["array", "null"],
+                                "items": {"type": "string"},
+                            },
+                            "bond": {"type": ["integer", "null"]},
+                        },
+                        "required": ["name", "description", "disposition",
+                                     "agenda", "instinct", "aliases", "bond"],
+                        "additionalProperties": False,
+                    },
                     # op=location_edit / scene_context / time_edit / backstory_append
                     "value": {"type": ["string", "null"]},
                 },
@@ -5980,11 +5997,14 @@ def _apply_correction_ops(game: GameState, ops: list) -> None:
             npc = _find_npc(game, op_dict.get("npc_id", ""))
             if npc and op_dict.get("fields"):
                 allowed = {"name", "description", "disposition", "agenda",
-                           "instinct", "aliases", "bond", "details"}
-                for k, v in op_dict["fields"].items():
-                    if k in allowed:
-                        npc[k] = v
-                log(f"[Correction] npc_edit: {npc['name']} fields={list(op_dict['fields'].keys())}")
+                           "instinct", "aliases", "bond"}
+                # Filter out null values (schema requires all keys, null = unchanged)
+                edits = {k: v for k, v in op_dict["fields"].items()
+                         if k in allowed and v is not None}
+                for k, v in edits.items():
+                    npc[k] = v
+                if edits:
+                    log(f"[Correction] npc_edit: {npc['name']} fields={list(edits.keys())}")
 
         elif op == "npc_split":
             existing = _find_npc(game, op_dict.get("npc_id", ""))
