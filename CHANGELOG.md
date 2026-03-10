@@ -5,6 +5,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.45]
+
+### Fixed
+- **Snake_case NPC slug resolution (`_resolve_slug_refs`):** When the Metadata Extractor creates `new_npcs` and `memory_updates` in the same response, it can't know the assigned `npc_id`s for the new NPCs. It invents snake_case slugs like `frau_seidlitz` or `moderator_headset` as references. Previously these unresolvable references caused `_apply_memory_updates()` to auto-create hollow stub NPCs — duplicates of the real NPCs just created by `_process_new_npcs()` in the same metadata cycle. New `_resolve_slug_refs()` runs after `_process_new_npcs()` and before `_apply_memory_updates()`: converts slugs to word-sets (`{moderator, headset}`) and matches them against freshly created NPC names (`{moderator, mit, headset}`) via subset check. Successfully resolves 4 of 5 slug types from the triggering savegame. Unresolvable slugs still fall through to the existing auto-stub path (now with humanized names, see below)
+- **`_find_npc()` underscore normalization:** New search step 2b between exact-name and alias matching. If the reference contains underscores, replaces them with spaces and retries against all NPC names and aliases. Catches `frau_seidlitz` → `Frau Seidlitz` in any `_find_npc()` caller (Brain target resolution, memory updates, Director, corrections). Defense-in-depth behind `_resolve_slug_refs()` — catches cases where slugs appear outside the metadata cycle (e.g. Director reflections referencing NPCs by slug)
+- **Auto-stub NPC name humanization:** When `_apply_memory_updates()` creates a stub NPC as last resort, snake_case names are now converted to Title Case with spaces (`kandidatin_blonde` → `Kandidatin Blonde`). Only applies to pure snake_case (no spaces already present). Technical ID pattern `npc_\d+` is excluded (existing guard). Defense-in-depth: even if slug resolution and underscore normalization both miss, the stub at least gets a human-readable display name
+- **`npc_merge` correction smart direction:** The `##` correction system's `npc_merge` op now scores both NPCs by richness (memory count + description + agenda + instinct) and swaps merge direction if the AI designated the richer NPC as source. Previously the AI frequently merged well-described NPCs *into* empty stubs, losing the display name, description, agenda, and instinct. Additionally, the survivor now inherits description/agenda/instinct from the absorbed NPC if its own fields are empty
+
+---
+
 ## [0.9.44]
 
 ### Fixed

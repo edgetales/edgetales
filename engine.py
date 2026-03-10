@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.44"
+VERSION = "0.9.45"
 
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-5-20250929"
@@ -922,6 +922,16 @@ def _find_npc(game, npc_ref: str) -> Optional[dict]:
     for n in game.npcs:
         if n.get("name", "").lower().strip() == ref_lower:
             return n
+    # 2b. Underscore normalization: "frau_seidlitz" → "frau seidlitz" matches "Frau Seidlitz"
+    #     Catches AI-generated snake_case references to human-readable NPC names.
+    if "_" in ref_lower:
+        ref_normalized = ref_lower.replace("_", " ")
+        for n in game.npcs:
+            if n.get("name", "").lower().strip() == ref_normalized:
+                return n
+            for alias in n.get("aliases", []):
+                if alias.lower().strip() == ref_normalized:
+                    return n
     # 3. Try exact alias match (case-insensitive)
     for n in game.npcs:
         for alias in n.get("aliases", []):
@@ -3604,6 +3614,60 @@ Extract all metadata from the narration above. Remember: {game.player_name} is t
                 "deceased_npcs": []}
 
 
+def _resolve_slug_refs(game: GameState, mem_updates: list, fresh_npcs: list):
+    """Rewrite memory_update npc_ids that are snake_case slugs for freshly created NPCs.
+
+    When the Metadata Extractor creates new_npcs AND memory_updates in the same
+    response, it can't know the assigned npc_ids. It invents slugs like
+    'frau_seidlitz' or 'moderator_headset'. This function matches those slugs
+    against the NPCs just created by _process_new_npcs using word-set overlap.
+
+    Example: 'moderator_headset' → words {'moderator','headset'}
+             'Moderator mit Headset' → words {'moderator','mit','headset'}
+             All ref words found → match → rewrite npc_id to assigned ID.
+    """
+    # Build lookup: word-set → npc for freshly created NPCs
+    # Also build name-slug → npc for exact slug matches
+    known_ids = {n["id"] for n in game.npcs}
+
+    for u in mem_updates:
+        ref = u.get("npc_id", "")
+        if not ref:
+            continue
+        # Already resolvable? Skip.
+        if ref in known_ids or any(n.get("name", "").lower() == ref.lower() for n in game.npcs):
+            continue
+        # Normalize: underscores to spaces, lowercase, split into words
+        ref_words = set(ref.lower().replace("_", " ").split())
+        if not ref_words:
+            continue
+
+        best_npc = None
+        best_score = 0
+        for npc in fresh_npcs:
+            npc_words = set(npc["name"].lower().split())
+            # All ref words must appear in the NPC name
+            if ref_words <= npc_words:
+                # Score: proportion of NPC name words covered (prefer tighter matches)
+                score = len(ref_words) / len(npc_words) if npc_words else 0
+                if score > best_score:
+                    best_score = score
+                    best_npc = npc
+            # Also check aliases
+            for alias in npc.get("aliases", []):
+                alias_words = set(alias.lower().split())
+                if ref_words <= alias_words:
+                    score = len(ref_words) / len(alias_words) if alias_words else 0
+                    if score > best_score:
+                        best_score = score
+                        best_npc = npc
+
+        if best_npc and best_score > 0:
+            log(f"[Metadata] Resolved slug '{ref}' → '{best_npc['name']}' "
+                f"({best_npc['id']}, score={best_score:.2f})")
+            u["npc_id"] = best_npc["id"]
+
+
 def _apply_narrator_metadata(game: GameState, metadata: dict,
                               scene_present_ids: set = None):
     """Apply structured metadata from the metadata extractor to game state.
@@ -3632,8 +3696,19 @@ def _apply_narrator_metadata(game: GameState, metadata: dict,
 
     # New NPCs
     new_npcs = metadata.get("new_npcs", [])
+    pre_npc_ids = {n["id"] for n in game.npcs}
     if new_npcs:
         _process_new_npcs(game, json.dumps(new_npcs, ensure_ascii=False))
+
+    # Resolve memory_update references that use invented snake_case slugs
+    # for NPCs that were just created in this same metadata cycle.
+    # The Extractor can't know the assigned npc_ids for new NPCs, so it
+    # invents slugs like "frau_seidlitz" or "moderator_headset" instead.
+    mem_updates = metadata.get("memory_updates", [])
+    if mem_updates and new_npcs:
+        freshly_created = [n for n in game.npcs if n["id"] not in pre_npc_ids]
+        if freshly_created:
+            _resolve_slug_refs(game, mem_updates, freshly_created)
 
     # NPC details (sanitize nulls → empty strings before delegation)
     details = metadata.get("npc_details", [])
@@ -4673,6 +4748,11 @@ def _apply_memory_updates(game: GameState, json_text: str):
                     log(f"[NPC] Skipping auto-stub for technical ID reference: "
                         f"{npc_name}", level="warning")
                     continue
+                # Humanize snake_case names: "frau_seidlitz" → "Frau Seidlitz"
+                # Defense-in-depth: if _find_npc underscore normalization missed,
+                # at least the stub gets a readable display name.
+                if "_" in npc_name and " " not in npc_name:
+                    npc_name = npc_name.replace("_", " ").title()
                 if npc_name.lower().strip() != game.player_name.lower().strip() \
                         and not (set(npc_name.lower().split()) & set(game.player_name.lower().split())):
                     npc_id, _ = _next_npc_id(game)
@@ -6064,6 +6144,19 @@ def _apply_correction_ops(game: GameState, ops: list) -> None:
             target = _find_npc(game, op_dict.get("npc_id", ""))
             source = _find_npc(game, op_dict.get("merge_source_id", ""))
             if target and source and target is not source:
+                # Smart merge direction: the NPC with richer data survives.
+                # The AI often gets target/source backwards — e.g. merging a
+                # well-described NPC INTO an empty stub. We score both and swap
+                # if the "source" is actually the richer NPC.
+                def _npc_richness(n):
+                    return (len(n.get("memory", []))
+                            + (3 if n.get("description") else 0)
+                            + (2 if n.get("agenda") else 0)
+                            + (1 if n.get("instinct") else 0))
+                if _npc_richness(source) > _npc_richness(target):
+                    log(f"[Correction] npc_merge: swapping direction — "
+                        f"'{source['name']}' is richer than '{target['name']}'")
+                    target, source = source, target
                 # Absorb memories and aliases, then remove source
                 target["memory"].extend(source.get("memory", []))
                 for alias in source.get("aliases", []):
@@ -6071,6 +6164,13 @@ def _apply_correction_ops(game: GameState, ops: list) -> None:
                         target.setdefault("aliases", []).append(alias)
                 if source["name"] not in target.get("aliases", []):
                     target.setdefault("aliases", []).append(source["name"])
+                # Inherit description/agenda/instinct if target lacks them
+                if not target.get("description") and source.get("description"):
+                    target["description"] = source["description"]
+                if not target.get("agenda") and source.get("agenda"):
+                    target["agenda"] = source["agenda"]
+                if not target.get("instinct") and source.get("instinct"):
+                    target["instinct"] = source["instinct"]
                 game.npcs = [n for n in game.npcs if n["id"] != source["id"]]
                 log(f"[Correction] npc_merge: '{source['name']}' absorbed into '{target['name']}'")
 
