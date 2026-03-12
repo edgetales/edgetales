@@ -5,6 +5,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.47]
+
+### Fixed
+- **Deceased NPC presence guard too strict — mentioned NPCs now included:** `_process_deceased_npcs()` only accepted death reports for *activated* NPCs (TF-IDF score ≥ 0.7, full context in prompt). NPCs that were merely *mentioned* (score 0.3–0.7, name-only in prompt) were rejected by the guard even when the Narrator wrote their on-screen death. Real-world case: Finn was reported dead by another NPC in the narration, but Finn was only in the mentioned list (not activated) — the guard rejected his death as "likely a dialog claim". This caused a cascade: Finn stayed `status=active`, the Director assigned him new agenda/instinct *after* his narrative death, and the Chapter 2 opening narrator brought him back alive. **Fix:** `scene_present_ids` now includes both `activated_npcs` and `mentioned_npcs` IDs at all three call sites (`process_turn`, `process_correction`, `process_momentum_burn`). The guard still blocks deaths of NPCs with zero scene relevance (not activated, not mentioned, no current-scene memory)
+
+---
+
 ## [0.9.46]
 
 ### Fixed

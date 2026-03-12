@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.46"
+VERSION = "0.9.47"
 
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-5-20250929"
@@ -3681,7 +3681,7 @@ def _resolve_slug_refs(game: GameState, mem_updates: list, fresh_npcs: list):
 def _apply_narrator_metadata(game: GameState, metadata: dict,
                               scene_present_ids: set = None):
     """Apply structured metadata from the metadata extractor to game state.
-    scene_present_ids: set of NPC IDs that were activated/present in the scene.
+    scene_present_ids: set of NPC IDs that were activated or mentioned in the scene.
     If provided, deceased reports are restricted to present NPCs (prevents
     false positives from dialog claims like 'Leo ist tot')."""
     # Scene context (always present)
@@ -3746,9 +3746,10 @@ def _process_deceased_npcs(game: GameState, deceased_list: list,
     """Mark NPCs as deceased based on metadata extractor report.
     Sets status='deceased' — this excludes them from all active processing:
     prompts, memories, reflections, sidebar, reactivation.
-    If scene_present_ids is provided, only NPCs that were activated in this scene
-    (or introduced mid-scene via new_npcs) can be marked deceased. This prevents
-    false positives from dialog claims (e.g. an NPC saying 'Leo is dead')."""
+    If scene_present_ids is provided, only NPCs that were activated OR mentioned
+    in this scene can be marked deceased. This prevents false positives from
+    dialog claims (e.g. an NPC saying 'Leo is dead') while still allowing
+    deaths of NPCs who were scene-relevant but below full activation threshold."""
     for entry in deceased_list:
         npc_id = entry.get("npc_id", "")
         if not npc_id:
@@ -5772,7 +5773,10 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
 
     # NPC Activation — determine who gets full context in prompt
     activated_npcs, mentioned_npcs, npc_activation_debug = activate_npcs_for_prompt(game, brain, player_message)
-    _scene_present_ids = {n["id"] for n in activated_npcs}  # For deceased-NPC guard
+    # For deceased-NPC guard: include both activated (full context) and mentioned
+    # (name in prompt) NPCs.  Mentioned NPCs are scene-relevant (TF-IDF ≥ 0.3) and
+    # can legitimately die on-screen even without full activation.
+    _scene_present_ids = {n["id"] for n in activated_npcs} | {n["id"] for n in mentioned_npcs}
 
     # Track pending revelations before narration
     pending_revs = get_pending_revelations(game)
@@ -6367,7 +6371,7 @@ def process_correction(client: anthropic.Anthropic, game: GameState,
             game.last_turn_snapshot["roll"] = roll
 
     # Step 4: Metadata extraction (new NPCs, memories etc. from rewritten scene)
-    _scene_present_ids = {n["id"] for n in activated_npcs}
+    _scene_present_ids = {n["id"] for n in activated_npcs} | {n["id"] for n in mentioned_npcs}
     metadata = call_narrator_metadata(client, narration, game, _cfg)
     _apply_narrator_metadata(game, metadata, scene_present_ids=_scene_present_ids)
 
@@ -6551,7 +6555,7 @@ def process_momentum_burn(client: anthropic.Anthropic, game: GameState,
     raw = call_narrator(client, prompt, game, config)
     narration = parse_narrator_response(game, raw)
     metadata = call_narrator_metadata(client, narration, game, config)
-    _scene_present_ids = {n["id"] for n in activated_npcs}
+    _scene_present_ids = {n["id"] for n in activated_npcs} | {n["id"] for n in mentioned_npcs}
     _apply_narrator_metadata(game, metadata, scene_present_ids=_scene_present_ids)
 
     # Update chaos after burn (new result counts)
