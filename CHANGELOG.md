@@ -5,6 +5,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.48]
+
+### Fixed
+- **False NPC merge from description cross-references (Name-Reference Guard):** `_description_match_existing_npc()` could falsely merge two distinct NPCs when the new NPC's description *referenced* an existing NPC by name. Real-world case: Narrator wrote that an Offizier received a whisper from "the Page in bordeauxroter Livree" — the Extractor created a new NPC "Offizier" whose description contained the words `bordeauxroter` and `livree`. The description matcher found these words overlapping with the existing Page NPC's name and description, triggering a merge that absorbed the Offizier into the Page. **Fix:** Before calculating word overlap, the matcher now strips words that appear in the candidate NPC's name or aliases (≥4 chars) from the new description's word set. If the new NPC's description merely *mentions* an existing NPC, those name-words are reference tokens, not identity evidence. Legitimate identity-reveal matches (where descriptions share distinctive non-name words like role descriptors, physical traits, or location terms) are unaffected
+
+### Added
+- **Character creation textarea length limits:** All free-text fields in character creation now have `maxlength` with Quasar's `counter` prop showing a live `X / Y` character count. Backstory: 800 chars, Wishes: 400 chars, Content Boundaries: 400 chars. Applied to both initial input and edit textareas in the confirmation step (6 textareas total). Prevents unbounded text from inflating every turn's prompt (backstory and content_boundaries are injected into Brain, Narrator, and Story Architect prompts). Existing saves with longer text are not affected — limits apply only to new input
+
+---
+
 ## [0.9.47]
 
 ### Fixed

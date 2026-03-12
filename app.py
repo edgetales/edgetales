@@ -1541,7 +1541,7 @@ def render_creation_flow(chat_container) -> bool:
         ui.markdown(t("creation.name_question", lang))
         name_inp = ui.input(placeholder=t("creation.name_placeholder", lang)).classes("w-full").props(f'aria-label="{t("creation.name_placeholder", lang)}"')
         ui.markdown(t("creation.desc_question", lang))
-        desc_inp = ui.textarea(placeholder=t("creation.desc_placeholder", lang)).props("rows=2").classes("w-full").props(f'aria-label="{t("creation.desc_placeholder", lang)}"')
+        desc_inp = ui.textarea(placeholder=t("creation.desc_placeholder", lang)).props("rows=2 maxlength=800 counter").classes("w-full").props(f'aria-label="{t("creation.desc_placeholder", lang)}"')
         async def go():
             if name_inp.value.strip(): _finish_personalize(name_inp.value.strip(), desc_inp.value.strip() if desc_inp.value else "")
         name_inp.on("keydown.enter", go); ui.button(t("creation.next", lang), on_click=go, color="primary")
@@ -1594,10 +1594,10 @@ def _render_wishes():
     if "wishes" not in creation: creation["wishes"]=""
     ui.markdown(t("creation.almost_done", lang))
     ui.markdown(f"{E['star']} {t('creation.wishes_label', lang)}")
-    w_inp = ui.textarea(placeholder=t("creation.wishes_placeholder", lang), value=creation.get("wishes","")).classes("w-full").props(f'aria-label="{t("creation.wishes_placeholder", lang)}"')
+    w_inp = ui.textarea(placeholder=t("creation.wishes_placeholder", lang), value=creation.get("wishes","")).classes("w-full").props(f'maxlength=400 counter aria-label="{t("creation.wishes_placeholder", lang)}"')
     ui.label(f"{E['star']} {t('creation.wishes_hint', lang)}").classes("text-xs text-gray-500")
     ui.markdown(f"{E['shield']} {t('creation.boundaries_label', lang)}")
-    l_inp = ui.textarea(placeholder=t("creation.boundaries_placeholder", lang), value=creation.get("content_lines","")).classes("w-full").props(f'aria-label="{t("creation.boundaries_placeholder", lang)}"')
+    l_inp = ui.textarea(placeholder=t("creation.boundaries_placeholder", lang), value=creation.get("content_lines","")).classes("w-full").props(f'maxlength=400 counter aria-label="{t("creation.boundaries_placeholder", lang)}"')
     ui.label(f"{E['shield']} {t('creation.boundaries_hint', lang)}").classes("text-xs text-gray-500")
     btn_container = ui.column().classes("w-full mt-4 gap-2")
     async def proceed():
@@ -1670,7 +1670,7 @@ def _render_confirm():
 
     with ui.expansion(f"{E['pen']} {t('creation.adjust', lang)}").classes("w-full"):
         edit_name = ui.input("Name", value=setup.get("character_name","")).classes("w-full")
-        edit_desc = ui.textarea(t("creation.background", lang), value=creation.get("custom_desc","")).props("rows=3").classes("w-full")
+        edit_desc = ui.textarea(t("creation.background", lang), value=creation.get("custom_desc","")).props("rows=3 maxlength=800 counter").classes("w-full")
         ui.separator()
         # Genre dropdown
         genre_labels = list(genres.keys()) + [custom_genre_lbl]
@@ -1704,8 +1704,8 @@ def _render_confirm():
             arch_idx = arch_codes.index(cur_arch)
         sel_archetype = ui.select(arch_labels, label=t("creation.archetype", lang), value=arch_labels[arch_idx]).classes("w-full")
         ui.separator()
-        edit_wishes = ui.textarea(f"{E['star']} {t('creation.wishes_title', lang)}", value=creation.get("wishes",""), placeholder=t("creation.wishes_placeholder", lang)).props("rows=2").classes("w-full")
-        edit_lines = ui.textarea(f"{E['shield']} {t('creation.boundaries_title', lang)}", value=creation.get("content_lines",""), placeholder=t("creation.boundaries_placeholder", lang)).props("rows=2").classes("w-full")
+        edit_wishes = ui.textarea(f"{E['star']} {t('creation.wishes_title', lang)}", value=creation.get("wishes",""), placeholder=t("creation.wishes_placeholder", lang)).props("rows=2 maxlength=400 counter").classes("w-full")
+        edit_lines = ui.textarea(f"{E['shield']} {t('creation.boundaries_title', lang)}", value=creation.get("content_lines",""), placeholder=t("creation.boundaries_placeholder", lang)).props("rows=2 maxlength=400 counter").classes("w-full")
         ui.separator()
         adjust_container = ui.column().classes("w-full gap-2")
         async def regenerate_adjusted():

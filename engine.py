@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.47"
+VERSION = "0.9.48"
 
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-5-20250929"
@@ -1253,13 +1253,27 @@ def _description_match_existing_npc(game, new_desc: str, new_name_lower: str) ->
         }
         existing_words -= _STOPWORDS
 
+        # Guard: strip words that appear in the candidate NPC's name/aliases
+        # from the new description.  If the new desc says "Offizier, der vom
+        # Page in bordeauxroter Livree flüstert", those name-words are a
+        # *reference* to the existing NPC, not evidence of shared identity.
+        _strip = set()
+        for _src in [n.get("name", "")] + n.get("aliases", []):
+            for _w in _src.split():
+                _c = _w.strip(".,;:!?\"'()-").lower()
+                if len(_c) >= 4:
+                    _strip.add(_c)
+        filtered_new = new_words - _strip
+        if len(filtered_new) < 2:
+            continue
+
         # Calculate overlap: exact match + substring matching
-        exact_overlap = new_words & existing_words
+        exact_overlap = filtered_new & existing_words
         # Substring matches: if word A contains word B (or vice versa), count as partial
         # This catches typos like "Ostblockade" ~ "Ostbloc-Blockade" and
         # compound words like "NVA-Kommandant" matching across descriptions
         substring_matches = set()
-        for nw in new_words - exact_overlap:
+        for nw in filtered_new - exact_overlap:
             for ew in existing_words - exact_overlap:
                 # Check if one is a substring of the other (min 5 chars)
                 if len(nw) >= 5 and len(ew) >= 5:
@@ -1286,7 +1300,7 @@ def _description_match_existing_npc(game, new_desc: str, new_name_lower: str) ->
         # - ≥25% of shorter set with effective≥2.0, OR
         # - Any long compound match (≥12 chars) with effective≥2.0
         #   (a 12+ char compound like "NVA-Kommandant" is distinctive enough with support)
-        min_set_size = min(len(new_words), len(existing_words))
+        min_set_size = min(len(filtered_new), len(existing_words))
         overlap_ratio = effective_overlap / max(min_set_size, 1)
         has_long_match = any(len(w) >= 12 for w in exact_overlap)
 
