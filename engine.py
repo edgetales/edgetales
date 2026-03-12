@@ -2761,6 +2761,26 @@ def _story_context_block(game: GameState) -> str:
 
 
 
+def _recent_events_block(game: GameState) -> str:
+    """Build compact factual timeline from session_log for narrator consistency.
+    Uses Director's rich_summary when available, falls back to Brain's player_intent.
+    Gives the narrator a factual backbone to prevent contradictions across scenes."""
+    if not game.session_log or len(game.session_log) < 2:
+        return ""
+    # Skip the most recent entry (that's the current scene being narrated)
+    entries = game.session_log[-8:-1] if len(game.session_log) > 1 else []
+    if not entries:
+        return ""
+    lines = []
+    for s in entries:
+        summary = s.get("rich_summary") or s.get("summary", "")
+        if summary:
+            lines.append(f"Scene {s.get('scene', '?')}: {summary[:120]}")
+    if not lines:
+        return ""
+    return f"\n<recent_events>\n" + "\n".join(lines) + "\n</recent_events>"
+
+
 def _api_create_with_retry(client: anthropic.Anthropic, max_retries: int = 2, **kwargs):
     """Wrapper around client.messages.create with retry on transient API errors.
     Handles rate limits (429), server errors (500/502/503), and overloaded (529)
@@ -3433,6 +3453,7 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
 - If <chaos_interrupt> is present, weave the specified disruption naturally into the scene. For type="dilemma", present the forced choice clearly so the player must decide next turn. For type="ticking_clock", establish the deadline or urgency so it shapes future actions. For type="positive_windfall", make it feel earned by the world, not a gift from nowhere.
 - If <dramatic_question> is present, the scene should address this question (resolve or deepen it)
 - If story_arc structure="kishotenketsu" and phase="ten_twist": focus on perspective SHIFT, not conflict escalation. Something seemingly unrelated recontextualizes everything.
+- If <recent_events> is present, treat it as ESTABLISHED FACTS. These events already happened in previous scenes. NEVER contradict them {E['dash']} if an NPC was seen alive, they are alive; if a box was empty, it was empty; if a character said something, they said it. You may add new revelations or reinterpretations, but the physical facts of past scenes are canon.
 - PURE PROSE ONLY: Output ONLY narrative text. No JSON, no XML tags, no metadata, no code blocks, no markdown formatting (no *italics*, no **bold**, no # headings). Use typographic emphasis through word choice, sentence rhythm, and punctuation instead. Your entire response is visible to the player.
 </rules>
 <player_authorship>
@@ -3454,12 +3475,17 @@ def call_narrator(client: anthropic.Anthropic, prompt: str,
     log(f"[Narrator] Calling narrator (prompt: {len(prompt)} chars)")
     messages = []
 
-    # Include last 3 narrations as conversation context
+    # Include last 3 narrations as conversation context.
+    # Most recent narration is kept in full (scene continuation needs complete context);
+    # older entries are truncated to MAX_NARRATION_CHARS to control prompt size.
     if game and game.narration_history:
-        for entry in game.narration_history[-3:]:
+        history_slice = game.narration_history[-3:]
+        for i, entry in enumerate(history_slice):
+            is_most_recent = (i == len(history_slice) - 1)
+            narr_text = entry["narration"] if is_most_recent else entry["narration"][:MAX_NARRATION_CHARS]
             messages.append({"role": "user", "content": entry.get("prompt_summary",
                              "Continue the story.")})
-            messages.append({"role": "assistant", "content": entry["narration"]})
+            messages.append({"role": "assistant", "content": narr_text})
 
     # Current prompt
     messages.append({"role": "user", "content": prompt})
@@ -3603,7 +3629,7 @@ Extract all metadata from the narration above. Remember: {game.player_name} is t
     try:
         response = _api_create_with_retry(
             client, max_retries=2,
-            model=BRAIN_MODEL, max_tokens=2800,
+            model=BRAIN_MODEL, max_tokens=3500,
             system=system,
             messages=[{"role": "user", "content": prompt}],
             output_config={"format": {
@@ -3995,7 +4021,7 @@ def call_director(client: anthropic.Anthropic, game: GameState,
     try:
         response = _api_create_with_retry(
             client, max_retries=1,
-            model=DIRECTOR_MODEL, max_tokens=4500,
+            model=DIRECTOR_MODEL, max_tokens=6000,
             system=DIRECTOR_SYSTEM,
             messages=[{"role": "user", "content": prompt}],
             output_config={"format": {"type": "json_schema", "schema": DIRECTOR_OUTPUT_SCHEMA}},
@@ -4406,7 +4432,7 @@ def build_dialog_prompt(game: GameState, brain: dict, player_words: str = "",
 <location>{game.current_location}</location>{loc_hist}{time_ctx}
 {npc}{npcs_section}{wl}{crisis}
 {pacing}{director_block}
-{_story_context_block(game)}</scene>
+{_story_context_block(game)}{_recent_events_block(game)}</scene>
 <task>2-3 paragraphs of immersive narration. Focus entirely on atmosphere, dialog, and character interaction. If <director_guidance> is present, follow its narrative direction while maintaining your creative voice.</task>"""
 
 
@@ -4505,7 +4531,7 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
 <location>{game.current_location}</location>{loc_hist}{time_ctx}
 {npc}{npcs_section}{wl}{flags}{agency}
 {pacing}{director_block}
-{_story_context_block(game)}</scene>
+{_story_context_block(game)}{_recent_events_block(game)}</scene>
 <task>2-4 paragraphs of immersive narration. If <director_guidance> is present, follow its narrative direction while maintaining your creative voice.</task>"""
 
 
@@ -5383,7 +5409,7 @@ def start_new_game(client: anthropic.Anthropic, creation_data: dict,
     # Store in narration history for context continuity
     game.narration_history.append({
         "prompt_summary": f"Opening scene: {game.player_name} in {game.current_location}",
-        "narration": narration[:MAX_NARRATION_CHARS],
+        "narration": narration,
     })
     game.session_log.append({"scene": 1, "summary": "Game start", "result": "opening",
                              "consequences": [], "clock_events": [],
@@ -5733,7 +5759,7 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
     record_scene_intensity(game, "action")
     game.narration_history.append({
         "prompt_summary": f"Chapter {game.chapter_number} opening: {game.player_name} in {game.current_location}",
-        "narration": narration[:MAX_NARRATION_CHARS],
+        "narration": narration,
     })
     game.session_log.append({"scene": 1, "summary": f"Chapter {game.chapter_number} begins",
                              "result": "opening", "consequences": [], "clock_events": [],
@@ -5806,7 +5832,7 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
         record_scene_intensity(game, scene_type)
         game.narration_history.append({
             "prompt_summary": f"Dialog: {brain.get('player_intent', player_message)[:80]}",
-            "narration": narration[:MAX_NARRATION_CHARS],
+            "narration": narration,
         })
         if len(game.narration_history) > MAX_NARRATION_HISTORY:
             game.narration_history = game.narration_history[-MAX_NARRATION_HISTORY:]
@@ -5886,7 +5912,7 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
         mark_revelation_used(game, pending_revs[0]["id"])
     game.narration_history.append({
         "prompt_summary": f"Action ({roll.result}): {brain.get('player_intent', player_message)[:80]}",
-        "narration": narration[:MAX_NARRATION_CHARS],
+        "narration": narration,
     })
     if len(game.narration_history) > MAX_NARRATION_HISTORY:
         game.narration_history = game.narration_history[-MAX_NARRATION_HISTORY:]
@@ -6379,7 +6405,7 @@ def process_correction(client: anthropic.Anthropic, game: GameState,
     intent = brain.get("player_intent", snap.get("player_input", ""))[:80]
     narration_entry = {
         "prompt_summary": f"[corrected] {intent}",
-        "narration": narration[:MAX_NARRATION_CHARS],
+        "narration": narration,
     }
 
     if source == "input_misread":
@@ -6565,7 +6591,7 @@ def process_momentum_burn(client: anthropic.Anthropic, game: GameState,
     if game.narration_history:
         game.narration_history[-1] = {
             "prompt_summary": f"Momentum burn ({new_result}): {brain_data.get('player_intent', '')[:80]}",
-            "narration": narration[:MAX_NARRATION_CHARS],
+            "narration": narration,
         }
 
     # Update last log entry
