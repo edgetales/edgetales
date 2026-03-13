@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.50"
+VERSION = "0.9.51"
 
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-5-20250929"
@@ -103,6 +103,7 @@ METADATA_MAX_TOKENS    = _MAX_TOKENS_HAIKU    # call_narrator_metadata (was 3500
 DIRECTOR_MAX_TOKENS    = _MAX_TOKENS_HAIKU    # call_director (was 6000)
 CHAPTER_SUM_MAX_TOKENS = _MAX_TOKENS_HAIKU    # call_chapter_summary (was 1500)
 CORRECTION_MAX_TOKENS  = _MAX_TOKENS_HAIKU    # call_correction_brain (was 1500)
+OPENING_MAX_TOKENS     = _MAX_TOKENS_HAIKU    # call_opening_metadata (new)
 NARRATOR_MAX_TOKENS    = _MAX_TOKENS_SONNET   # call_narrator (was 3500)
 STORY_ARCH_MAX_TOKENS  = _MAX_TOKENS_SONNET   # call_story_architect (was 4000)
 
@@ -399,6 +400,53 @@ NARRATOR_METADATA_SCHEMA = {
     "required": ["scene_context", "location_update", "time_update",
                   "memory_updates", "new_npcs", "npc_renames", "npc_details",
                   "deceased_npcs"],
+    "additionalProperties": False,
+}
+
+# Schema for opening/chapter scene metadata extraction (full NPC schema + clocks).
+# Used by call_opening_metadata() — replaces inline <game_data> JSON from narrator.
+OPENING_METADATA_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "npcs": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name":        {"type": "string"},
+                    "description": {"type": "string"},
+                    "agenda":      {"type": "string"},
+                    "instinct":    {"type": "string"},
+                    "secrets":     {"type": "array", "items": {"type": "string"}},
+                    "disposition": {"type": "string"},
+                },
+                "required": ["name", "description", "agenda", "instinct",
+                             "secrets", "disposition"],
+                "additionalProperties": False,
+            },
+        },
+        "clocks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name":                {"type": "string"},
+                    "clock_type":          {"type": "string"},
+                    "segments":            {"type": "integer"},
+                    "filled":              {"type": "integer"},
+                    "trigger_description": {"type": "string"},
+                    "owner":               {"type": "string"},
+                },
+                "required": ["name", "clock_type", "segments", "filled",
+                             "trigger_description", "owner"],
+                "additionalProperties": False,
+            },
+        },
+        "location":      {"type": "string"},
+        "scene_context":  {"type": "string"},
+        "time_of_day":    {"type": ["string", "null"]},
+    },
+    "required": ["npcs", "clocks", "location", "scene_context", "time_of_day"],
     "additionalProperties": False,
 }
 
@@ -3697,6 +3745,82 @@ Extract all metadata from the narration above. Remember: {game.player_name} is t
                 "deceased_npcs": []}
 
 
+def call_opening_metadata(client: anthropic.Anthropic, narration: str,
+                          game: GameState,
+                          config: Optional[EngineConfig] = None,
+                          known_npcs: Optional[list] = None) -> dict:
+    """Extract structured opening/chapter metadata via Haiku Structured Outputs.
+
+    Replaces inline <game_data> JSON from the narrator.  Produces full NPC
+    schema (agenda, instinct, secrets) plus clocks, location, scene_context,
+    and time_of_day — guaranteed-valid JSON matching OPENING_METADATA_SCHEMA.
+
+    For chapter openings, *known_npcs* is the list of returning NPCs so the
+    extractor only creates entries for genuinely NEW characters.
+    """
+    lang = get_narration_lang(config or EngineConfig())
+
+    # Build known-NPC reference for chapter openings
+    known_block = "(none)"
+    if known_npcs:
+        parts = []
+        for n in known_npcs:
+            entry = f'{n.get("name", "?")} ({n.get("disposition", "neutral")})'
+            if n.get("aliases"):
+                entry += f' aka {", ".join(n["aliases"])}'
+            parts.append(entry)
+        known_block = "\n".join(parts)
+
+    system = f"""You are a game-state extractor for an RPG engine. Analyse the opening narration and extract ALL characters and world elements into structured data.
+All text fields MUST be in {lang}.
+
+NPCs:
+- Extract EVERY named character who appears in the narration (speaking, acting, described).
+- NEVER include the player character ({game.player_name}).
+- Each NPC needs: name, a one-sentence PHYSICAL/ROLE description (appearance, occupation — NOT actions), agenda (hidden goal driving their behaviour), instinct (typical reaction when challenged or stressed), secrets (1-2 hidden facts the player doesn't know yet), disposition (neutral|friendly|distrustful|hostile|loyal).
+- For agenda/instinct/secrets: infer plausible values from the narration context, genre ({game.setting_genre}), and tone ({game.setting_tone}). Be specific and narratively interesting.
+- Do NOT extract NPCs that are already in the known NPC list below.
+
+Clocks:
+- Extract threat clocks mentioned or implied. A threat clock tracks a looming danger.
+- Each clock: name, clock_type (usually "threat"), segments (4-8), filled (typically 1 for new clocks), trigger_description (what happens when filled), owner ("world" or NPC name).
+- If no clock is obvious, create one based on the central tension of the scene.
+
+Location: the specific location where the scene takes place.
+scene_context: 1-2 sentence summary of the current situation after this scene.
+time_of_day: one of early_morning|morning|midday|afternoon|evening|late_evening|night|deep_night, or null if unclear.
+
+<known_npcs>
+{known_block}
+</known_npcs>"""
+
+    prompt = f"""<narration>{narration}</narration>
+<player_character>{game.player_name}</player_character>
+<current_location>{game.current_location or 'unknown'}</current_location>
+Extract all NPCs, clocks, location, scene context, and time of day from the opening narration above."""
+
+    try:
+        response = _api_create_with_retry(
+            client, max_retries=2,
+            model=BRAIN_MODEL, max_tokens=OPENING_MAX_TOKENS,
+            system=system,
+            messages=[{"role": "user", "content": prompt}],
+            output_config={"format": {
+                "type": "json_schema",
+                "schema": OPENING_METADATA_SCHEMA,
+            }},
+        )
+        data = json.loads(response.content[0].text)
+        log(f"[OpeningMeta] Extracted: {len(data.get('npcs', []))} NPCs, "
+            f"{len(data.get('clocks', []))} clocks, "
+            f"loc={data.get('location')}, time={data.get('time_of_day')}")
+        return data
+    except Exception as e:
+        log(f"[OpeningMeta] Extraction failed: {e}", level="warning")
+        return {"npcs": [], "clocks": [], "location": "",
+                "scene_context": "", "time_of_day": None}
+
+
 def _resolve_slug_refs(game: GameState, mem_updates: list, fresh_npcs: list):
     """Rewrite memory_update npc_ids that are snake_case slugs for freshly created NPCs.
 
@@ -4237,11 +4361,7 @@ IMPORTANT: The <character> above is the PLAYER CHARACTER (the "you" in narration
 If <backstory> exists in system context, treat those facts as established canon — reference naturally but don't retell.
 If player_wishes exist, do NOT address them in the opening — save them for later scenes. Focus on world and conflict first.
 creativity_seed: {seed} (Use as loose inspiration for NPC names, locations, and scene details — not literally, but as creative anchors to avoid generic defaults)
-After narration, append invisible structured data:
-</task>
-<game_data>
-{{"npcs":[{{"id":"npc_1","name":"","description":"","agenda":"","instinct":"","secrets":[""],"disposition":"neutral","bond":0,"bond_max":4,"status":"active","memory":[]}}],"clocks":[{{"id":"clock_1","name":"","clock_type":"threat","segments":6,"filled":1,"trigger_description":"","owner":"world"}}],"location":"","scene_context":"","time_of_day":"early_morning|morning|midday|afternoon|evening|late_evening|night|deep_night"}}
-</game_data>"""
+</task>"""
 
 
 def _npc_block(game: GameState, target_id: Optional[str],
@@ -4608,6 +4728,8 @@ def _process_game_data(game: GameState, data: dict, force_npcs: bool = True):
                 if id_match:
                     max_num = max(max_num, int(id_match.group(1)))
             nd.setdefault("status", "active")
+            nd.setdefault("bond", 0)
+            nd.setdefault("bond_max", 4)
             nd.setdefault("memory", [])
             nd.setdefault("introduced", False)
             nd.setdefault("aliases", [])
@@ -4642,9 +4764,19 @@ def _process_game_data(game: GameState, data: dict, force_npcs: bool = True):
             log(f"[NPC] Opening game_data: set {len(game.npcs)} NPCs: {[n.get('name','?') for n in game.npcs]}")
     if data.get("clocks"):
         existing_ids = {c.get("id") for c in game.clocks if c.get("id")}
+        # Determine starting clock ID counter from existing clocks
+        max_clock_num = 0
+        for c in game.clocks:
+            cid_match = re.match(r'clock_(\d+)', str(c.get("id", "")))
+            if cid_match:
+                max_clock_num = max(max_clock_num, int(cid_match.group(1)))
         for c in data["clocks"]:
             if "type" in c and "clock_type" not in c:
                 c["clock_type"] = c.pop("type")
+            # Assign clock ID if missing
+            if not c.get("id"):
+                max_clock_num += 1
+                c["id"] = f"clock_{max_clock_num}"
         new_clocks = [c for c in data["clocks"] if c.get("id") not in existing_ids]
         if new_clocks:
             game.clocks.extend(new_clocks)
@@ -5450,6 +5582,11 @@ def start_new_game(client: anthropic.Anthropic, creation_data: dict,
     narration = parse_narrator_response(game, raw)
     game.story_blueprint = blueprint
 
+    # Extract NPCs, clocks, location, scene_context via Structured Outputs.
+    # Replaces the old inline <game_data> approach — narrator now writes pure prose.
+    opening_data = call_opening_metadata(client, narration, game, config)
+    _process_game_data(game, opening_data)
+
     # Record opening as neutral intensity
     record_scene_intensity(game, "action")
 
@@ -5672,11 +5809,7 @@ Chapter {game.chapter_number} opening: 3-4 paragraphs. This is a NEW chapter in 
 - Create one new threat clock for this chapter
 IMPORTANT: The <character> above is the PLAYER CHARACTER. Do NOT include them as an NPC.
 creativity_seed: {seed} (Use as loose inspiration for NPC names, locations, and scene details — not literally, but as creative anchors to avoid generic defaults)
-After narration, append invisible structured data:
-</task>
-<game_data>
-{{"npcs":[{{"id":"npc_new_1","name":"","description":"","agenda":"","instinct":"","secrets":[""],"disposition":"neutral","bond":0,"bond_max":4,"status":"active","memory":[]}}],"clocks":[{{"id":"clock_1","name":"","clock_type":"threat","segments":6,"filled":1,"trigger_description":"","owner":"world"}}],"location":"","scene_context":"","time_of_day":"early_morning|morning|midday|afternoon|evening|late_evening|night|deep_night"}}
-</game_data>"""
+</task>"""
 
 
 def start_new_chapter(client: anthropic.Anthropic, game: GameState,
@@ -5749,8 +5882,9 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
     else:
         game.current_scene_context = "A new chapter begins."
 
-    # Save returning NPCs before parse replaces them (active + background)
-    returning_npcs = [dict(n) for n in game.npcs if n.get("status") in ("active", "background")]
+    # Save returning NPCs before extraction replaces them (active + background + deceased)
+    returning_npcs = [dict(n) for n in game.npcs
+                      if n.get("status") in ("active", "background", "deceased")]
 
     # Choose story structure for new chapter (needed before parallel calls)
     structure = choose_story_structure(game.setting_tone)
@@ -5760,10 +5894,10 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
 
     # --- Parallel execution: Narrator + Story Architect simultaneously ---
     # The architect gets the pre-parse state (returning NPCs, current context),
-    # which is actually ideal for campaign continuity. New chapter NPCs from the
-    # narrator's game_data are a bonus; the blueprint is about story arcs, not NPC details.
-    # We use copy.copy(game) so parse_narrator_response's mutations (replacing game.npcs,
-    # updating location/context) don't race with the architect's reads.
+    # which is actually ideal for campaign continuity. The blueprint is about
+    # story arcs, not NPC details.
+    # We use copy.copy(game) so parse_narrator_response's mutations don't race
+    # with the architect's reads.
     from concurrent.futures import ThreadPoolExecutor
 
     architect_game = copy.copy(game)  # Shallow copy — frozen view for architect
@@ -5785,12 +5919,21 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
     narration = parse_narrator_response(game, raw)
     game.story_blueprint = blueprint
 
-    # Merge: parse_narrator_response replaces game.npcs with new NPCs from game_data.
-    # Re-add returning NPCs that weren't mentioned in the new chapter's game_data.
+    # Extract NEW NPCs, clocks, location, scene_context via Structured Outputs.
+    # Pass returning NPCs as known_npcs so extractor only creates genuinely new entries.
+    opening_data = call_opening_metadata(client, narration, game, config,
+                                         known_npcs=returning_npcs)
+
+    # Process new NPCs: clear game.npcs, let _process_game_data assign IDs and
+    # defaults, then merge returning NPCs back.
+    game.npcs = []
+    _process_game_data(game, opening_data)
+
+    # Merge: re-add returning NPCs that weren't re-introduced by the extractor.
     new_npc_ids = {n["id"] for n in game.npcs}
     new_npc_names = {n["name"].lower().strip() for n in game.npcs}
     for old_npc in returning_npcs:
-        # Skip if narrator already re-introduced this NPC (by id or name)
+        # Skip if extractor already created this NPC (by name match)
         if old_npc["id"] in new_npc_ids:
             continue
         if old_npc["name"].lower().strip() in new_npc_names:
@@ -5915,6 +6058,9 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
     game.scene_count += 1
     stat_name = brain.get("stat", "wits")
     roll = roll_action(stat_name, game.get_stat(stat_name), brain.get("move", "face_danger"))
+    log(f"[Roll] {roll.move} ({roll.stat_name}={roll.stat_value}): "
+        f"{roll.d1}+{roll.d2}+{roll.stat_value}={roll.action_score} "
+        f"vs [{roll.c1},{roll.c2}] \u2192 {roll.result}")
     if roll.match:
         log(f"[Turn] MATCH! Both challenge dice show {roll.c1} \u2014 {roll.result}")
     if game.last_turn_snapshot is not None:
@@ -6385,7 +6531,9 @@ def process_correction(client: anthropic.Anthropic, game: GameState,
             game.scene_count += 1
             stat_name = brain.get("stat", "wits")
             roll = roll_action(stat_name, game.get_stat(stat_name), brain.get("move", "face_danger"))
-            log(f"[Correction] Re-rolled: {roll.result} ({stat_name})")
+            log(f"[Roll] {roll.move} ({roll.stat_name}={roll.stat_value}): "
+                f"{roll.d1}+{roll.d2}+{roll.stat_value}={roll.action_score} "
+                f"vs [{roll.c1},{roll.c2}] \u2192 {roll.result} (correction re-roll)")
             consequences, clock_events = apply_consequences(game, roll, brain)
             npc_agency = check_npc_agency(game)
             activated_npcs, mentioned_npcs, _ = activate_npcs_for_prompt(game, brain, corrected_input)

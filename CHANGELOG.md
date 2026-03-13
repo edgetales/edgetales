@@ -5,6 +5,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.51]
+
+### Changed
+- **Opening NPCs/Clocks via Structured Outputs instead of inline `<game_data>` JSON:** The Narrator no longer produces JSON for opening scenes. Previously, `build_new_game_prompt()` and `build_new_chapter_prompt()` included a `<game_data>` JSON template that the Narrator was instructed to fill in after its prose. When Sonnet wrapped the JSON in markdown code fences (` ```json ... ``` `) instead of clean `<game_data>` tags, the parser couldn't extract it — NPCs were never registered, the entire NPC system was silently dead (total=0) while the story appeared normal from prose alone. **New architecture:** Narrator writes PURE PROSE ONLY (consistent with normal turns). A new `call_opening_metadata()` function (Haiku, Structured Outputs, `OPENING_METADATA_SCHEMA`) extracts NPCs with full schema (name, description, agenda, instinct, secrets, disposition) plus clocks, location, scene_context, and time_of_day from the finished narration — guaranteed-valid JSON. For chapter openings, accepts `known_npcs` parameter so the extractor only creates genuinely new characters. `_process_game_data()` now sets `bond=0`, `bond_max=4` defaults and auto-generates clock IDs (`clock_N`) since these mechanical fields no longer come from the Narrator template. Cost: ~$0.0002 + ~300ms per opening (one additional Haiku call). The old `<game_data>` extraction in `parse_narrator_response()` (Steps 1–1.5) remains as a safety-net for legacy context-window echoes
+- **Chapter transition preserves deceased NPCs:** `start_new_chapter()` now includes `status="deceased"` NPCs in the returning-NPC list. Previously only active + background NPCs were saved before the chapter transition, silently dropping deceased NPCs from game state
+
+### Added
+- **Full roll logging:** Every dice roll is now logged with complete details: `[Roll] face_danger (iron=1): 2+3+1=6 vs [4,8] → WEAK_HIT`. Previously only match rolls (c1==c2) were logged. Applies to both normal turns in `process_turn()` and correction re-rolls. Enables post-session verification that the Narrator follows dice constraints
+
+---
+
 ## [0.9.50]
 
 ### Changed
