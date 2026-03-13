@@ -987,6 +987,22 @@ def _find_npc(game, npc_ref: str) -> Optional[dict]:
     return None
 
 
+def _resolve_about_npc(game, raw: str) -> Optional[str]:
+    """Resolve an about_npc value (slug, name, or id) to a canonical npc_id.
+    Returns the npc_id string if found, None otherwise.
+    Prevents dangling slug references (e.g. 'leonhard' instead of 'npc_3')
+    from being stored in memory entries."""
+    if not raw:
+        return None
+    npc = _find_npc(game, raw)
+    if npc:
+        resolved = npc.get("id")
+        if resolved != raw:
+            log(f"[NPC] about_npc resolved '{raw}' → '{resolved}'")
+        return resolved
+    return None
+
+
 def _next_npc_id(game) -> tuple[str, int]:
     """Determine the next available NPC ID. Returns (id_string, numeric_part)."""
     max_num = 0
@@ -4136,7 +4152,7 @@ def _apply_director_guidance(game: GameState, guidance: dict):
             "tone_key": ref.get("tone_key", ""),  # Machine-readable single word from enum
             "importance": 8,  # Reflections are always important
             "type": "reflection",
-            "about_npc": ref.get("about_npc") or None,
+            "about_npc": _resolve_about_npc(game, ref.get("about_npc")),
         })
         npc["_needs_reflection"] = False
         npc["importance_accumulator"] = 0
@@ -4879,7 +4895,7 @@ def _apply_memory_updates(game: GameState, json_text: str):
                     "emotional_weight": emotional,
                     "importance": importance,
                     "type": "observation",
-                    "about_npc": u.get("about_npc") or None,
+                    "about_npc": _resolve_about_npc(game, u.get("about_npc")),
                     "_score_debug": score_debug,
                 })
 
