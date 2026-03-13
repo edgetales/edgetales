@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.48"
+VERSION = "0.9.49"
 
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-5-20250929"
@@ -88,6 +88,23 @@ NPC_MENTION_THRESHOLD = 0.3        # Minimum score for NPC name mention
 DIRECTOR_INTERVAL = 3              # Call director every N scenes (when no trigger)
 MEMORY_RECENCY_DECAY = 0.92        # Exponential decay factor for memory recency
 DIRECTOR_MODEL = BRAIN_MODEL       # Director uses same model as Brain (Haiku)
+
+# --- Max output tokens per call ---
+# These are upper bounds, NOT cost drivers — you only pay for tokens actually generated.
+# Structured Output calls (Brain, Director, Metadata, etc.) self-terminate when the
+# JSON schema is complete; the limit just prevents truncated string fields.
+# Narrator/Recap (free prose) self-regulate via prompt instructions.
+_MAX_TOKENS_HAIKU  = 8192           # Haiku 4.5 model maximum
+_MAX_TOKENS_SONNET = 8192           # Sonnet 4.5 model maximum
+BRAIN_MAX_TOKENS       = _MAX_TOKENS_HAIKU    # call_brain (was 512)
+SETUP_BRAIN_MAX_TOKENS = _MAX_TOKENS_HAIKU    # call_setup_brain (was 512)
+RECAP_MAX_TOKENS       = _MAX_TOKENS_HAIKU    # call_recap (was 1200)
+METADATA_MAX_TOKENS    = _MAX_TOKENS_HAIKU    # call_narrator_metadata (was 3500)
+DIRECTOR_MAX_TOKENS    = _MAX_TOKENS_HAIKU    # call_director (was 6000)
+CHAPTER_SUM_MAX_TOKENS = _MAX_TOKENS_HAIKU    # call_chapter_summary (was 1500)
+CORRECTION_MAX_TOKENS  = _MAX_TOKENS_HAIKU    # call_correction_brain (was 1500)
+NARRATOR_MAX_TOKENS    = _MAX_TOKENS_SONNET   # call_narrator (was 3500)
+STORY_ARCH_MAX_TOKENS  = _MAX_TOKENS_SONNET   # call_story_architect (was 4000)
 
 # --- Creativity seed (output diversity for character/scene generation) ---
 _SEED_FALLBACK = [
@@ -2914,7 +2931,7 @@ time:{game.time_of_day or 'unspecified'} | prev_locations:{', '.join(game.locati
     try:
         response = _api_create_with_retry(
             client, max_retries=2,
-            model=BRAIN_MODEL, max_tokens=512, system=system,
+            model=BRAIN_MODEL, max_tokens=BRAIN_MAX_TOKENS, system=system,
             messages=[{"role": "user", "content": user_msg}],
             output_config={"format": {"type": "json_schema", "schema": BRAIN_OUTPUT_SCHEMA}},
         )
@@ -2974,7 +2991,7 @@ creativity_seed: {seed} (Use as loose inspiration for names, locations, and deta
     try:
         response = _api_create_with_retry(
             client, max_retries=2,
-            model=BRAIN_MODEL, max_tokens=512, system=system,
+            model=BRAIN_MODEL, max_tokens=SETUP_BRAIN_MAX_TOKENS, system=system,
             messages=[{"role": "user", "content": user_msg}],
             output_config={"format": {"type": "json_schema", "schema": SETUP_BRAIN_OUTPUT_SCHEMA}},
         )
@@ -3044,7 +3061,7 @@ def call_recap(client: anthropic.Anthropic, game: GameState,
         try:
             response = _api_create_with_retry(
                 client, max_retries=1,
-                model=BRAIN_MODEL, max_tokens=1200,
+                model=BRAIN_MODEL, max_tokens=RECAP_MAX_TOKENS,
                 system=f"""Recap an RPG story in {lang}. Second person singular.
 - 4-6 sentences, atmospheric, no game mechanics
 - Do NOT use markdown headings (#). Start directly with the recap text.
@@ -3147,7 +3164,7 @@ npcs:{npc_text}{campaign_ctx}{backstory_text}"""
     try:
         response = _api_create_with_retry(
             client, max_retries=2,
-            model=NARRATOR_MODEL, max_tokens=4000, system=system,
+            model=NARRATOR_MODEL, max_tokens=STORY_ARCH_MAX_TOKENS, system=system,
             messages=[{"role": "user", "content": user_msg}],
             output_config={"format": {"type": "json_schema", "schema": STORY_ARCHITECT_OUTPUT_SCHEMA}},
         )
@@ -3506,7 +3523,7 @@ def call_narrator(client: anthropic.Anthropic, prompt: str,
 
     response = _api_create_with_retry(
         client, max_retries=3,
-        model=NARRATOR_MODEL, max_tokens=3500,
+        model=NARRATOR_MODEL, max_tokens=NARRATOR_MAX_TOKENS,
         system=get_narrator_system(config or EngineConfig(), game),
         messages=messages,
     )
@@ -3643,7 +3660,7 @@ Extract all metadata from the narration above. Remember: {game.player_name} is t
     try:
         response = _api_create_with_retry(
             client, max_retries=2,
-            model=BRAIN_MODEL, max_tokens=3500,
+            model=BRAIN_MODEL, max_tokens=METADATA_MAX_TOKENS,
             system=system,
             messages=[{"role": "user", "content": prompt}],
             output_config={"format": {
@@ -4035,7 +4052,7 @@ def call_director(client: anthropic.Anthropic, game: GameState,
     try:
         response = _api_create_with_retry(
             client, max_retries=1,
-            model=DIRECTOR_MODEL, max_tokens=6000,
+            model=DIRECTOR_MODEL, max_tokens=DIRECTOR_MAX_TOKENS,
             system=DIRECTOR_SYSTEM,
             messages=[{"role": "user", "content": prompt}],
             output_config={"format": {"type": "json_schema", "schema": DIRECTOR_OUTPUT_SCHEMA}},
@@ -5464,7 +5481,7 @@ def call_chapter_summary(client: anthropic.Anthropic, game: GameState,
     try:
         response = _api_create_with_retry(
             client, max_retries=1,
-            model=BRAIN_MODEL, max_tokens=1500,
+            model=BRAIN_MODEL, max_tokens=CHAPTER_SUM_MAX_TOKENS,
             system=f"""Summarize an RPG chapter for campaign continuity.
 - Write in {lang}
 - "title": A short evocative title for this chapter (3-6 words)
@@ -6161,7 +6178,7 @@ npcs:
     try:
         response = _api_create_with_retry(
             client, max_retries=2,
-            model=BRAIN_MODEL, max_tokens=1500, system=system,
+            model=BRAIN_MODEL, max_tokens=CORRECTION_MAX_TOKENS, system=system,
             messages=[{"role": "user", "content": user_msg}],
             output_config={"format": {"type": "json_schema",
                                       "schema": CORRECTION_OUTPUT_SCHEMA}},

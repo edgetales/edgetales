@@ -337,6 +337,7 @@ _STRINGS = {
         "game.invalid_api_key": "Ung\u00fcltiger API Key!",
         "game.still_processing": "Einen Moment \u2014 die vorherige Eingabe wird noch verarbeitet.",
         "game.retry_tooltip": "Erneut versuchen",
+        "game.retry_orphan": "Keine Antwort erhalten.",
         "game.scene_marker": "Szene {n} \u2014 {location}",
 
         # Correction
@@ -689,6 +690,7 @@ _STRINGS = {
         "game.invalid_api_key": "Invalid API Key!",
         "game.still_processing": "One moment \u2014 still processing your previous input.",
         "game.retry_tooltip": "Retry",
+        "game.retry_orphan": "No response received.",
         "game.scene_marker": "Scene {n} \u2014 {location}",
 
         # Correction

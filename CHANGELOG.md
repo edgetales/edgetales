@@ -5,6 +5,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.49]
+
+### Changed
+- **`max_tokens` refactored to named constants at model ceiling:** All 9 API calls previously used hardcoded `max_tokens` values (512–6000) that caused systematic output truncation — especially in the Director (descriptions cut at ~60 chars, 60+ rejections per session) and Narrator openings (game_data JSON lost). Now uses named constants at the top of engine.py, all set to the model maximum (8192 for both Haiku and Sonnet). Structured Output calls self-terminate when the JSON schema is complete, so the higher limit only prevents truncated string fields. Free-prose calls (Narrator, Recap) self-regulate via prompt instructions. **Constants:** `BRAIN_MAX_TOKENS`, `SETUP_BRAIN_MAX_TOKENS`, `RECAP_MAX_TOKENS`, `METADATA_MAX_TOKENS`, `DIRECTOR_MAX_TOKENS`, `CHAPTER_SUM_MAX_TOKENS`, `CORRECTION_MAX_TOKENS` (all 8192), `NARRATOR_MAX_TOKENS`, `STORY_ARCH_MAX_TOKENS` (both 8192). No cost impact — you only pay for tokens actually generated
+
+### Added
+- **Orphaned input retry button on page reload:** When the page reloads after a disconnect or crash while an AI response was pending, the player's last input sits unanswered. `_show_main_phase()` now detects this after `render_chat_messages()`: if the last non-marker message is a `user` message and no processing is active, an amber-styled retry bar appears below the message with a refresh button. Clicking it calls `process_player_input(..., is_retry=True)` with the original text (including `##` prefix reconstruction for corrections). The bar self-deletes on click. ARIA: `role="alert"` on the bar, `aria-hidden="true"` on the decorative warning emoji, `aria-label` on the retry button
+- **New i18n keys:** `game.retry_orphan` (DE: "Keine Antwort erhalten.", EN: "No response received.")
+
+---
+
 ## [0.9.48]
 
 ### Fixed

@@ -2672,6 +2672,41 @@ async def main_page(client: Client):
 
                 # Skip game flow when viewing archived chapter
                 if not viewing_chapter:
+                    # Detect orphaned user input (page reload/disconnect before AI response)
+                    if not s.get("processing"):
+                        _msgs = s.get("messages", [])
+                        _last_msg = None
+                        for _m in reversed(_msgs):
+                            if not _m.get("scene_marker"):
+                                _last_msg = _m
+                                break
+                        if _last_msg and _last_msg.get("role") == "user":
+                            _orphan_text = _last_msg.get("content", "")
+                            if _last_msg.get("correction_input"):
+                                _orphan_text = "## " + _orphan_text
+                            _retry_cc = chat_container
+                            _retry_sr = _refresh_sidebar
+                            with chat_container:
+                                retry_row = ui.row().classes("w-full items-center gap-2 py-1 px-3").style(
+                                    "background: rgba(255,180,60,0.1); border: 1px solid rgba(255,180,60,0.3); "
+                                    "border-radius: 8px; margin: 0.25rem 0"
+                                )
+                                retry_row.props('role="alert"')
+                                with retry_row:
+                                    _orphan_msg = t('game.retry_orphan', L())
+                                    ui.html(
+                                        f'<span aria-hidden="true">{E["warn"]} </span>{_orphan_msg}'
+                                    ).classes("text-xs flex-grow").style("color: rgba(255,200,100,0.9)")
+                                    async def _do_orphan_retry(rr=retry_row, rt=_orphan_text,
+                                                               rc=_retry_cc, rs=_retry_sr):
+                                        try: rr.delete()
+                                        except Exception: pass
+                                        await process_player_input(rt, rc, sidebar_refresh=rs, is_retry=True)
+                                    ui.button(icon="refresh", on_click=_do_orphan_retry).props(
+                                        f'flat dense round aria-label="{t("aria.retry", L())}"'
+                                    ).classes("hover:text-white").style(
+                                        "min-width: 40px; min-height: 40px; color: rgba(255,200,100,0.9)"
+                                    ).tooltip(t("game.retry_tooltip", L()))
                     if render_momentum_burn():
                         footer.set_value(False)
                         await _scroll_chat_bottom(delay_ms=300)
