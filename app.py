@@ -1321,18 +1321,23 @@ def render_settings() -> None:
 def render_help() -> None:
     lang = L()
     with ui.expansion(f"{E['question']} {t('help.title', lang)}").classes("w-full"):
-        ui.markdown(t("help.dice_title", lang))
-        ui.markdown(t("help.dice_text", lang))
+        ui.markdown(t("help.intro_title", lang))
+        ui.label(t("help.intro_text", lang)).classes("text-xs text-gray-400")
+        ui.separator()
+
+        ui.markdown(t("help.freedom_title", lang))
+        ui.label(t("help.freedom_text", lang)).classes("text-xs text-gray-400")
         ui.separator()
 
         ui.markdown(t("help.probe_title", lang))
-        ui.markdown(t("help.probe_text", lang))
+        ui.label(t("help.probe_text", lang)).classes("text-xs text-gray-400")
         ui.html(f'''<div style="font-size:0.85em; line-height:1.8; padding:0.3em 0;">
             {t("help.probe_detail", lang)}
         </div>''')
         ui.separator()
 
         ui.markdown(t("help.results_title", lang))
+        ui.label(t("help.results_text", lang)).classes("text-xs text-gray-400")
         ui.html(f'''<div style="font-size:0.85em; line-height:2;">
             {E['check']} {t("help.result_strong", lang)}<br>
             <span style="color:#a3a3a3">{t("help.result_strong_desc", lang)}</span><br><br>
@@ -1348,6 +1353,7 @@ def render_help() -> None:
         ui.separator()
 
         ui.markdown(t("help.position_title", lang))
+        ui.label(t("help.position_text", lang)).classes("text-xs text-gray-400")
         ui.html(f'''<div style="font-size:0.85em; line-height:2;">
             {E['green_circle']} {t("help.pos_controlled", lang)}<br>
             <span style="color:#a3a3a3">{t("help.pos_controlled_desc", lang)}</span><br><br>
@@ -1359,6 +1365,7 @@ def render_help() -> None:
         ui.separator()
 
         ui.markdown(t("help.stats_title", lang))
+        ui.label(t("help.stats_text", lang)).classes("text-xs text-gray-400")
         ui.html(f'''<div style="font-size:0.85em; line-height:2;">
             {E['lightning']} {t("help.stat_edge", lang)}<br>
             {E['heart_red']} {t("help.stat_heart", lang)}<br>
@@ -1369,6 +1376,7 @@ def render_help() -> None:
         ui.separator()
 
         ui.markdown(t("help.tracks_title", lang))
+        ui.label(t("help.tracks_text", lang)).classes("text-xs text-gray-400")
         ui.html(f'''<div style="font-size:0.85em; line-height:2;">
             {E['heart_red']} {t("help.track_health", lang)}<br>
             {E['heart_blue']} {t("help.track_spirit", lang)}<br>
@@ -1392,12 +1400,13 @@ def render_help() -> None:
         ui.label(t("help.crisis_text", lang)).classes("text-xs text-gray-400")
         ui.separator()
 
-        ui.markdown(t("help.freedom_title", lang))
-        ui.label(t("help.freedom_text", lang)).classes("text-xs text-gray-400")
-        ui.separator()
-
         ui.markdown(f"{t('help.kid_title', lang)} {E['green_heart']}")
         ui.label(t("help.kid_text", lang)).classes("text-xs text-gray-400")
+        ui.separator()
+
+        ui.markdown(f"{t('help.correction_title', lang)} {E['pen']}")
+        ui.label(t("help.correction_text", lang)).classes("text-xs text-gray-400")
+        ui.label(t("help.correction_example", lang)).classes("text-xs text-gray-400")
 
 
 # ===============================================================

@@ -391,17 +391,29 @@ _STRINGS = {
 
         # Help
         "help.title": "Hilfe \u2014 Spielsystem",
-        "help.dice_title": "**Wie funktioniert das W\u00fcrfelsystem?**",
-        "help.dice_text": "Das Spiel nutzt ein System inspiriert von *Ironsworn/Starforged*.",
-        "help.probe_title": "**Probe**",
-        "help.probe_text": "Wenn du etwas Riskantes tust, wird gew\u00fcrfelt:",
-        "help.probe_detail": "<b>2W6 + Attribut</b> (dein Aktionswurf, max. 10)<br>"
-                             "gegen <b>2W10</b> (die Herausforderung)",
+        "help.intro_title": "**Wie spielt man?**",
+        "help.intro_text": "Schreib einfach, was dein Charakter tut oder sagt \u2014 in deinen eigenen Worten. "
+                           "\"Ich schleiche mich an der Wache vorbei\", "
+                           "\"Ich durchsuche die Truhe nach Hinweisen\", "
+                           "oder direkte Rede wie \"Ich will mich ja nicht unbeliebt machen, "
+                           "aber Sie sehen aus wie ein nasser Pudel\". "
+                           "Der Erz\u00e4hler beschreibt, was daraus passiert.",
+        "help.freedom_title": "**Spielerfreiheit**",
+        "help.freedom_text": "Du kannst alles tun. Orte erkunden, mit Leuten reden, k\u00e4mpfen, verhandeln, "
+                             "weglaufen \u2014 oder ganz eigene Ideen einbringen. "
+                             "Du kannst auch neue Elemente in die Welt einf\u00fchren, zum Beispiel "
+                             "einen Geheimgang erfinden oder einen alten Freund auftauchen lassen.",
+        "help.probe_title": "**W\u00fcrfelproben**",
+        "help.probe_text": "Wenn deine Aktion riskant ist oder scheitern k\u00f6nnte, wird automatisch gew\u00fcrfelt:",
+        "help.probe_detail": "<b>2W6 + Attribut</b> gegen <b>2W10</b><br>"
+                             "W6 = sechsseitiger W\u00fcrfel, W10 = zehnseitiger. "
+                             "Dein Wurf (max. 10) muss die W10 schlagen.",
         "help.results_title": "**Ergebnisse**",
+        "help.results_text": "Jeder Wurf hat drei m\u00f6gliche Ausg\u00e4nge:",
         "help.result_strong": "<b>Voller Erfolg</b>",
-        "help.result_strong_desc": "Aktionswurf schl\u00e4gt beide W10 \u2192 Sauberer Sieg",
+        "help.result_strong_desc": "Dein Wurf schl\u00e4gt beide W10 \u2192 Alles l\u00e4uft nach Plan",
         "help.result_weak": "<b>Teilerfolg</b>",
-        "help.result_weak_desc": "Schl\u00e4gt einen W10 \u2192 Erfolg mit Komplikation",
+        "help.result_weak_desc": "Schl\u00e4gt einen W10 \u2192 Erfolg, aber mit einem Haken",
         "help.result_miss": "<b>Fehlschlag</b>",
         "help.result_miss_desc": "Schl\u00e4gt keinen W10 \u2192 Etwas geht schief",
         "help.match_title": "**Schicksalswurf (Match)**",
@@ -409,40 +421,57 @@ _STRINGS = {
                            "Schicksalswurf \u2014 etwas Besonderes geschieht! Bei Erfolg + Match = ein "
                            "unerwarteter Vorteil. Bei Fehlschlag + Match = dramatische Eskalation.",
         "help.position_title": "**Position & Effekt**",
+        "help.position_text": "Wie gef\u00e4hrlich ist die Situation? Das Spiel sch\u00e4tzt automatisch ein, "
+                              "wie riskant deine Aktion gerade ist \u2014 das beeinflusst, wie hart ein "
+                              "Fehlschlag ausfallen kann.",
         "help.pos_controlled": "<b>Kontrolliert</b>",
-        "help.pos_controlled_desc": "Vorteil, mildere Konsequenzen",
+        "help.pos_controlled_desc": "Du hast die Oberhand. Selbst bei einem Fehlschlag passiert nichts Schlimmes.",
         "help.pos_risky": "<b>Riskant</b>",
-        "help.pos_risky_desc": "Standard, alles ist m\u00f6glich",
+        "help.pos_risky_desc": "Normalfall. Erfolg ist m\u00f6glich, aber ein Fehlschlag hat sp\u00fcrbare Folgen.",
         "help.pos_desperate": "<b>Verzweifelt</b>",
-        "help.pos_desperate_desc": "Nachteil, h\u00e4rtere Konsequenzen",
+        "help.pos_desperate_desc": "Du steckst in der Klemme. Ein Fehlschlag kann richtig wehtun.",
         "help.stats_title": "**Attribute** (7 Punkte, je 0\u20133)",
+        "help.stats_text": "Dein Charakter hat f\u00fcnf Eigenschaften \u2014 sie bestimmen, "
+                           "wie gut du in bestimmten Situationen bist:",
         "help.stat_edge": "<b>Geschick</b> \u2014 Schnelligkeit, Heimlichkeit",
         "help.stat_heart": "<b>Herz</b> \u2014 Empathie, Mut, Charme",
         "help.stat_iron": "<b>St\u00e4rke</b> \u2014 Kraft, Ausdauer",
         "help.stat_shadow": "<b>Schatten</b> \u2014 List, T\u00e4uschung",
         "help.stat_wits": "<b>Verstand</b> \u2014 Wissen, Wahrnehmung",
         "help.tracks_title": "**Leisten** (je 0\u20135)",
+        "help.tracks_text": "Drei Leisten zeigen, wie es deinem Charakter geht:",
         "help.track_health": "<b>Gesundheit</b> \u2014 K\u00f6rperlicher Zustand",
         "help.track_spirit": "<b>Willenskraft</b> \u2014 Mentaler Zustand",
         "help.track_supply": "<b>Vorr\u00e4te</b> \u2014 Ressourcen, Ausr\u00fcstung",
         "help.momentum_title": "**Momentum** (-6 bis +10)",
-        "help.momentum_text": "Baut sich bei Erfolgen auf. Bei Fehlschlag oder Teilerfolg kannst du "
-                              "Momentum einsetzen \u2014 setzt es auf 0, aber verbessert das Ergebnis.",
+        "help.momentum_text": "Startet bei 2 und steigt bei Erfolgen. "
+                              "Bei Fehlschl\u00e4gen verlierst du Momentum \u2014 "
+                              "es kann sogar ins Negative fallen. "
+                              "Wenn ein Wurf schlecht ausgeht, kannst du dein gesammeltes Momentum "
+                              "einsetzen: Das Ergebnis wird verbessert und die Szene wird nochmal "
+                              "neu erz\u00e4hlt, diesmal zu deinen Gunsten. "
+                              "Dein Momentum f\u00e4llt danach auf 0.",
         "help.chaos_title": "**Chaos-Faktor**",
-        "help.chaos_text": "Misst die Spannung (3\u20139). Steigt bei Fehlschl\u00e4gen, sinkt bei Erfolgen. "
-                           "Hohes Chaos kann unerwartete Szenenunterbrechungen ausl\u00f6sen.",
+        "help.chaos_text": "Misst die Spannung der Geschichte (3\u20139). Steigt bei Fehlschl\u00e4gen, "
+                           "sinkt bei Erfolgen. Bei hohem Chaos kann es passieren, dass etwas "
+                           "Unvorhergesehenes die Szene durcheinanderbringt.",
         "help.clocks_title": "**Uhren**",
         "help.clocks_text": "Bedrohungen ticken im Hintergrund. Fehlschl\u00e4ge f\u00fcllen Bedrohungsuhren. "
-                            "Volle Uhr = etwas Schlimmes passiert.",
+                            "Wenn eine Uhr voll ist, schl\u00e4gt die Bedrohung zu.",
         "help.crisis_title": "**Krise**",
-        "help.crisis_text": "Gesundheit ODER Willenskraft auf 0 = Krisenmodus. "
-                            "Beides auf 0 = dramatisches Finale.",
-        "help.freedom_title": "**Spielerfreiheit**",
-        "help.freedom_text": "Du kannst alles tun. Sag einfach, was du tust \u2014 die Welt reagiert. "
-                             "Du kannst auch neue Elemente in die Welt einf\u00fchren.",
+        "help.crisis_text": "Gesundheit oder Willenskraft auf 0 bedeutet Krise \u2014 "
+                            "dein Charakter ist angeschlagen und jeder weitere Fehlschlag wird gef\u00e4hrlicher. "
+                            "Wenn beides auf 0 f\u00e4llt, steuert die Geschichte auf ein dramatisches Finale zu.",
         "help.kid_title": "**Kindermodus**",
         "help.kid_text": "Kinderfreundliche Inhalte (8\u201312 Jahre). Keine Gewalt, keine Erwachsenenthemen, "
                          "hoffnungsvoller Ton. Spannung bleibt erhalten!",
+        "help.correction_title": "**Korrektur**",
+        "help.correction_text": "Etwas lief schief? Schreibe ## vor deine Nachricht, "
+                                "um den letzten Zug zu korrigieren. Zum Beispiel wenn "
+                                "der Erz\u00e4hler deine Aktion falsch verstanden hat, "
+                                "ein NPC pl\u00f6tzlich am falschen Ort auftaucht, "
+                                "oder ein Detail in der Geschichte nicht stimmt.",
+        "help.correction_example": "Beispiel: ## Ich wollte nicht angreifen, nur reden",
 
         # Accessibility (ARIA labels — screen-reader only, invisible)
         "aria.skip_to_content": "Zum Spielverlauf springen",
@@ -744,17 +773,29 @@ _STRINGS = {
 
         # Help
         "help.title": "Help \u2014 Game System",
-        "help.dice_title": "**How does the dice system work?**",
-        "help.dice_text": "The game uses a system inspired by *Ironsworn/Starforged*.",
-        "help.probe_title": "**Roll**",
-        "help.probe_text": "When you attempt something risky, dice are rolled:",
-        "help.probe_detail": "<b>2d6 + Attribute</b> (your action roll, max 10)<br>"
-                             "vs <b>2d10</b> (the challenge)",
+        "help.intro_title": "**How do you play?**",
+        "help.intro_text": "Just write what your character does or says \u2014 in your own words. "
+                           "\"I sneak past the guard\", "
+                           "\"I search the chest for clues\", "
+                           "or direct speech like \"I don\u2019t mean to be rude, "
+                           "but you look like a drowned rat\". "
+                           "The narrator describes what happens next.",
+        "help.freedom_title": "**Player Freedom**",
+        "help.freedom_text": "You can do anything. Explore places, talk to people, fight, negotiate, "
+                             "run away \u2014 or come up with your own ideas. "
+                             "You can also introduce new elements into the world, like "
+                             "inventing a secret passage or having an old friend show up.",
+        "help.probe_title": "**Dice Rolls**",
+        "help.probe_text": "When your action is risky or could fail, dice are rolled automatically:",
+        "help.probe_detail": "<b>2d6 + Attribute</b> vs <b>2d10</b><br>"
+                             "d6 = six-sided die, d10 = ten-sided. "
+                             "Your roll (max 10) needs to beat the d10s.",
         "help.results_title": "**Results**",
+        "help.results_text": "Every roll has three possible outcomes:",
         "help.result_strong": "<b>Strong Hit</b>",
-        "help.result_strong_desc": "Action roll beats both d10 \u2192 Clean success",
+        "help.result_strong_desc": "Your roll beats both d10 \u2192 Everything goes to plan",
         "help.result_weak": "<b>Weak Hit</b>",
-        "help.result_weak_desc": "Beats one d10 \u2192 Success with complication",
+        "help.result_weak_desc": "Beats one d10 \u2192 Success, but with a catch",
         "help.result_miss": "<b>Miss</b>",
         "help.result_miss_desc": "Beats neither d10 \u2192 Something goes wrong",
         "help.match_title": "**Fateful Roll (Match)**",
@@ -762,40 +803,55 @@ _STRINGS = {
                            "\u2014 something special happens! On a hit + match = an unexpected advantage. "
                            "On a miss + match = dramatic escalation.",
         "help.position_title": "**Position & Effect**",
+        "help.position_text": "How dangerous is the situation? The game automatically judges "
+                              "how risky your action is \u2014 this affects how bad things can get "
+                              "if you fail.",
         "help.pos_controlled": "<b>Controlled</b>",
-        "help.pos_controlled_desc": "Advantage, milder consequences",
+        "help.pos_controlled_desc": "You have the upper hand. Even a failure won\u2019t hurt much.",
         "help.pos_risky": "<b>Risky</b>",
-        "help.pos_risky_desc": "Standard, anything can happen",
+        "help.pos_risky_desc": "The default. Success is possible, but failure has real consequences.",
         "help.pos_desperate": "<b>Desperate</b>",
-        "help.pos_desperate_desc": "Disadvantage, harsher consequences",
+        "help.pos_desperate_desc": "You\u2019re in serious trouble. Failure can hit hard.",
         "help.stats_title": "**Attributes** (7 points, 0\u20133 each)",
+        "help.stats_text": "Your character has five traits \u2014 they determine "
+                           "how good you are in different situations:",
         "help.stat_edge": "<b>Finesse</b> \u2014 Speed, stealth",
         "help.stat_heart": "<b>Heart</b> \u2014 Empathy, courage, charm",
         "help.stat_iron": "<b>Iron</b> \u2014 Strength, endurance",
         "help.stat_shadow": "<b>Shadow</b> \u2014 Cunning, deception",
         "help.stat_wits": "<b>Wits</b> \u2014 Knowledge, perception",
         "help.tracks_title": "**Tracks** (0\u20135 each)",
+        "help.tracks_text": "Three tracks show how your character is doing:",
         "help.track_health": "<b>Health</b> \u2014 Physical condition",
         "help.track_spirit": "<b>Spirit</b> \u2014 Mental condition",
         "help.track_supply": "<b>Supply</b> \u2014 Resources, equipment",
         "help.momentum_title": "**Momentum** (-6 to +10)",
-        "help.momentum_text": "Builds on successes. On a miss or weak hit, you can burn momentum "
-                              "\u2014 resets to 0, but upgrades the result.",
+        "help.momentum_text": "Starts at 2 and rises with successes. "
+                              "On a miss you lose momentum \u2014 "
+                              "it can even drop into the negatives. "
+                              "When a roll goes badly, you can spend your built-up momentum: "
+                              "The result is upgraded and the scene is re-narrated "
+                              "in your favor. Your momentum drops to 0 afterwards.",
         "help.chaos_title": "**Chaos Factor**",
-        "help.chaos_text": "Measures tension (3\u20139). Rises on misses, falls on successes. "
-                           "High chaos can trigger unexpected scene interrupts.",
+        "help.chaos_text": "Measures story tension (3\u20139). Rises on misses, "
+                           "falls on successes. When chaos is high, something "
+                           "unexpected may disrupt the scene.",
         "help.clocks_title": "**Clocks**",
         "help.clocks_text": "Threats tick in the background. Misses fill threat clocks. "
-                            "Full clock = something bad happens.",
+                            "When a clock fills up, the threat strikes.",
         "help.crisis_title": "**Crisis**",
-        "help.crisis_text": "Health OR Spirit at 0 = Crisis mode. "
-                            "Both at 0 = dramatic finale.",
-        "help.freedom_title": "**Player Freedom**",
-        "help.freedom_text": "You can do anything. Just say what you do \u2014 the world responds. "
-                             "You can also introduce new elements into the world.",
+        "help.crisis_text": "Health or Spirit at 0 means crisis \u2014 "
+                            "your character is struggling and every further failure becomes more dangerous. "
+                            "If both hit 0, the story heads toward a dramatic finale.",
         "help.kid_title": "**Kid Mode**",
         "help.kid_text": "Kid-friendly content (ages 8\u201312). No violence, no adult themes, "
                          "hopeful tone. Tension is preserved!",
+        "help.correction_title": "**Correction**",
+        "help.correction_text": "Something went wrong? Type ## before your message "
+                                "to correct the last turn. For example if the narrator "
+                                "misunderstood your action, an NPC suddenly appeared "
+                                "in the wrong place, or a story detail doesn\u2019t add up.",
+        "help.correction_example": "Example: ## I didn't want to attack, just talk",
 
         # Accessibility (ARIA labels — screen-reader only, invisible)
         "aria.skip_to_content": "Skip to game log",

@@ -5,6 +5,27 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.50]
+
+### Changed
+- **Help section rewritten for players, not developers:** Complete overhaul of the "Help — Game System" sidebar section. All texts rewritten from a player's perspective with plain language instead of system terminology. New structure flows naturally: "How do you play?" → Player Freedom → Dice Rolls → Results → Match → Position & Effect → Attributes → Tracks → Momentum → Chaos → Clocks → Crisis → Kid Mode → Correction
+- **New intro section replaces Ironsworn reference:** Opens with "Just write what your character does or says" and three varied examples (action, exploration, direct dialogue) instead of "The game uses a system inspired by Ironsworn/Starforged"
+- **Player Freedom moved to second position:** Previously buried near the bottom after Crisis. Now immediately follows the intro, establishing the core principle before explaining mechanics
+- **Dice notation explained inline:** "2W6" / "2d6" now followed by "W6 = sechsseitiger Würfel" / "d6 = six-sided die" — one-time explanation, reader transfers to W10/d10
+- **All list sections get intro sentences:** Results ("Every roll has three possible outcomes:"), Attributes ("Your character has five traits..."), Tracks ("Three tracks show how your character is doing:")
+- **Position & Effect explained for players:** New intro text explains *what it means* ("How dangerous is the situation?"). Descriptions rewritten: "You have the upper hand. Even a failure won't hurt much" instead of "Advantage, milder consequences"
+- **Momentum text explains full lifecycle:** Starts at 2, rises with successes, drops on misses (can go negative), spend to upgrade result + scene re-narrated in your favor, resets to 0. Previous text said "resets to starting value" (incorrect — burn resets to 0, not 2)
+- **Chaos, Clocks, Crisis rewritten:** Chaos: "something unexpected may disrupt the scene" instead of "trigger unexpected scene interrupts". Clocks: "When a clock fills up, the threat strikes" instead of "Full clock = something bad happens". Crisis: explains what happens ("your character is struggling and every further failure becomes more dangerous") instead of formula notation ("Health OR Spirit at 0 = Crisis mode")
+- **Result descriptions more natural:** "Everything goes to plan" instead of "Clean success", "Success, but with a catch" instead of "Success with complication"
+
+### Added
+- **Correction mode help section:** New section at the end of the help panel explaining the `##` prefix for correcting the last turn. Player-facing language: "Something went wrong? Type ## before your message to correct the last turn." with concrete example. New i18n keys: `help.correction_title`, `help.correction_text`, `help.correction_example` (DE + EN)
+
+### Removed
+- **i18n keys:** `help.dice_title`, `help.dice_text` (replaced by `help.intro_title`, `help.intro_text`)
+
+---
+
 ## [0.9.49]
 
 ### Changed
