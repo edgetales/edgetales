@@ -104,6 +104,7 @@ _ensure_requirements()
 # Standard library imports
 # ---------------------------------------------------------------------------
 import asyncio
+import html as html_mod
 import os
 import re
 import tempfile
@@ -1007,10 +1008,11 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                     f"background: {bg_color}; border: 1px solid {border_color}; border-radius: 8px"):
                     with ui.column().classes("w-full gap-1"):
                         # Title + meta
-                        title_parts = [f"**{display_name}**"]
+                        _dn_safe = html_mod.escape(display_name)
+                        title_html = f"<b>{_dn_safe}</b>"
                         if is_active:
-                            title_parts.append(f" {E['check']}")
-                        ui.markdown("".join(title_parts)).classes("text-sm")
+                            title_html += f" {E['check']}"
+                        ui.html(title_html).classes("text-sm")
                         meta = f"{pname} {E['dot']} {t('actions.save_scene', lang, n=scene)}"
                         if chapter > 1:
                             meta += f" {E['dot']} {t('actions.save_chapter', lang, n=chapter)}"
@@ -1019,20 +1021,33 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                         ui.label(meta).classes("text-xs").style("color: var(--text-secondary)")
                         # Action buttons — own row, load left, delete right
                         with ui.row().classes("w-full items-center justify-between mt-1").style("padding: 0 0.25rem"):
-                            def make_load(n=sname):
+                            def make_load(n=sname, dn=display_name, _active=is_active):
                                 async def do_load():
-                                    loaded, hist = load_game(username, n)
-                                    if loaded:
-                                        s["game"]=loaded; s["creation"]=None; s["pending_burn"]=None; s["messages"]=hist
-                                        s["active_save"] = n
-                                        s["processing"] = False  # Cancel any in-flight turn
-                                        s["_turn_gen"] = s.get("_turn_gen", 0) + 1
-                                        s["viewing_chapter"] = None; s["chapter_view_messages"] = None; s["chapter_view_title"] = None
-                                        s["messages"].append({"role":"assistant","content":f"*{E['checkmark']} {t('actions.game_loaded', lang, name=loaded.player_name, scene=loaded.scene_count)}*"})
-                                        ui.navigate.reload()
+                                    async def _execute_load():
+                                        loaded, hist = load_game(username, n)
+                                        if loaded:
+                                            s["game"]=loaded; s["creation"]=None; s["pending_burn"]=None; s["messages"]=hist
+                                            s["active_save"] = n
+                                            s["processing"] = False  # Cancel any in-flight turn
+                                            s["_turn_gen"] = s.get("_turn_gen", 0) + 1
+                                            s["viewing_chapter"] = None; s["chapter_view_messages"] = None; s["chapter_view_title"] = None
+                                            s["messages"].append({"role":"assistant","content":f"*{E['checkmark']} {t('actions.game_loaded', lang, name=loaded.player_name, scene=loaded.scene_count)}*"})
+                                            ui.navigate.reload()
+                                    if game and not _active:
+                                        with ui.dialog() as dlg, ui.card():
+                                            ui.label(t("actions.load_confirm", lang, name=dn))
+                                            with ui.row().classes("gap-4 mt-2"):
+                                                async def confirm_load():
+                                                    dlg.close()
+                                                    await _execute_load()
+                                                ui.button(t("user.yes", lang), on_click=confirm_load, color="positive")
+                                                ui.button(t("user.no", lang), on_click=dlg.close)
+                                        dlg.open()
+                                    else:
+                                        await _execute_load()
                                 return do_load
                             _load_aria = t("aria.load_save", lang, name=display_name)
-                            ui.button(icon="play_arrow", on_click=make_load(sname)).props(f'flat round dense size=sm aria-label="{_load_aria}"').tooltip(t("actions.load", lang))
+                            ui.button(icon="play_arrow", on_click=make_load(sname, display_name, is_active)).props(f'flat round dense size=sm aria-label="{_load_aria}"').tooltip(t("actions.load", lang))
 
                             if sname != "autosave":
                                 def make_delete(n=sname):
@@ -1047,7 +1062,7 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                                                         s["active_save"] = "autosave"
                                                     dlg.close()
                                                     ui.navigate.reload()
-                                                ui.button(t("user.yes", lang), on_click=confirm_del, color="negative")
+                                                ui.button(t("user.yes", lang), on_click=confirm_del, color="positive")
                                                 ui.button(t("user.no", lang), on_click=dlg.close)
                                         dlg.open()
                                     return do_delete
@@ -1097,12 +1112,26 @@ def render_sidebar_actions(on_switch_user=None) -> None:
         # --- New game ---
         ui.separator().classes("my-1")
         async def new_game():
-            delete_chapter_archives(username, s.get("active_save", "autosave"))
-            s["game"]=None;s["creation"]=None;s["pending_burn"]=None;s["messages"]=[];s["active_save"]="autosave"
-            s["processing"]=False;s["_turn_gen"]=s.get("_turn_gen",0)+1
-            s["viewing_chapter"]=None;s["chapter_view_messages"]=None
-            ui.navigate.reload()
-        ui.button(f"{E['trash']} {t('actions.new_game', lang)}", on_click=new_game, color="red").props("flat").classes("w-full")
+            if game:
+                with ui.dialog() as dlg, ui.card():
+                    ui.label(t("actions.new_game_confirm", lang))
+                    with ui.row().classes("gap-4 mt-2"):
+                        async def confirm_new():
+                            dlg.close()
+                            delete_chapter_archives(username, s.get("active_save", "autosave"))
+                            s["game"]=None;s["creation"]=None;s["pending_burn"]=None;s["messages"]=[];s["active_save"]="autosave"
+                            s["processing"]=False;s["_turn_gen"]=s.get("_turn_gen",0)+1
+                            s["viewing_chapter"]=None;s["chapter_view_messages"]=None
+                            ui.navigate.reload()
+                        ui.button(t("user.yes", lang), on_click=confirm_new, color="positive")
+                        ui.button(t("user.no", lang), on_click=dlg.close)
+                dlg.open()
+            else:
+                s["game"]=None;s["creation"]=None;s["pending_burn"]=None;s["messages"]=[];s["active_save"]="autosave"
+                s["processing"]=False;s["_turn_gen"]=s.get("_turn_gen",0)+1
+                s["viewing_chapter"]=None;s["chapter_view_messages"]=None
+                ui.navigate.reload()
+        ui.button(f"{t('actions.new_game', lang)}", on_click=new_game, color="red").props("flat").classes("w-full")
 
         # --- Export ---
         if game and s["messages"]:
@@ -1518,10 +1547,13 @@ def render_creation_flow(chat_container) -> bool:
     step = creation.get("step","")
     if step == "genre_custom":
         ui.markdown(t("creation.custom_genre_title", lang))
-        inp = ui.input(placeholder=t("creation.genre_placeholder", lang)).classes("w-full").props(f'aria-label="{t("creation.genre_placeholder", lang)}"')
+        inp = ui.input(placeholder=t("creation.genre_placeholder", lang), value=creation.get("genre_description", "")).classes("w-full").props(f'aria-label="{t("creation.genre_placeholder", lang)}"')
         async def go():
             if inp.value.strip(): _finish_genre_custom(inp.value.strip())
-        inp.on("keydown.enter", go); ui.button(t("creation.next", lang), on_click=go, color="primary")
+        inp.on("keydown.enter", go)
+        with ui.row().classes("gap-2"):
+            ui.button(t("creation.back", lang), on_click=_creation_back_to_genre).props("flat")
+            ui.button(t("creation.next", lang), on_click=go, color="primary")
         return True
     if step == "tone":
         ui.markdown(t("creation.tone_question", lang, genre=creation['genre_label']))
@@ -1530,13 +1562,17 @@ def render_creation_flow(chat_container) -> bool:
             for label,code in tones.items():
                 ui.button(label, on_click=lambda l=label,c=code: _pick_tone(l,c)).props("flat unelevated").classes("w-full choice-btn")
             ui.button(f"{E['pen']} {t('creation.custom_tone_btn', lang)}", on_click=_pick_tone_custom).props("flat unelevated").classes("w-full choice-btn")
+        ui.button(t("creation.back", lang), on_click=_creation_back_to_genre).props("flat")
         return True
     if step == "tone_custom":
         ui.markdown(t("creation.custom_tone_title", lang))
-        inp = ui.input(placeholder=t("creation.tone_placeholder", lang)).classes("w-full").props(f'aria-label="{t("creation.tone_placeholder", lang)}"')
+        inp = ui.input(placeholder=t("creation.tone_placeholder", lang), value=creation.get("tone_description", "")).classes("w-full").props(f'aria-label="{t("creation.tone_placeholder", lang)}"')
         async def go():
             if inp.value.strip(): _finish_tone_custom(inp.value.strip())
-        inp.on("keydown.enter", go); ui.button(t("creation.next", lang), on_click=go, color="primary")
+        inp.on("keydown.enter", go)
+        with ui.row().classes("gap-2"):
+            ui.button(t("creation.back", lang), on_click=_creation_back_to_tone).props("flat")
+            ui.button(t("creation.next", lang), on_click=go, color="primary")
         return True
     if step == "archetype":
         ui.markdown(t("creation.archetype_question", lang, tone=creation['tone_label']))
@@ -1545,15 +1581,19 @@ def render_creation_flow(chat_container) -> bool:
             for label,code in archetypes.items():
                 ui.button(label, on_click=lambda l=label,c=code: _pick_archetype(l,c)).props("flat unelevated").classes("w-full choice-btn")
             ui.button(f"{E['pen']} {t('creation.custom_idea', lang)}", on_click=_pick_archetype_custom).props("flat unelevated").classes("w-full choice-btn")
+        ui.button(t("creation.back", lang), on_click=_creation_back_to_tone).props("flat")
         return True
     if step == "personalize":
         ui.markdown(t("creation.name_question", lang))
-        name_inp = ui.input(placeholder=t("creation.name_placeholder", lang)).classes("w-full").props(f'aria-label="{t("creation.name_placeholder", lang)}"')
+        name_inp = ui.input(placeholder=t("creation.name_placeholder", lang), value=creation.get("player_name", "")).classes("w-full").props(f'aria-label="{t("creation.name_placeholder", lang)}"')
         ui.markdown(t("creation.desc_question", lang))
-        desc_inp = ui.textarea(placeholder=t("creation.desc_placeholder", lang)).props("rows=2 maxlength=800 counter").classes("w-full").props(f'aria-label="{t("creation.desc_placeholder", lang)}"')
+        desc_inp = ui.textarea(placeholder=t("creation.desc_placeholder", lang), value=creation.get("custom_desc", "")).props("rows=4 maxlength=800 counter").classes("w-full").props(f'aria-label="{t("creation.desc_placeholder", lang)}"')
         async def go():
             if name_inp.value.strip(): _finish_personalize(name_inp.value.strip(), desc_inp.value.strip() if desc_inp.value else "")
-        name_inp.on("keydown.enter", go); ui.button(t("creation.next", lang), on_click=go, color="primary")
+        name_inp.on("keydown.enter", go)
+        with ui.row().classes("gap-2"):
+            ui.button(t("creation.back", lang), on_click=_creation_back_to_archetype).props("flat")
+            ui.button(t("creation.next", lang), on_click=go, color="primary")
         return True
     if step == "wishes_boundaries": return _render_wishes()
     if step == "confirm": return _render_confirm()
@@ -1566,6 +1606,29 @@ def _pick_genre(l,c):
 
 def _pick_genre_custom():
     s=S();s["creation"]={"step":"genre_custom"}
+    ui.navigate.reload()
+
+def _creation_back_to_genre():
+    s=S();s["creation"]=None
+    ui.navigate.reload()
+
+def _creation_back_to_tone():
+    s=S();cr=s["creation"];cr["step"]="tone"
+    # Clear tone-related choices
+    cr.pop("tone",None);cr.pop("tone_label",None);cr.pop("tone_description",None)
+    ui.navigate.reload()
+
+def _creation_back_to_archetype():
+    s=S();cr=s["creation"];cr["step"]="archetype"
+    cr.pop("archetype",None);cr.pop("archetype_label",None)
+    ui.navigate.reload()
+
+def _creation_back_to_personalize():
+    s=S();cr=s["creation"];cr["step"]="personalize"
+    ui.navigate.reload()
+
+def _creation_back_to_wishes():
+    s=S();cr=s["creation"];cr["step"]="wishes_boundaries"
     ui.navigate.reload()
 
 def _finish_genre_custom(txt):
@@ -1631,7 +1694,9 @@ def _render_wishes():
             ui.navigate.reload()
         except Exception as e: ui.notify(t("creation.error", lang, error=e), type="negative")
     with btn_container:
-        ui.button(f"{t('creation.next', lang)} {E['arrow_r']}", on_click=proceed, color="primary").classes("w-full")
+        with ui.row().classes("w-full gap-2"):
+            ui.button(t("creation.back", lang), on_click=_creation_back_to_personalize).props("flat")
+            ui.button(f"{t('creation.next', lang)} {E['arrow_r']}", on_click=proceed, color="primary").classes("flex-grow")
     return True
 
 def _render_confirm():
@@ -1859,6 +1924,7 @@ def _render_confirm():
                     ui.navigate.reload()
                 except Exception as e: ui.notify(t("creation.error", lang, error=e), type="negative")
             ui.button(f"{E['refresh']} {t('creation.reroll', lang)}", on_click=reroll, color="primary").props("outline").classes("text-lg px-8")
+            ui.button(t("creation.back", lang), on_click=_creation_back_to_wishes).props("flat")
     return True
 
 
@@ -2195,7 +2261,7 @@ def render_epilogue() -> bool:
             with ui.row().classes("gap-4 mt-4"):
                 new_ch, full_new = _make_chapter_action(game, "epilogue.chapter_msg")
                 ui.button(f"{E['refresh']} {t('epilogue.new_chapter', lang)}", on_click=new_ch, color="primary")
-                ui.button(f"{E['trash']} {t('epilogue.restart', lang)}", on_click=full_new)
+                ui.button(f"{t('epilogue.restart', lang)}", on_click=full_new)
         return True  # Hide footer — story is done
 
     # --- Epilogue offer: story complete but epilogue not yet generated ---
@@ -2242,7 +2308,7 @@ def render_game_over() -> bool:
         with ui.row().classes("gap-4 mt-4"):
             new_ch, full_new = _make_chapter_action(game, "gameover.chapter_msg")
             ui.button(f"{E['refresh']} {t('gameover.new_chapter', lang)}", on_click=new_ch, color="primary")
-            ui.button(f"{E['trash']} {t('gameover.restart', lang)}", on_click=full_new)
+            ui.button(f"{t('gameover.restart', lang)}", on_click=full_new)
     return True
 
 

@@ -5,6 +5,28 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.52]
+
+### Changed
+- **Sidebar: "Schnellspeichern" → "Speichern"** (DE), "Quick Save" → "Save" (EN). Shorter, clearer label for the primary save action
+- **Sidebar: Trash emoji removed from "Neues Spiel" / "New Game" button.** Also removed from "Komplett neu" / "Start Fresh" buttons in Game Over and Epilogue cards. Trash emoji remains only on "Spieler entfernen" (user management) where it fits semantically
+- **Savegame card title uses `ui.html` instead of `ui.markdown`.** Prevents underscores and hyphens in save names from being rendered as italic/bold formatting. Display names are HTML-escaped for safety
+- **"Überrasch mich" / "Surprise Me" genre replaced with "Outdoor Survival"** (`outdoor_survival` code, 🍃 leaf emoji). Fixed genre, not random — consistent with all other genre options
+- **Backstory textarea enlarged** from `rows=2` to `rows=4` in the personalize step. The placeholder example text now fits without scrolling
+- **Confirmation dialogs for destructive sidebar actions:**
+  - "Neues Spiel" / "New Game" now shows confirmation dialog using existing `actions.new_game_confirm` i18n strings (skipped when no game is active)
+  - "Laden" / "Load" (play button on save cards) shows confirmation dialog using existing `actions.load_confirm` strings (skipped when loading the already-active save)
+  - All confirmation "Ja"/"Yes" buttons use `color="positive"` (green) instead of `color="negative"` (red)
+- **Creation flow: back navigation on every step.** New `creation.back` i18n key (DE: "Zurück", EN: "Back"). Back buttons on: genre_custom → genre, tone → genre, tone_custom → tone, archetype → tone, personalize → archetype, wishes → personalize, confirm → wishes. Text inputs (custom genre/tone, character name, backstory) are pre-filled when returning. Back handlers clear downstream choices (e.g. going back to tone clears archetype selection)
+- **Quasar focus-helper hidden on choice buttons** (`display: none !important` on `.choice-btn .q-focus-helper`). Eliminates the narrow inner rectangle visible on genre/tone/archetype buttons when selected. Keyboard accessibility preserved via existing `:focus-visible` outline
+
+### Added
+- `creation.back` i18n key (DE: "Zurück", EN: "Back")
+- `_creation_back_to_genre()`, `_creation_back_to_tone()`, `_creation_back_to_archetype()`, `_creation_back_to_personalize()`, `_creation_back_to_wishes()` — creation flow back-navigation handlers
+- `import html as html_mod` in app.py for safe HTML escaping of save names
+
+---
+
 ## [0.9.51]
 
 ### Changed

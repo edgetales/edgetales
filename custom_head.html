@@ -98,6 +98,8 @@ input, textarea, select, .q-field__native, .q-field__input { font-size: 16px !im
               letter-spacing: normal !important; min-height: 48px; min-width: 0; overflow: hidden; }
 .choice-btn.q-btn .q-btn__content { color: var(--text-primary) !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .choice-btn.q-btn:hover { border-color: var(--accent) !important; background: var(--accent-dim) !important; }
+/* Quasar focus-helper: hide on choice buttons (our :focus-visible outline handles accessibility) */
+.choice-btn.q-btn .q-focus-helper { display: none !important; }
 /* --- Chat messages --- */
 .chat-msg { margin-bottom: 0.25rem; padding: 0.4rem 0; color: var(--text-primary); }
 .chat-msg.assistant { background: transparent; border: none; }
