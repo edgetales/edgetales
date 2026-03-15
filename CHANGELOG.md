@@ -5,6 +5,29 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.53]
+
+### Changed
+- **Info-Tooltips in Settings: hover → click-to-dismiss (mobile-friendly).** Alle 4 Info-Icons in den Einstellungen (Kid Mode, TTS, STT, Screen Reader) verwenden jetzt `ui.menu()` statt `ui.tooltip()`. Das Popover öffnet sich per Klick, bleibt sichtbar bis der Nutzer anderswo klickt, und wird nicht mehr vom Finger verdeckt. Neue Hilfsfunktion `_info_btn(tip_text)` in `app.py`. ARIA-Label auf dem Button bleibt für Screen Reader erhalten
+- **CSS-Variablen-System vervollständigt.** `custom_head.html` `:root` um 9 semantische Variablen erweitert: `--user-border` (#C45C3A, Terrakotta für User-Messages), `--success` / `--success-dim`, `--error` / `--error-dark` / `--error-dim` / `--error-border`, `--accent-border` / `--accent-dim-strong`. Alle zuvor hardcoded Hex-Werte in `custom_head.html` und `app.py` auf Variablen umgestellt: Track-Fills, Dice-Display-Farben, STT-Waveform, Correction-Badge-Border, Retry-Banner, Game-Over-Karte, Chapter-Banner, Epilog-/Momentum-Karten, STT-Status-Text, Delete-Button, Erfolgs-Labels, Help-Text-Inline-Spans. Einzige verbleibende Hartkodierungen: Spirit-Blau (#2563eb/#60a5fa) und Scrollbar-Weiß — beide semantisch eigenständig
+- **Chapter-Archiv-Banner harmonisiert.** Hintergrund war zuvor `rgba(106,76,147,0.15)` (Lila) — Ausreißer ohne Ankerpunkt im Farbsystem. Jetzt `var(--accent-dim)` / `var(--accent-border)`, konsistent mit allen anderen inhaltlichen Karten
+- **Choice-Button Hover-Transition.** `transition: border-color 0.15s ease, background-color 0.15s ease` auf `.choice-btn.q-btn` — Farbwechsel bei Hover weich statt abrupt
+- **Scene-Marker visuell aufgewertet.** `display: block` mit `border-top` / `border-bottom` statt Flexbox-Linien — funktioniert korrekt bei mehrzeiligen Ortsnamen. `letter-spacing: 0.12em`, Font-Size 0.80em. Die `—`-Dekoratoren im Python-Code entfernt, da die Borders die Trennung übernehmen
+- **Typografie: Inter + Crimson Pro.** Google Fonts via `<link preconnect>` + einzigem kombinierten Request. Inter (Variable Font `wght@300..700`) als globale UI-Schrift auf `body`. Crimson Pro (`ital,wght@0,400;0,600;1,400;1,600`) optional für Narrator-Nachrichten (`.chat-msg.assistant`) — wählbar per Setting (s.u.)
+- **Sidebar: NPC-Expansion-Inhalt strukturiert.** Expansion-Header zeigt nur den Namen — Inhalt über neue `.npc-card` CSS-Klasse mit drei Ebenen: Name (fett), Disposition + Bond als sekundäre Metazeile, Description kursiv. Border-Left als visueller Anker. Background-NPCs gleiche Struktur mit 65% Opacity. Deceased-NPCs: Strikethrough mit Padding
+- **Momentum-Burn-Karte: Dringlichkeit durch Glow-Animation.** Neue CSS-Klasse `.burn-card` mit 2s-Keyframe `burn-glow` — subtiler Amber-Glow auf der Box-Shadow pulsiert sanft. Amber-Label-Zeile (`🔥 Momentum`) über dem Markdown-Text als visueller Anker
+- **Export-Button umbenannt.** „Export" → „PDF Export" (DE + EN), Buch-Emoji entfernt. Gilt für Sidebar-Button und Chapter-Export-Button
+- **Erzähler-Schriftart als User-Setting.** Neues Dropdown in den Einstellungen: Crimson Pro (Serifen), System Serifenlos (Default für neue Accounts), System Serifen. Wahl wirkt live ohne Speichern, wird persistent in User-Config abgelegt. Font wird über `data-narrator-font` Attribut auf `body` gesteuert, CSS-Attribute-Selektoren überschreiben die Basis-Regel
+
+### Added
+- `_info_btn(tip_text)` — Hilfsfunktion in `app.py`. Rendert flat-round Icon-Button mit `ui.menu()` als Kind; Touch-freundlicher Ersatz für hover-basiertes `ui.tooltip()`
+- CSS-Variablen: `--user-border`, `--success`, `--success-dim`, `--error`, `--error-dark`, `--error-dim`, `--error-border`, `--accent-border`, `--accent-dim-strong`
+- CSS-Klassen: `.npc-card`, `.npc-name`, `.npc-meta`, `.npc-desc`, `.burn-card`
+- CSS-Keyframe: `@keyframes burn-glow`
+- i18n-Keys: `settings.narrator_font`, `settings.narrator_font_crimson`, `settings.narrator_font_sans`, `settings.narrator_font_serif` (DE + EN)
+
+---
+
 ## [0.9.52]
 
 ### Changed

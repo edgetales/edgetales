@@ -595,7 +595,7 @@ def _setup_stt_button(mic_btn, inp, chat_container, stt_status, stt_status_conte
             mic_btn.props(f'color=red aria-label="{t("aria.stop_recording", L())}"')
             mic_btn._props["icon"] = "stop"
             mic_btn.update()
-            _show_status(f'{_WAVEFORM_HTML} <span style="color: #ef4444">{t("stt.recording", L())} <span id="_sttTimer">0:00</span></span>')
+            _show_status(f'{_WAVEFORM_HTML} <span style="color: var(--error)">{t("stt.recording", L())} <span id="_sttTimer">0:00</span></span>')
             # Fire-and-forget: getUserMedia may show a permission dialog that blocks JS.
             # Wrapping in an async IIFE prevents Python from waiting on the dialog.
             ui.run_javascript(f'''
@@ -693,7 +693,7 @@ def _setup_stt_button(mic_btn, inp, chat_container, stt_status, stt_status_conte
                 asyncio.create_task(_hide_status_delayed(3000))
         except Exception as ex:
             log(f"[STT] Error: {ex}", level="warning")
-            _show_status(f'{E["x_mark"]} <span style="color: #f87171">{t("stt.error", L(), error=ex)}</span>')
+            _show_status(f'{E["x_mark"]} <span style="color: var(--error)">{t("stt.error", L(), error=ex)}</span>')
             asyncio.create_task(_hide_status_delayed(4000))
 
     async def handle_audio(e):
@@ -729,7 +729,7 @@ def _setup_stt_button(mic_btn, inp, chat_container, stt_status, stt_status_conte
         mic_btn._props["icon"] = "mic"
         mic_btn.update()
         err = e.args.get("error", t("stt.unknown", L())) if isinstance(e.args, dict) else t("stt.unknown", L())
-        _show_status(f'{E["x_mark"]} <span style="color: #f87171">{t("stt.mic_error", L(), error=err)}</span>')
+        _show_status(f'{E["x_mark"]} <span style="color: var(--error)">{t("stt.mic_error", L(), error=err)}</span>')
         asyncio.create_task(_hide_status_delayed(4000))
 
     async def handle_stopped(_e):
@@ -785,7 +785,7 @@ def render_sidebar_status(game: GameState, session=None) -> None:
     if game.game_over:
         ui.label(f"{E['skull']} {t('sidebar.finale', lang)}").classes("text-sm text-red-400 font-bold mt-2")
     ui.separator()
-    # Stats
+    # Stats (5 core stats; momentum rendered separately below)
     ui.html(f'''<div class="stat-grid">
     <div class="stat-item"><span class="sr-only">{t('aria.stat_item', lang, label=sl['edge'], value=int(game.get_stat('edge')))}</span><div aria-hidden="true"><div class="stat-label">{sl['edge']}</div><div class="stat-value">{game.get_stat('edge')}</div></div></div>
     <div class="stat-item"><span class="sr-only">{t('aria.stat_item', lang, label=sl['shadow'], value=int(game.get_stat('shadow')))}</span><div aria-hidden="true"><div class="stat-label">{sl['shadow']}</div><div class="stat-value">{game.get_stat('shadow')}</div></div></div>
@@ -860,21 +860,30 @@ def render_sidebar_status(game: GameState, session=None) -> None:
             active_npcs.sort(key=_npc_sort_key)
             ui.label(f"{E['people']} {t('sidebar.persons', lang)}").classes("text-sm font-semibold")
             for n in active_npcs:
-                disp = dl.get(n["disposition"],f"{E['white_circle']} Neutral")
-                with ui.expansion(f"{disp} {n['name']} {E['dash']} {n['bond']}/{n.get('bond_max',4)}"):
-                    if n.get("aliases"):
-                        ui.label(f"{t('sidebar.npc_aka', lang)} {', '.join(n['aliases'])}").classes("text-xs text-gray-500 italic")
-                    if n.get("description"): ui.label(n["description"]).classes("text-xs text-gray-400")
+                disp = dl.get(n["disposition"], f"{E['white_circle']} Neutral")
+                bond_max = n.get("bond_max", 4)
+                with ui.expansion(f"{n['name']}").classes("w-full"):
+                    npc_parts = [f"{disp}", f"{t('sidebar.bond', lang) if 'sidebar.bond' in str(t.__doc__ or '') else 'Bond'}: {n['bond']}/{bond_max}"]
+                    alias_str = f" · {t('sidebar.npc_aka', lang)} {', '.join(n['aliases'])}" if n.get("aliases") else ""
+                    ui.html(f'''<div class="npc-card">
+                        <div class="npc-name" aria-hidden="true">{n["name"]}</div>
+                        <div class="npc-meta">{disp} &nbsp;·&nbsp; {n["bond"]}/{bond_max}</div>
+                        {f'<div class="npc-meta" style="font-style:italic">{alias_str[3:]}</div>' if alias_str else ""}
+                        {f'<div class="npc-desc">{n["description"]}</div>' if n.get("description") else ""}
+                    </div>''')
         if background_npcs:
             background_npcs.sort(key=_npc_sort_key)
             with ui.expansion(f"{E['people']} {t('sidebar.known_persons', lang)} ({len(background_npcs)})").classes("w-full"):
                 for n in background_npcs:
-                    disp = dl.get(n["disposition"],f"{E['white_circle']} Neutral")
-                    ui.label(f"{disp} {n['name']} {E['dash']} {n['bond']}/{n.get('bond_max',4)}").classes("text-xs").style("opacity: 0.6")
+                    disp = dl.get(n["disposition"], f"{E['white_circle']} Neutral")
+                    ui.html(f'''<div class="npc-card" style="opacity:0.65">
+                        <div class="npc-name">{n["name"]}</div>
+                        <div class="npc-meta">{disp} &nbsp;·&nbsp; {n["bond"]}/{n.get("bond_max", 4)}</div>
+                    </div>''')
         if deceased_npcs:
             with ui.expansion(f"\u2620\ufe0f {t('sidebar.deceased_persons', lang)} ({len(deceased_npcs)})").classes("w-full"):
                 for n in deceased_npcs:
-                    ui.label(f"\u2620\ufe0f {n['name']}").classes("text-xs").style("opacity: 0.4; text-decoration: line-through")
+                    ui.label(f"\u2620\ufe0f {n['name']}").classes("text-xs").style("opacity: 0.4; text-decoration: line-through; padding: 0.15rem 0.5rem")
 
 
 def render_sidebar_actions(on_switch_user=None) -> None:
@@ -941,11 +950,11 @@ def render_sidebar_actions(on_switch_user=None) -> None:
         # --- Active slot indicator ---
         if game:
             ui.label(f"{E['floppy']} {t('actions.active_save', lang, name=active_display)}").classes(
-                "text-xs font-semibold w-full").style("color: #4ade80")
+                "text-xs font-semibold w-full").style("color: var(--success)")
 
             # --- Quick save (into active slot) ---
             save_confirm = ui.label(f"{E['checkmark']} {t('actions.saved', lang)}").classes(
-                "text-sm text-center w-full").style("color: #4ade80")
+                "text-sm text-center w-full").style("color: var(--success)")
             save_confirm.set_visibility(False)
             async def do_quick_save():
                 save_game(game, username, s["messages"], s.get("active_save", "autosave"))
@@ -1002,8 +1011,8 @@ def render_sidebar_actions(on_switch_user=None) -> None:
 
                 display_name = t("actions.autosave", lang) if sname == "autosave" else sname
                 # Card-style row
-                border_color = "#4ade80" if is_active else "var(--accent)"
-                bg_color = "rgba(74,222,128,0.08)" if is_active else "var(--accent-dim)"
+                border_color = "var(--success)" if is_active else "var(--accent)"
+                bg_color = "var(--success-dim)" if is_active else "var(--accent-dim)"
                 with ui.card().classes("w-full p-2 mb-1").style(
                     f"background: {bg_color}; border: 1px solid {border_color}; border-radius: 8px"):
                     with ui.column().classes("w-full gap-1"):
@@ -1067,7 +1076,7 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                                         dlg.open()
                                     return do_delete
                                 _del_aria = t("aria.delete_save", lang, name=display_name)
-                                ui.button(icon="delete_outline", on_click=make_delete(sname)).props(f'flat round dense size=sm aria-label="{_del_aria}"').tooltip(t("actions.delete", lang)).style("color: #ef4444")
+                                ui.button(icon="delete_outline", on_click=make_delete(sname)).props(f'flat round dense size=sm aria-label="{_del_aria}"').tooltip(t("actions.delete", lang)).style("color: var(--error)")
                         # --- Chapter archives (inside active save card) ---
                         if is_active and chapter > 1:
                             archived = list_chapter_archives(username, sname)
@@ -1105,7 +1114,7 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                                         ui.navigate.reload()
                                     ui.button(cur_lbl, on_click=back_to_current).props("flat dense size=sm no-caps").classes("w-full text-left text-xs")
                                 else:
-                                    ui.label(cur_lbl).classes("text-xs w-full").style("color: #4ade80; padding: 0.25rem 0.5rem")
+                                    ui.label(cur_lbl).classes("text-xs w-full").style("color: var(--success); padding: 0.25rem 0.5rem")
         else:
             ui.label(t("actions.no_saves", lang)).classes("text-xs text-center w-full").style("color: var(--text-secondary)")
 
@@ -1138,7 +1147,7 @@ def render_sidebar_actions(on_switch_user=None) -> None:
             def do_export():
                 pdf_bytes = export_story_pdf(game, s["messages"], lang=lang)
                 ui.download(pdf_bytes, f"{game.player_name}_Story.pdf")
-            ui.button(f"{E['book']} {t('actions.export', lang)}", on_click=do_export).props("flat dense").classes("w-full")
+            ui.button(t('actions.export', lang), on_click=do_export).props("flat dense").classes("w-full")
     # Settings
     render_settings()
     # Help
@@ -1154,6 +1163,18 @@ def render_sidebar_actions(on_switch_user=None) -> None:
         else:
             ui.navigate.reload()
     ui.button(f"{E['refresh']} {t('actions.switch_user', lang)}", on_click=switch).props("flat dense").classes("w-full")
+
+
+def _info_btn(tip_text: str) -> None:
+    """Info icon that opens a click-to-dismiss popover (mobile-friendly alternative to hover tooltip)."""
+    with ui.button(icon="info_outline").props(
+        f'flat round dense size=sm aria-label="{tip_text}"'
+    ).classes("text-gray-400").style("min-width: 36px; min-height: 36px"):
+        with ui.menu().props("anchor='top middle' self='bottom middle' :offset='[0,6]'"):
+            ui.label(tip_text).style(
+                "max-width: 260px; white-space: normal; padding: 8px 12px;"
+                " font-size: 0.85rem; line-height: 1.45"
+            )
 
 
 def render_settings() -> None:
@@ -1176,14 +1197,12 @@ def render_settings() -> None:
         with ui.row().classes("w-full items-center justify-between"):
             kid_sw = ui.switch(t("settings.kid_mode", lang), value=s.get("kid_friendly",False))
             _tip = t("settings.kid_tooltip", lang)
-            with ui.icon("info_outline").classes("text-gray-400 cursor-help").props(f'tabindex="0" role="img" aria-label="{_tip}"'):
-                ui.tooltip(_tip)
+            _info_btn(_tip)
         ui.separator()
         with ui.row().classes("w-full items-center justify-between"):
             tts_sw = ui.switch(t("settings.tts", lang), value=s.get("tts_enabled",False))
             _tip = t("settings.tts_tooltip", lang)
-            with ui.icon("info_outline").classes("text-gray-400 cursor-help").props(f'tabindex="0" role="img" aria-label="{_tip}"'):
-                ui.tooltip(_tip)
+            _info_btn(_tip)
         tts_container = ui.column().classes("w-full gap-1")
         tts_container.bind_visibility_from(tts_sw, "value")
         with tts_container:
@@ -1209,11 +1228,11 @@ def render_settings() -> None:
                     _cb_installed = False
                 if not _cb_installed:
                     with ui.card().classes("w-full").style(
-                        "background: rgba(255,170,0,0.12); border: 1px solid rgba(255,170,0,0.4); padding: 8px 12px"
+                        "background: var(--accent-dim); border: 1px solid var(--accent-border); padding: 8px 12px"
                     ):
                         ui.label(
                             f"{E['warn']} {t('settings.cb_not_installed', lang)}"
-                        ).classes("text-sm font-bold").style("color: #ffaa00")
+                        ).classes("text-sm font-bold").style("color: var(--accent-light)")
                         ui.label(
                             t("settings.cb_install_cmd", lang)
                         ).classes("text-xs").style("font-family: monospace; color: #ccc; margin-top: 2px")
@@ -1277,8 +1296,7 @@ def render_settings() -> None:
         with ui.row().classes("w-full items-center justify-between"):
             stt_sw = ui.switch(t("settings.stt", lang), value=s.get("stt_enabled",False))
             _tip = t("settings.stt_tooltip", lang)
-            with ui.icon("info_outline").classes("text-gray-400 cursor-help").props(f'tabindex="0" role="img" aria-label="{_tip}"'):
-                ui.tooltip(_tip)
+            _info_btn(_tip)
         wm = get_whisper_models(lang)
         whisper_display = [f"{k} {E['dash']} {v}" for k, v in wm.items()]
         whisper_map = {f"{k} {E['dash']} {v}": k for k, v in wm.items()}
@@ -1291,8 +1309,7 @@ def render_settings() -> None:
         with ui.row().classes("w-full items-center justify-between"):
             sr_chat_sw = ui.switch(t("settings.sr_chat", lang), value=s.get("sr_chat", True))
             _tip = t("settings.sr_chat_tooltip", lang)
-            with ui.icon("info_outline").classes("text-gray-400 cursor-help").props(f'tabindex="0" role="img" aria-label="{_tip}"'):
-                ui.tooltip(_tip)
+            _info_btn(_tip)
         ui.separator()
         dice_opts = get_dice_display_options(lang)
         dice_options_map = {label: i for i, label in enumerate(dice_opts)}
@@ -1301,6 +1318,22 @@ def render_settings() -> None:
             cur_dice_idx = _dice_string_to_index(cur_dice_idx)
         cur_dice_label = dice_opts[cur_dice_idx] if cur_dice_idx < len(dice_opts) else dice_opts[0]
         dice_sel = ui.select(dice_opts, label=t("settings.dice", lang), value=cur_dice_label).classes("w-full")
+        ui.separator()
+        # --- Narrator font ---
+        _font_opts = {
+            t("settings.narrator_font_crimson", lang): "crimson",
+            t("settings.narrator_font_sans",    lang): "sans",
+            t("settings.narrator_font_serif",   lang): "serif",
+        }
+        _cur_font = s.get("narrator_font", "sans")
+        _cur_font_label = next((k for k, v in _font_opts.items() if v == _cur_font),
+                               list(_font_opts.keys())[0])
+        font_sel = ui.select(list(_font_opts.keys()), label=t("settings.narrator_font", lang),
+                             value=_cur_font_label).classes("w-full")
+        def _apply_font(val):
+            code = _font_opts.get(val, "crimson")
+            ui.run_javascript(f"document.body.setAttribute('data-narrator-font', '{code}')")
+        font_sel.on("update:model-value", lambda e: _apply_font(e.args))
         ui.separator()
         async def save_cfg():
             if not SERVER_API_KEY:
@@ -1314,6 +1347,7 @@ def render_settings() -> None:
             s["tts_rate"]=rate_sel.value;s["stt_enabled"]=stt_sw.value
             s["dice_display"]=dice_options_map.get(dice_sel.value, 0)
             s["sr_chat"]=sr_chat_sw.value
+            s["narrator_font"]=_font_opts.get(font_sel.value, "sans")
             s["cb_device"]=cb_device_sel.value;s["cb_exaggeration"]=cb_exag_slider.value
             s["cb_cfg_weight"]=cb_cfg_slider.value;s["cb_voice_sample"]=cb_voice_sel.value
             s["whisper_size"]=whisper_map.get(whisper_sel.value, "medium")
@@ -1330,7 +1364,8 @@ def render_settings() -> None:
                          "cb_device":cb_device_sel.value,"cb_exaggeration":cb_exag_slider.value,
                          "cb_cfg_weight":cb_cfg_slider.value,"cb_voice_sample":sample_value,
                          "whisper_size":whisper_map.get(whisper_sel.value, "medium"),
-                         "sr_chat":sr_chat_sw.value})
+                         "sr_chat":sr_chat_sw.value,
+                         "narrator_font":_font_opts.get(font_sel.value, "sans")})
             save_user_config(username, ucfg)
             # UI language change requires full reload to re-render all labels
             if new_ui_lang != old_ui_lang:
@@ -1343,7 +1378,7 @@ def render_settings() -> None:
                 save_confirm.set_visibility(False)
             asyncio.create_task(_hide())
         ui.button(f"{E['floppy']} {t('settings.save_btn', lang)}", on_click=save_cfg, color="primary").classes("w-full")
-        save_confirm = ui.label(f"{E['checkmark']} {t('settings.saved_confirm', lang)}").classes("text-sm text-center w-full").style("color: #4ade80")
+        save_confirm = ui.label(f"{E['checkmark']} {t('settings.saved_confirm', lang)}").classes("text-sm text-center w-full").style("color: var(--success)")
         save_confirm.set_visibility(False)
 
 
@@ -1369,11 +1404,11 @@ def render_help() -> None:
         ui.label(t("help.results_text", lang)).classes("text-xs text-gray-400")
         ui.html(f'''<div style="font-size:0.85em; line-height:2;">
             {E['check']} {t("help.result_strong", lang)}<br>
-            <span style="color:#a3a3a3">{t("help.result_strong_desc", lang)}</span><br><br>
+            <span style="color:var(--text-secondary)">{t("help.result_strong_desc", lang)}</span><br><br>
             {E['warn']} {t("help.result_weak", lang)}<br>
-            <span style="color:#a3a3a3">{t("help.result_weak_desc", lang)}</span><br><br>
+            <span style="color:var(--text-secondary)">{t("help.result_weak_desc", lang)}</span><br><br>
             {E['x_mark']} {t("help.result_miss", lang)}<br>
-            <span style="color:#a3a3a3">{t("help.result_miss_desc", lang)}</span>
+            <span style="color:var(--text-secondary)">{t("help.result_miss_desc", lang)}</span>
         </div>''')
         ui.separator()
 
@@ -1385,11 +1420,11 @@ def render_help() -> None:
         ui.label(t("help.position_text", lang)).classes("text-xs text-gray-400")
         ui.html(f'''<div style="font-size:0.85em; line-height:2;">
             {E['green_circle']} {t("help.pos_controlled", lang)}<br>
-            <span style="color:#a3a3a3">{t("help.pos_controlled_desc", lang)}</span><br><br>
+            <span style="color:var(--text-secondary)">{t("help.pos_controlled_desc", lang)}</span><br><br>
             {E['orange_circle']} {t("help.pos_risky", lang)}<br>
-            <span style="color:#a3a3a3">{t("help.pos_risky_desc", lang)}</span><br><br>
+            <span style="color:var(--text-secondary)">{t("help.pos_risky_desc", lang)}</span><br><br>
             {E['red_circle']} {t("help.pos_desperate", lang)}<br>
-            <span style="color:#a3a3a3">{t("help.pos_desperate_desc", lang)}</span>
+            <span style="color:var(--text-secondary)">{t("help.pos_desperate_desc", lang)}</span>
         </div>''')
         ui.separator()
 
@@ -1454,7 +1489,7 @@ def render_chat_messages(container) -> Optional[str]:
         if msg.get("scene_marker"):
             marker_id = f"msg-{i}"
             last_scene_marker_id = marker_id
-            ui.html(f'<h2 id="{marker_id}" class="scene-marker">{E["dash"]} {msg["scene_marker"]} {E["dash"]}</h2>').classes("w-full")
+            ui.html(f'<h2 id="{marker_id}" class="scene-marker">{msg["scene_marker"]}</h2>').classes("w-full")
             continue
         role = msg.get("role","assistant")
         content = msg.get("content","")
@@ -2055,7 +2090,7 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
             scroll_target_id = f"msg-{len(s['messages'])}"
             with chat_container:
                 if game.scene_count > 1:
-                    ui.html(f'<h2 id="{scroll_target_id}" class="scene-marker">{E["dash"]} {t("game.scene_marker", L(), n=game.scene_count, location=game.current_location)} {E["dash"]}</h2>')
+                    ui.html(f'<h2 id="{scroll_target_id}" class="scene-marker">{t("game.scene_marker", L(), n=game.scene_count, location=game.current_location)}</h2>')
                 else:
                     ui.html(f'<div id="{scroll_target_id}"></div>')
                 msg_col = ui.column().classes("chat-msg assistant w-full")
@@ -2113,7 +2148,7 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
         _retry_sr = sidebar_refresh
         with chat_container:
             retry_row = ui.row().classes("w-full items-center gap-2 py-1 px-3").style(
-                "background: rgba(255,80,80,0.1); border: 1px solid rgba(255,80,80,0.3); "
+                "background: var(--error-dim); border: 1px solid var(--error-border); "
                 "border-radius: 8px; margin: 0.25rem 0"
             )
             retry_row.props('role="alert"')
@@ -2144,8 +2179,9 @@ def render_momentum_burn() -> bool:
     # Show pre-consequence momentum (the actual value being burned, before MISS penalties reduced it)
     pre_momentum = bd.get("pre_snapshot", {}).get("momentum", bd["cost"])
     rl=t("momentum.weak_hit", lang) if nr=="WEAK_HIT" else t("momentum.strong_hit", lang)
-    with ui.card().classes("w-full p-4").style("background: var(--accent-dim); border: 1px solid var(--accent)") as burn_card:
+    with ui.card().classes("w-full p-4 burn-card").style("background: var(--accent-dim); border: 1px solid var(--accent)") as burn_card:
         burn_card.props('role="alertdialog"')
+        ui.label(f"{E['fire']} {t('sidebar.momentum', lang)}").classes("text-xs font-semibold").style("color: var(--accent-light); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 0.25rem")
         ui.markdown(t("momentum.question", lang, cost=pre_momentum, result=rl))
         with ui.row().classes("gap-4 mt-4") as btn_row:
             async def burn():
@@ -2255,7 +2291,7 @@ def render_epilogue() -> bool:
 
     # --- Post-epilogue: chapter complete, choose next step ---
     if game.epilogue_shown:
-        with ui.card().classes("w-full p-4").style("background: rgba(217,119,6,0.1); border: 1px solid rgba(217,119,6,0.4)"):
+        with ui.card().classes("w-full p-4").style("background: var(--accent-dim); border: 1px solid var(--accent-border)"):
             ui.markdown(f"{E['star']} **{t('epilogue.done_title', lang)}**")
             ui.label(t("epilogue.done_text", lang)).classes("text-sm mt-1")
             with ui.row().classes("gap-4 mt-4"):
@@ -2266,7 +2302,7 @@ def render_epilogue() -> bool:
 
     # --- Epilogue offer: story complete but epilogue not yet generated ---
     if bp.get("story_complete") and not game.epilogue_dismissed:
-        with ui.card().classes("w-full p-4").style("background: rgba(217,119,6,0.08); border: 1px solid rgba(217,119,6,0.3)"):
+        with ui.card().classes("w-full p-4").style("background: var(--accent-dim); border: 1px solid var(--accent-border)"):
             ui.markdown(f"{E['star']} **{t('epilogue.offer_title', lang)}**")
             ui.label(t("epilogue.offer_text", lang)).classes("text-sm mt-1")
             btn_row = ui.row().classes("gap-4 mt-4")
@@ -2303,7 +2339,7 @@ def render_game_over() -> bool:
     s=S();game=s.get("game");lang=L()
     if not game or not game.game_over: return False
     kid=s.get("kid_friendly",False)
-    with ui.card().classes("w-full p-4").style("background: rgba(220,38,38,0.1); border: 1px solid rgba(220,38,38,0.4)"):
+    with ui.card().classes("w-full p-4").style("background: var(--error-dim); border: 1px solid var(--error-border)"):
         ui.markdown(f"{t('gameover.title', lang)} " + (t("gameover.kid", lang) if kid else t("gameover.dark", lang)))
         with ui.row().classes("gap-4 mt-4"):
             new_ch, full_new = _make_chapter_action(game, "gameover.chapter_msg")
@@ -2673,6 +2709,9 @@ async def main_page(client: Client):
             await ui.run_javascript(f'document.documentElement.lang="{_user_lang}"', timeout=3.0)
         except TimeoutError:
             pass
+        # Apply saved narrator font preference
+        _narrator_font = s.get("narrator_font", "sans")
+        ui.run_javascript(f"document.body.setAttribute('data-narrator-font', '{_narrator_font}')")
         # Re-set skeleton ARIA labels (were set at build time with default language)
         _hamburger_btn.props(f'aria-label="{t("aria.menu_open", _user_lang)}"')
         drawer.props(f'aria-label="{t("aria.sidebar", _user_lang)}"')
@@ -2735,7 +2774,7 @@ async def main_page(client: Client):
                     else:
                         banner_text = t("chapters.viewing", L(), n=viewing_chapter)
                     with ui.card().classes("w-full mb-2").style(
-                        "background: rgba(106,76,147,0.15); border: 1px solid var(--accent); border-radius: 8px"):
+                        "background: var(--accent-dim); border: 1px solid var(--accent-border); border-radius: 8px"):
                         with ui.row().classes("w-full items-center justify-between"):
                             ui.label(banner_text).classes("text-sm font-semibold")
                             def _exit_view():
@@ -2763,7 +2802,7 @@ async def main_page(client: Client):
                             _retry_sr = _refresh_sidebar
                             with chat_container:
                                 retry_row = ui.row().classes("w-full items-center gap-2 py-1 px-3").style(
-                                    "background: rgba(255,180,60,0.1); border: 1px solid rgba(255,180,60,0.3); "
+                                    "background: var(--accent-dim); border: 1px solid var(--accent-border); "
                                     "border-radius: 8px; margin: 0.25rem 0"
                                 )
                                 retry_row.props('role="alert"')
@@ -2771,7 +2810,7 @@ async def main_page(client: Client):
                                     _orphan_msg = t('game.retry_orphan', L())
                                     ui.html(
                                         f'<span aria-hidden="true">{E["warn"]} </span>{_orphan_msg}'
-                                    ).classes("text-xs flex-grow").style("color: rgba(255,200,100,0.9)")
+                                    ).classes("text-xs flex-grow").style("color: var(--accent-light)")
                                     async def _do_orphan_retry(rr=retry_row, rt=_orphan_text,
                                                                rc=_retry_cc, rs=_retry_sr):
                                         try: rr.delete()
@@ -2780,7 +2819,7 @@ async def main_page(client: Client):
                                     ui.button(icon="refresh", on_click=_do_orphan_retry).props(
                                         f'flat dense round aria-label="{t("aria.retry", L())}"'
                                     ).classes("hover:text-white").style(
-                                        "min-width: 40px; min-height: 40px; color: rgba(255,200,100,0.9)"
+                                        "min-width: 40px; min-height: 40px; color: var(--accent-light)"
                                     ).tooltip(t("game.retry_tooltip", L()))
                     if render_momentum_burn():
                         footer.set_value(False)
@@ -2819,7 +2858,7 @@ async def main_page(client: Client):
                             pdf_bytes = export_story_pdf(g, ch_msgs, lang=L())
                             ch_n = s.get("viewing_chapter", 0)
                             ui.download(pdf_bytes, f"{g.player_name}_Chapter_{ch_n}.pdf")
-                    ui.button(f"{E['book']} {t('chapters.export', L())}", on_click=_do_chapter_export).props("flat dense no-caps").classes("text-sm")
+                    ui.button(t('chapters.export', L()), on_click=_do_chapter_export).props("flat dense no-caps").classes("text-sm")
                     def _exit_view_footer():
                         s["viewing_chapter"] = None; s["chapter_view_messages"] = None; s["chapter_view_title"] = None
                         ui.navigate.reload()

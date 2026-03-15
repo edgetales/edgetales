@@ -217,7 +217,7 @@ _STRINGS = {
         "actions.deleted": "Gel\u00f6scht!",
         "actions.new_game": "Neues Spiel",
         "actions.new_game_confirm": "Aktuelles Spiel beenden und neu starten?",
-        "actions.export": "Export",
+        "actions.export": "PDF Export",
         # Export story
         "export.subtitle": "Eine Geschichte",
         "export.exported_at": "Exportiert am {timestamp}",
@@ -269,6 +269,10 @@ _STRINGS = {
                                 "Ben\u00f6tigt Mikrofon-Zugriff im Browser.",
         "settings.whisper_model": "Whisper-Modell",
         "settings.dice": "W\u00fcrfel",
+        "settings.narrator_font": "Erz\u00e4hler-Schriftart",
+        "settings.narrator_font_crimson": "Crimson Pro \u2014 Serifen",
+        "settings.narrator_font_sans": "System \u2014 Serifenlos",
+        "settings.narrator_font_serif": "System \u2014 Serifen",
         "settings.save_btn": "Speichern",
         "settings.saved_confirm": "Gespeichert!",
 
@@ -599,7 +603,7 @@ _STRINGS = {
         "actions.deleted": "Deleted!",
         "actions.new_game": "New Game",
         "actions.new_game_confirm": "End current game and start fresh?",
-        "actions.export": "Export",
+        "actions.export": "PDF Export",
         # Export story
         "export.subtitle": "A Story",
         "export.exported_at": "Exported on {timestamp}",
@@ -651,6 +655,10 @@ _STRINGS = {
                                 "Requires microphone access in the browser.",
         "settings.whisper_model": "Whisper Model",
         "settings.dice": "Dice",
+        "settings.narrator_font": "Narrator Font",
+        "settings.narrator_font_crimson": "Crimson Pro \u2014 Serif",
+        "settings.narrator_font_sans": "System \u2014 Sans-serif",
+        "settings.narrator_font_serif": "System \u2014 Serif",
         "settings.save_btn": "Save",
         "settings.saved_confirm": "Saved!",
 
