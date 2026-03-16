@@ -5,7 +5,7 @@
 <meta name="apple-mobile-web-app-title" content="EdgeTales">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,600;1,400;1,600&family=Inter:wght@300..700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300..700&display=swap" rel="stylesheet">
 <style>
 :root {
     --bg-primary: #121212;
@@ -21,7 +21,6 @@
     --text-secondary: #a3a3a3;
     --border: #3a3a3a;
     --border-light: #444;
-    /* Semantic colors */
     --user-border: #C45C3A;
     --success: #4ade80;
     --success-dim: rgba(74,222,128,0.08);
@@ -29,96 +28,42 @@
     --error-dark: #dc2626;
     --error-dim: rgba(220,38,38,0.10);
     --error-border: rgba(220,38,38,0.38);
-    /* Safe area insets for notch/Dynamic Island devices */
     --sat: env(safe-area-inset-top, 0px);
     --sab: env(safe-area-inset-bottom, 0px);
     --sal: env(safe-area-inset-left, 0px);
     --sar: env(safe-area-inset-right, 0px);
 }
-/* --- Scrollbars: hidden by default, subtle on hover --- */
-.q-drawer__content, .chat-scroll {
-    scrollbar-width: thin;
-    scrollbar-color: transparent transparent;
-    overflow-y: auto;
-}
-.q-drawer__content:hover, .chat-scroll:hover {
-    scrollbar-color: rgba(255,255,255,0.12) transparent;
-}
+.q-drawer__content, .chat-scroll { scrollbar-width: thin; scrollbar-color: transparent transparent; overflow-y: auto; }
+.q-drawer__content:hover, .chat-scroll:hover { scrollbar-color: rgba(255,255,255,0.12) transparent; }
 .q-drawer__content::-webkit-scrollbar, .chat-scroll::-webkit-scrollbar { width: 5px; }
 .q-drawer__content::-webkit-scrollbar-track, .chat-scroll::-webkit-scrollbar-track { background: transparent; }
 .q-drawer__content::-webkit-scrollbar-thumb, .chat-scroll::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
 .q-drawer__content:hover::-webkit-scrollbar-thumb, .chat-scroll:hover::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); }
 .q-drawer__content:hover::-webkit-scrollbar-thumb:hover, .chat-scroll:hover::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
-/* --- Accessibility: screen-reader-only text (visually hidden, announced by assistive tech) --- */
-.sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border-width: 0;
-}
-/* --- Skip-to-content link (visible on focus for keyboard/screen-reader users) --- */
-.skip-link {
-    position: absolute;
-    top: -100%;
-    left: 0;
-    z-index: 10000;
-    padding: 0.75rem 1.5rem;
-    background: var(--accent);
-    color: #fff;
-    font-weight: 600;
-    font-size: 1rem;
-    text-decoration: none;
-    border-radius: 0 0 8px 0;
-}
-.skip-link:focus {
-    top: 0;
-}
-/* --- Accessibility: high-contrast focus indicator for keyboard navigation --- */
-*:focus-visible {
-    outline: 2px solid var(--accent-light) !important;
-    outline-offset: 2px;
-}
-/* Quasar buttons: override their internal focus handling */
-.q-btn:focus-visible, .q-item:focus-visible, .q-expansion-item__toggle-icon:focus-visible {
-    outline: 2px solid var(--accent-light) !important;
-    outline-offset: 2px;
-}
-/* --- Global overrides --- */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border-width: 0; }
+.skip-link { position: absolute; top: -100%; left: 0; z-index: 10000; padding: 0.75rem 1.5rem; background: var(--accent); color: #fff; font-weight: 600; font-size: 1rem; text-decoration: none; border-radius: 0 0 8px 0; }
+.skip-link:focus { top: 0; }
+*:focus-visible { outline: 2px solid var(--accent-light) !important; outline-offset: 2px; }
+.q-btn:focus-visible, .q-item:focus-visible, .q-expansion-item__toggle-icon:focus-visible { outline: 2px solid var(--accent-light) !important; outline-offset: 2px; }
 .q-drawer { background: var(--bg-sidebar) !important; border-right: 1px solid var(--border) !important; }
 .q-page { background: var(--bg-primary) !important; }
 body { background: var(--bg-primary) !important; font-family: 'Inter', system-ui, -apple-system, sans-serif; }
-/* Prevent horizontal overflow on mobile */
 html, body, .q-page { max-width: 100vw; overflow-x: hidden; }
-/* Prevent iOS Safari auto-zoom on input focus (triggers at font-size < 16px) */
 input, textarea, select, .q-field__native, .q-field__input { font-size: 16px !important; font-family: 'Inter', system-ui, -apple-system, sans-serif; }
-/* Narration text: Crimson Pro by default, overridable via body[data-narrator-font] */
-.chat-msg.assistant { font-family: 'Crimson Pro', 'Georgia', serif; font-size: 1.1rem; line-height: 1.75; }
-body[data-narrator-font="sans"] .chat-msg.assistant { font-family: system-ui, -apple-system, sans-serif !important; font-size: 1rem !important; line-height: 1.6 !important; }
-body[data-narrator-font="serif"] .chat-msg.assistant { font-family: Georgia, 'Times New Roman', serif !important; font-size: 1rem !important; line-height: 1.75 !important; }
-/* --- Sidebar expansions: subtle, no fill --- */
+.chat-msg.assistant { font-family: Georgia, 'Times New Roman', serif; font-size: 1rem; line-height: 1.75; }
+body[data-narrator-font="sans"]      .chat-msg.assistant { font-family: system-ui, -apple-system, sans-serif !important; font-size: 1rem !important; line-height: 1.6 !important; }
+body[data-narrator-font="highlight"] .chat-msg.assistant { font-family: system-ui, -apple-system, sans-serif !important; font-size: 1rem !important; line-height: 1.85 !important; }
 .q-expansion-item .q-item { padding: 8px 12px; border-radius: 8px; min-height: 44px; }
 .q-expansion-item .q-item:hover { background: var(--accent-dim); }
 .q-expansion-item .q-item__label { color: var(--text-primary); font-size: 0.9rem; padding-left: 1.8em; text-indent: -1.8em; }
 .q-separator { background: var(--border) !important; }
-/* --- Layout --- */
 .chat-scroll { padding: 1rem; padding-bottom: 5rem; flex: 1; }
 .choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; width: 100%; }
 @media (min-width: 768px) { .choice-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-/* --- Choice buttons: subtle outline, min touch target --- */
-.choice-btn.q-btn { border: 1px solid var(--border-light) !important; color: var(--text-primary) !important;
-              background: transparent !important; text-transform: none !important; font-weight: 400 !important;
-              letter-spacing: normal !important; min-height: 48px; min-width: 0; overflow: hidden;
-              transition: border-color 0.15s ease, background-color 0.15s ease !important; }
+.choice-btn.q-btn { border: 1px solid var(--border-light) !important; color: var(--text-primary) !important; background: transparent !important; text-transform: none !important; font-weight: 400 !important; letter-spacing: normal !important; min-height: 48px; min-width: 0; overflow: hidden; transition: border-color 0.15s ease, background-color 0.15s ease !important; }
 .choice-btn.q-btn .q-btn__content { color: var(--text-primary) !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .choice-btn.q-btn:hover { border-color: var(--accent) !important; background: var(--accent-dim) !important; }
-/* Quasar focus-helper: hide on choice buttons (our :focus-visible outline handles accessibility) */
 .choice-btn.q-btn .q-focus-helper { display: none !important; }
-/* --- Chat messages --- */
 .chat-msg { margin-bottom: 0.25rem; padding: 0.4rem 0; color: var(--text-primary); }
 .chat-msg.assistant { background: transparent; border: none; }
 .chat-msg.user { background: var(--bg-surface); border-left: 3px solid var(--user-border); border-radius: 12px; padding: 0.5rem 1rem; }
@@ -126,32 +71,18 @@ body[data-narrator-font="serif"] .chat-msg.assistant { font-family: Georgia, 'Ti
 .chat-msg.recap { background: transparent; border: none; border-top: 1px solid var(--border); padding-top: 1rem; }
 .correction-badge { display: inline-block; font-size: 0.72em; color: var(--text-secondary); opacity: 0.65; margin-bottom: 0.3em; letter-spacing: 0.03em; }
 .chat-msg h1, .chat-msg h2, .chat-msg h3 { font-size: 1.1rem !important; font-weight: 600; margin: 0.5em 0 0.3em 0; }
-.scene-marker { display: block; text-align: center;
-                color: var(--text-secondary); font-size: 0.8em; letter-spacing: 0.06em;
-                margin: 0.75em 0; padding: 0.45em 0.5em;
-                border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
-                line-height: 1.5; }
-/* Reset h2 defaults when used as scene-marker (accessibility: enables heading navigation) */
+.scene-marker { display: block; text-align: center; color: var(--text-secondary); font-size: 0.8em; letter-spacing: 0.06em; margin: 0.75em 0; padding: 0.45em 0.5em; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); line-height: 1.5; }
 h2.scene-marker { font-weight: normal; }
-/* --- Stat grid --- */
 .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
 .stat-item { padding: 0.4rem 0.6rem; background: transparent; border-radius: 8px; text-align: center; position: relative; }
 .stat-value { font-size: 1.8rem; font-weight: 700; line-height: 1.2; color: var(--text-primary); }
 .stat-label { font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.1rem; }
-/* --- NPC card inside expansion --- */
-.npc-card { padding: 0.35rem 0.5rem 0.4rem; border-left: 2px solid var(--border-light);
-            margin-bottom: 0.25rem; }
+.npc-card { padding: 0.35rem 0.5rem 0.4rem; border-left: 2px solid var(--border-light); margin-bottom: 0.25rem; }
 .npc-card .npc-name { font-size: 0.85rem; font-weight: 600; color: var(--text-primary); }
 .npc-card .npc-meta { font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.1rem; }
-.npc-card .npc-desc { font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem;
-                      opacity: 0.85; font-style: italic; line-height: 1.4; }
-/* --- Momentum burn card: pulsing amber glow --- */
+.npc-card .npc-desc { font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem; opacity: 0.85; font-style: italic; line-height: 1.4; }
 .burn-card { animation: burn-glow 2s ease-in-out infinite; }
-@keyframes burn-glow {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(217,119,6,0); }
-    50%       { box-shadow: 0 0 12px 3px rgba(217,119,6,0.25); }
-}
-/* --- Track bars --- */
+@keyframes burn-glow { 0%,100%{box-shadow:0 0 0 0 rgba(217,119,6,0);} 50%{box-shadow:0 0 12px 3px rgba(217,119,6,0.25);} }
 .track-bar { height: 8px; border-radius: 4px; background: var(--bg-surface-light); overflow: hidden; margin: 2px 0 8px; }
 .track-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
 .track-fill.health { background: linear-gradient(90deg, var(--error-dark), var(--error)); }
@@ -159,89 +90,144 @@ h2.scene-marker { font-weight: normal; }
 .track-fill.supply { background: linear-gradient(90deg, var(--accent), var(--accent-light)); }
 .track-fill.chaos { background: linear-gradient(90deg, #737373, var(--error-dark)); }
 .track-fill.progress { background: linear-gradient(90deg, var(--accent), var(--accent-light)); }
-/* --- Dice display --- */
 .dice-simple { text-align: right; font-size: 0.8em; opacity: 0.8; margin-top: 0.5em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* --- Audio player (ui.audio) dark mode — scoped to chat area --- */
 .chat-scroll audio, .chat-msg audio { filter: invert(1) hue-rotate(180deg); opacity: 0.85; width: 100%; min-height: 40px; border-radius: 8px; }
-.dice-simple.success { color: var(--success); } .dice-simple.warning { color: var(--accent-light); } .dice-simple.error { color: var(--error); }
-/* --- STT mic recording pulse --- */
+.dice-simple.success{color:var(--success);} .dice-simple.warning{color:var(--accent-light);} .dice-simple.error{color:var(--error);}
 .stt-mic-btn.bg-red { animation: stt-pulse 1.2s infinite; }
-@keyframes stt-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(220,38,38,0.5); } 50% { box-shadow: 0 0 0 8px rgba(220,38,38,0); } }
-/* --- STT status line (inline below input) --- */
-.stt-status-row { padding: 0.15rem 1rem 0.3rem; font-size: 0.8rem; color: var(--text-secondary);
-                   min-height: 0; transition: opacity 0.3s ease; }
+@keyframes stt-pulse { 0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,0.5);} 50%{box-shadow:0 0 0 8px rgba(220,38,38,0);} }
+.stt-status-row { padding: 0.15rem 1rem 0.3rem; font-size: 0.8rem; color: var(--text-secondary); min-height: 0; transition: opacity 0.3s ease; }
 .stt-status-row.hidden { opacity: 0; height: 0; padding: 0; overflow: hidden; }
-/* --- STT waveform visualizer --- */
 .stt-waveform { display: inline-flex; align-items: center; gap: 2px; height: 18px; vertical-align: middle; margin-right: 6px; }
 .stt-waveform .wv-bar { width: 3px; border-radius: 1.5px; background: var(--error); animation: stt-wave 0.6s ease-in-out infinite; }
-.stt-waveform .wv-bar:nth-child(1) { height: 6px; animation-delay: 0.0s; }
-.stt-waveform .wv-bar:nth-child(2) { height: 12px; animation-delay: 0.1s; }
-.stt-waveform .wv-bar:nth-child(3) { height: 8px; animation-delay: 0.2s; }
-.stt-waveform .wv-bar:nth-child(4) { height: 16px; animation-delay: 0.15s; }
-.stt-waveform .wv-bar:nth-child(5) { height: 10px; animation-delay: 0.25s; }
-.stt-waveform .wv-bar:nth-child(6) { height: 14px; animation-delay: 0.05s; }
-.stt-waveform .wv-bar:nth-child(7) { height: 7px; animation-delay: 0.3s; }
-@keyframes stt-wave { 0%,100% { transform: scaleY(0.3); opacity: 0.6; } 50% { transform: scaleY(1.0); opacity: 1.0; } }
-/* --- STT transcribing spinner --- */
-.stt-spinner-inline { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--text-secondary);
-                       border-top-color: var(--accent); border-radius: 50%; animation: stt-spin 0.8s linear infinite;
-                       vertical-align: middle; margin-right: 6px; }
+.stt-waveform .wv-bar:nth-child(1){height:6px;animation-delay:0.0s;} .stt-waveform .wv-bar:nth-child(2){height:12px;animation-delay:0.1s;} .stt-waveform .wv-bar:nth-child(3){height:8px;animation-delay:0.2s;} .stt-waveform .wv-bar:nth-child(4){height:16px;animation-delay:0.15s;} .stt-waveform .wv-bar:nth-child(5){height:10px;animation-delay:0.25s;} .stt-waveform .wv-bar:nth-child(6){height:14px;animation-delay:0.05s;} .stt-waveform .wv-bar:nth-child(7){height:7px;animation-delay:0.3s;}
+@keyframes stt-wave { 0%,100%{transform:scaleY(0.3);opacity:0.6;} 50%{transform:scaleY(1.0);opacity:1.0;} }
+.stt-spinner-inline { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--text-secondary); border-top-color: var(--accent); border-radius: 50%; animation: stt-spin 0.8s linear infinite; vertical-align: middle; margin-right: 6px; }
 @keyframes stt-spin { to { transform: rotate(360deg); } }
-/* --- Footer: safe area padding for notch devices --- */
 .q-footer { padding-bottom: var(--sab) !important; }
-/* --- Slim header bar: transparent, minimal, safe area aware --- */
-.rpg-slim-header.q-header { background: rgba(18,18,18,0.85) !important; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-                box-shadow: none !important; border-bottom: 1px solid var(--border) !important;
-                min-height: 48px !important; padding-top: var(--sat) !important;
-                padding-left: var(--sal) !important; padding-right: var(--sar) !important; }
+.rpg-slim-header.q-header { background: rgba(18,18,18,0.85) !important; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); box-shadow: none !important; border-bottom: 1px solid var(--border) !important; min-height: 48px !important; padding-top: var(--sat) !important; padding-left: var(--sal) !important; padding-right: var(--sar) !important; }
+
 /* ==========================================
-   MOBILE RESPONSIVE (max-width: 768px)
+   DIALOG-HIGHLIGHT MODUS
+   .dh-quote Spans werden server-seitig von
+   _highlight_dialog() in Python generiert.
+   sanitize=False bei ui.markdown() erlaubt
+   das Durchreichen der Spans zu Vue/v-html.
+   ========================================== */
+
+/*
+ * Realistischer Textmarker-Effekt auf gesprochenem Dialog.
+ *
+ * Inspiriert vom klassischen "highlighter mark" Trick:
+ * - border-radius: 0.8em 0.3em  → organisch, wie echter Strich (keine perfekten Ecken)
+ * - Gradient von links nach rechts, hell bei ~4% = Marker-Druck am Strich-Beginn
+ * - Zweiter Overlay-Gradient für leichte Ungleichmäßigkeit (echter Marker = nicht uniform)
+ * - box-decoration-break: clone = korrekt über Zeilenumbrüche
+ */
+body[data-narrator-font="highlight"] .chat-msg.assistant em strong,
+body[data-narrator-font="highlight"] .chat-msg.assistant strong em {
+    background:
+        /* Lichtglanz: kleiner heller Fleck oben links, wie Marker-Reflex */
+        radial-gradient(
+            ellipse 60% 45% at 8% 30%,
+            rgba(255, 255, 255, 0.10) 0%,
+            transparent 100%
+        ),
+        /* Hauptstrich: hell bei 4%, dann ausklingend — Marker-Druck-Simulation */
+        linear-gradient(
+            to right,
+            rgba(45,143,109,0.04),
+            rgba(60,190,144,0.41) 4%,
+            rgba(45,143,109,0.29) 40%,
+            rgba(60,190,144,0.23) 100%
+        );
+    /* Asymmetrischer Radius: links rund (Marker-Ansatz), rechts spitzer (Auslauf) */
+    border-radius: 0.5em 0.3em;
+    padding: 0.05em 0.55em 0.0em;
+    color: hsl(159,32%,89%);
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    text-shadow: 0 0 20px rgba(60,190,144,0.25);
+    position: relative;
+    top: -0.05em;
+    font-weight: 400;
+}
+
+/* CHAOS-TEXTBEWEGUNG ab Chaos >= 8 */
+body[data-narrator-font="highlight"][data-chaos-high] .chat-msg.assistant {
+    animation: chaos-text-breathe 4s ease-in-out infinite;
+}
+@keyframes chaos-text-breathe {
+    0%, 100% { letter-spacing: 0; word-spacing: 0; }
+    50%      { letter-spacing: 0.03em; word-spacing: 0.04em; }
+}
+
+/* CHAOS AMBIENT: Roter Schimmer ab Chaos >= 7 */
+body[data-chaos-high]::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 40%, rgba(120,10,10,0.18) 100%);
+    animation: chaos-fade 5s ease-in-out infinite;
+    z-index: 9001;
+}
+@keyframes chaos-fade {
+    0%, 100% { opacity: 0.25; }
+    50%       { opacity: 1; }
+}
+
+/*
+ * HEALTH VIGNETTE: Sichtfeld-Einschränkung bei sinkender Gesundheit.
+ * --health-vignette wird per JS in render_sidebar_status gesetzt:
+ *   5/5 → 0.0   4/5 → 0.0   3/5 → 0.10
+ *   2/5 → 0.28  1/5 → 0.48  0/5 → 0.65
+ * Nur im highlight-Modus aktiv. transition: 4s für sanften Übergang.
+ */
+:root { --health-vignette: 0; }
+body[data-narrator-font="highlight"]::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(ellipse at 50% 48%,
+        transparent 28%,
+        rgba(0,0,0,0.65) 100%
+    );
+    opacity: var(--health-vignette);
+    transition: opacity 4s ease;
+    z-index: 9000;
+}
+
+/* ==========================================
+   MOBILE RESPONSIVE
    ========================================== */
 @media (max-width: 768px) {
-    /* --- Chat messages: tighter padding on small screens --- */
     .chat-msg.user { padding: 0.5rem 0.75rem; }
-    /* --- Stat grid: smaller values, keep readable --- */
-    .stat-value { font-size: 1.4rem; }
-    .stat-label { font-size: 0.75rem; }
-    .stat-item { padding: 0.35rem 0.5rem; }
-    /* --- Chat scroll: less horizontal padding --- */
+    .stat-value { font-size: 1.4rem; } .stat-label { font-size: 0.75rem; } .stat-item { padding: 0.35rem 0.5rem; }
     .chat-scroll { padding: 0.5rem; padding-bottom: 5rem; }
-    /* --- Scene markers: slightly smaller --- */
     .scene-marker { font-size: 0.8em; }
-    /* --- Footer input bar: tighter on mobile --- */
     .rpg-input-bar { padding-left: 0.5rem !important; padding-right: 0.5rem !important; }
-    /* --- Sidebar: slightly narrower on very small screens handled by Quasar breakpoint --- */
     .q-drawer__content { padding: 0.5rem; }
-    /* --- Expansion items in sidebar: ensure touch targets --- */
     .q-expansion-item .q-item { min-height: 48px; display: flex; align-items: center; }
-    /* --- Momentum/GameOver cards: full-width padding (only in main content, not sidebar) --- */
     .q-page > .q-card, .chat-scroll .q-card { margin: 0 !important; }
-    /* --- Draft selector buttons: allow wrapping --- */
     .q-btn { min-height: 44px; }
 }
-/* ==========================================
-   SMALL MOBILE (max-width: 400px)
-   ========================================== */
 @media (max-width: 400px) {
-    /* --- Even tighter for iPhone SE / small Android --- */
-    .stat-value { font-size: 1.2rem; }
-    .stat-grid { gap: 0.35rem; }
-    .choice-grid { gap: 0.35rem; }
+    .stat-value { font-size: 1.2rem; } .stat-grid { gap: 0.35rem; } .choice-grid { gap: 0.35rem; }
     .choice-btn.q-btn { font-size: 0.8rem; min-height: 44px; padding: 0.4rem 0.5rem; }
     .chat-msg.user { padding: 0.4rem 0.6rem; border-radius: 8px; }
     .chat-scroll { padding: 0.35rem; padding-bottom: 5rem; }
 }
 </style>
+
 <script>
-/* --- Accessibility: make Quasar toast notifications announce to screen readers --- */
+/* --- Accessibility: Quasar toasts → screen reader --- */
 (function(){
-    var observer = new MutationObserver(function(){
+    var o = new MutationObserver(function(){
         document.querySelectorAll('.q-notifications__list:not([aria-live])').forEach(function(el){
-            el.setAttribute('role', 'log');
-            el.setAttribute('aria-live', 'assertive');
-            el.setAttribute('aria-atomic', 'false');
+            el.setAttribute('role','log'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','false');
         });
     });
-    observer.observe(document.documentElement, { childList: true, subtree: true });
+    o.observe(document.documentElement, {childList:true, subtree:true});
 })();
 </script>

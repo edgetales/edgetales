@@ -5,6 +5,34 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.54] — EdgeTales Design Modus (Work in Progress)
+
+### Added
+- **„EdgeTales Design" Lesemodus** (`narrator_font = "highlight"`). Neuer Eintrag im Schriftart-Dropdown (DE/EN: „EdgeTales Design"). Aktiviert ein Bündel atmosphärischer Lese-Effekte die im normalen `serif`/`sans`-Modus inaktiv bleiben. Status: Work in Progress — wird durch Testing weiter kalibriert.
+
+- **Dialog-Highlight:** Gesprochener Dialog (alle Anführungszeichentypen: `„"` DE, `""` EN-curly, `«»` / `»«` Guillemets) wird server-seitig in `_highlight_dialog()` mit `***...**` (bold-italic Markdown) gewrappt — Anführungszeichen inklusive. CSS-Selektor `.chat-msg.assistant em strong` rendert den Textmarker: `linear-gradient(to right, ...)` mit organischem `border-radius: 0.5em 0.3em`. Aktuelle Farbe: Teal (h=159, s=52%, l=49%). Kein HTML-Injection — läuft problemlos durch DOMPurify/`setHTML`.
+
+- **`_highlight_dialog(text)`** — neue Hilfsfunktion in `app.py` (nach `_clean_narration`). Aufgerufen in `render_chat_messages()` und `process_player_input()` wenn `narrator_font == "highlight"`.
+
+- **Chaos-Textbewegung:** Ab `chaos_factor >= 8` atmet der Erzählertext minimal (`letter-spacing`/`word-spacing` pulsiert alle 4s, ease-in-out). Nur im highlight-Modus aktiv.
+
+- **Chaos Ambient:** Ab `chaos_factor >= 7` pulsiert ein subtiler roter Randschimmer (`body::after`, radial-gradient, 5s Zyklus). Unabhängig vom Schrift-Modus. JS-Call in `render_sidebar_status()` setzt/entfernt `data-chaos-high` Attribut.
+
+- **Health Vignette:** Bei `health <= 3` zieht sich das Sichtfeld durch ein radiales Dunkel-Overlay ein (`body[data-narrator-font="highlight"]::before`, opacity via CSS-Variable `--health-vignette`). Staffelung: 5/4→0.0, 3→0.10, 2→0.28, 1→0.48, 0→0.65. 4s CSS-Transition. JS-Call in `render_sidebar_status()`.
+
+- **Live Font-Switching:** Schriftwahl wirkt sofort nach dem Speichern ohne Browser-Reload. `save_cfg()` setzt `data-narrator-font` direkt per JS. Reload nur bei Wechsel von/nach `highlight` (server-seitige Markdown-Neuverarbeitung nötig).
+
+### Changed
+- **Schriftart-Dropdown neu benannt und vereinfacht.** Crimson Pro entfernt. Drei Optionen: „Serifen" / „Serifenlos" / „EdgeTales Design" (DE+EN). Google Fonts lädt nur noch Inter. Default-Serif ist jetzt Georgia/Times New Roman.
+- **`i18n.py`:** `narrator_font_crimson` Key entfernt, verbleibende Keys auf neue Kurz-Labels aktualisiert.
+- **`save_cfg()` Bugfix:** `old_font` wurde bisher nach dem Überschreiben gelesen — Reload-Trigger für Highlight-Wechsel hat nie gefeuert. Lesereihenfolge korrigiert.
+
+### Technical Notes
+- Dialog-Highlight nutzt `***Markdown***` statt `<span>`-Injection weil NiceGUI's `ui.markdown()` über `setHTML()` (kein Safari-Support) bzw. DOMPurify sanitized — beide strippten injizierte Spans zuverlässig.
+- `body::before` (Health-Vignette) und `body::after` (Chaos-Ambient) als getrennte Pseudo-Elemente damit beide gleichzeitig aktiv sein können.
+
+---
+
 ## [0.9.53]
 
 ### Changed

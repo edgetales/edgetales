@@ -319,6 +319,31 @@ def _clean_narration(text: str) -> str:
     return text.strip()
 
 
+def _highlight_dialog(text: str) -> str:
+    """Wrap quoted speech in ***bold-italic*** for Dialog-Highlight mode.
+    Quote characters are placed OUTSIDE the *** markers so markdown2
+    recognises the word boundaries correctly.
+    CSS styles .chat-msg.assistant em strong."""
+    import re
+    # DE standard: „..." — öffnet U+201E, schließt U+201D, U+201C oder gerades "
+    text = re.sub(
+        r'(\u201E)([^\u201E\u201C\u201D"\n]{1,600}?)([\u201C\u201D"])',
+        lambda m: f'***{m.group(1)}{m.group(2)}{m.group(3)}***', text)
+    # EN curly: "..."
+    text = re.sub(
+        r'(\u201C)([^\u201C\u201D\n]{1,600}?)(\u201D)',
+        lambda m: f'***{m.group(1)}{m.group(2)}{m.group(3)}***', text)
+    # Guillemets: «...»
+    text = re.sub(
+        r'(\u00AB)([^\u00AB\u00BB\n]{1,600}?)(\u00BB)',
+        lambda m: f'***{m.group(1)}{m.group(2)}{m.group(3)}***', text)
+    # Reversed guillemets: »...«
+    text = re.sub(
+        r'(\u00BB)([^\u00AB\u00BB\n]{1,600}?)(\u00AB)',
+        lambda m: f'***{m.group(1)}{m.group(2)}{m.group(3)}***', text)
+    return text
+
+
 def init_session() -> None:
     """Initialize session state for a new tab."""
     s = S()
@@ -810,6 +835,13 @@ def render_sidebar_status(game: GameState, session=None) -> None:
     _chaos_aria = t("aria.chaos_bar", lang, n=chaos, level=_chaos_level)
     ui.html(f'<div class="text-sm font-semibold">{E["tornado"]} {t("sidebar.chaos", lang)}: {chaos}/9</div>').classes("w-full")
     ui.html(f'<div class="track-bar" role="progressbar" aria-valuenow="{int(pct)}" aria-valuemin="0" aria-valuemax="100" aria-label="{_chaos_aria}"><div class="track-fill chaos" style="width:{pct:.0f}%"></div></div>').classes("w-full")
+    # Chaos ambient glow (highlight mode)
+    _chaos_js = "document.body.setAttribute('data-chaos-high','')" if chaos >= 7 else "document.body.removeAttribute('data-chaos-high')"
+    ui.run_javascript(_chaos_js)
+    # Health vignette: opacity steigt wenn Gesundheit <= 3 sinkt (highlight mode)
+    _health = int(game.health)
+    _vignette_op = {5: 0.0, 4: 0.0, 3: 0.10, 2: 0.28, 1: 0.48, 0: 0.65}.get(_health, 0.0)
+    ui.run_javascript(f"document.body.style.setProperty('--health-vignette', '{_vignette_op}')")
     # Clocks — label already communicates value, progressbar is visual-only
     active = [c for c in game.clocks if c["filled"] < c["segments"]]
     if active:
@@ -1325,9 +1357,9 @@ def render_settings() -> None:
         ui.separator()
         # --- Narrator font ---
         _font_opts = {
-            t("settings.narrator_font_crimson", lang): "crimson",
-            t("settings.narrator_font_sans",    lang): "sans",
-            t("settings.narrator_font_serif",   lang): "serif",
+            t("settings.narrator_font_sans",      lang): "sans",
+            t("settings.narrator_font_serif",     lang): "serif",
+            t("settings.narrator_font_highlight", lang): "highlight",
         }
         _cur_font = s.get("narrator_font", "sans")
         _cur_font_label = next((k for k, v in _font_opts.items() if v == _cur_font),
@@ -1335,7 +1367,7 @@ def render_settings() -> None:
         font_sel = ui.select(list(_font_opts.keys()), label=t("settings.narrator_font", lang),
                              value=_cur_font_label).classes("w-full")
         def _apply_font(val):
-            code = _font_opts.get(val, "crimson")
+            code = _font_opts.get(val, "serif")
             ui.run_javascript(f"document.body.setAttribute('data-narrator-font', '{code}')")
         font_sel.on("update:model-value", lambda e: _apply_font(e.args))
         ui.separator()
@@ -1351,7 +1383,9 @@ def render_settings() -> None:
             s["tts_rate"]=rate_sel.value;s["stt_enabled"]=stt_sw.value
             s["dice_display"]=dice_options_map.get(dice_sel.value, 0)
             s["sr_chat"]=sr_chat_sw.value
-            s["narrator_font"]=_font_opts.get(font_sel.value, "sans")
+            new_font = _font_opts.get(font_sel.value, "sans")
+            old_font = s.get("narrator_font", "sans")   # lesen VOR dem Überschreiben
+            s["narrator_font"]=new_font
             s["cb_device"]=cb_device_sel.value;s["cb_exaggeration"]=cb_exag_slider.value
             s["cb_cfg_weight"]=cb_cfg_slider.value;s["cb_voice_sample"]=cb_voice_sel.value
             s["whisper_size"]=whisper_map.get(whisper_sel.value, "medium")
@@ -1373,9 +1407,15 @@ def render_settings() -> None:
             save_user_config(username, ucfg)
             # UI language change requires full reload to re-render all labels
             if new_ui_lang != old_ui_lang:
-                s["user_config_loaded"] = False  # Force load_user_settings on reload to migrate labels to new language
+                s["user_config_loaded"] = False
                 ui.navigate.reload()
                 return
+            # Highlight mode change requires reload to re-render quote spans server-side
+            if (new_font == "highlight") != (old_font == "highlight"):
+                ui.navigate.reload()
+                return
+            # Sofort am Body setzen, damit der Chat ohne Reload die neue Schrift zeigt
+            ui.run_javascript(f"document.body.setAttribute('data-narrator-font', '{new_font}')")
             save_confirm.set_visibility(True)
             async def _hide():
                 await asyncio.sleep(2)
@@ -1516,7 +1556,10 @@ def render_chat_messages(container) -> Optional[str]:
                     _sr_prefix = f'<span class="sr-only">{t("aria.narrator_says", lang)}</span>'
             if msg.get("corrected"):
                 ui.html(f'<div class="correction-badge" aria-label="{t("aria.correction_badge", lang)}">{t("correction.badge", lang)}</div>')
-            ui.markdown(f"{_sr_prefix}{prefix}{_clean_narration(content)}")
+            _content = _clean_narration(content)
+            if role == "assistant" and s.get("narrator_font") == "highlight":
+                _content = _highlight_dialog(_content)
+            ui.markdown(f"{_sr_prefix}{prefix}{_content}")
             rd = msg.get("roll_data")
             if rd: render_dice_display(rd)
     return last_scene_marker_id
@@ -2102,7 +2145,10 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
                     msg_col.props('aria-hidden="true"')
                 with msg_col:
                     _sr_prefix = f'<span class="sr-only">{t("aria.narrator_says", L())}</span>' if s.get("sr_chat", True) else ""
-                    ui.markdown(f"{_sr_prefix}{_clean_narration(narration)}")
+                    _narr = _clean_narration(narration)
+                    if s.get("narrator_font") == "highlight":
+                        _narr = _highlight_dialog(_narr)
+                    ui.markdown(f"{_sr_prefix}{_narr}")
                     if roll_data: render_dice_display(roll_data)
         # Two-step scroll: bottom first (forces DOM render), then up to scene marker
         await _scroll_chat_bottom()
