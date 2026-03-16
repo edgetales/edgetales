@@ -856,19 +856,19 @@ def render_sidebar_status(game: GameState, session=None) -> None:
             return (-n.get("bond", 0), -(last_scene or 0))
         ui.separator()
         dl = get_disposition_labels(lang)
+        bond_label = t("sidebar.bond", lang)
+        aka_label = t("sidebar.npc_aka", lang)
         if active_npcs:
             active_npcs.sort(key=_npc_sort_key)
             ui.label(f"{E['people']} {t('sidebar.persons', lang)}").classes("text-sm font-semibold")
             for n in active_npcs:
                 disp = dl.get(n["disposition"], f"{E['white_circle']} Neutral")
                 bond_max = n.get("bond_max", 4)
-                with ui.expansion(f"{n['name']}").classes("w-full"):
-                    npc_parts = [f"{disp}", f"{t('sidebar.bond', lang) if 'sidebar.bond' in str(t.__doc__ or '') else 'Bond'}: {n['bond']}/{bond_max}"]
-                    alias_str = f" · {t('sidebar.npc_aka', lang)} {', '.join(n['aliases'])}" if n.get("aliases") else ""
+                with ui.expansion(f"{disp} {E['dash']} {n['name']}").classes("w-full"):
+                    alias_str = f"{aka_label} {', '.join(n['aliases'])}" if n.get("aliases") else ""
                     ui.html(f'''<div class="npc-card">
-                        <div class="npc-name" aria-hidden="true">{n["name"]}</div>
-                        <div class="npc-meta">{disp} &nbsp;·&nbsp; {n["bond"]}/{bond_max}</div>
-                        {f'<div class="npc-meta" style="font-style:italic">{alias_str[3:]}</div>' if alias_str else ""}
+                        <div class="npc-meta">{bond_label}: {n["bond"]}/{bond_max}</div>
+                        {f'<div class="npc-meta" style="font-style:italic">{alias_str}</div>' if alias_str else ""}
                         {f'<div class="npc-desc">{n["description"]}</div>' if n.get("description") else ""}
                     </div>''')
         if background_npcs:
@@ -876,10 +876,14 @@ def render_sidebar_status(game: GameState, session=None) -> None:
             with ui.expansion(f"{E['people']} {t('sidebar.known_persons', lang)} ({len(background_npcs)})").classes("w-full"):
                 for n in background_npcs:
                     disp = dl.get(n["disposition"], f"{E['white_circle']} Neutral")
-                    ui.html(f'''<div class="npc-card" style="opacity:0.65">
-                        <div class="npc-name">{n["name"]}</div>
-                        <div class="npc-meta">{disp} &nbsp;·&nbsp; {n["bond"]}/{n.get("bond_max", 4)}</div>
-                    </div>''')
+                    bond_max = n.get("bond_max", 4)
+                    with ui.expansion(f"{disp} {E['dash']} {n['name']}").classes("w-full").style("opacity:0.75"):
+                        alias_str = f"{aka_label} {', '.join(n['aliases'])}" if n.get("aliases") else ""
+                        ui.html(f'''<div class="npc-card">
+                            <div class="npc-meta">{bond_label}: {n["bond"]}/{bond_max}</div>
+                            {f'<div class="npc-meta" style="font-style:italic">{alias_str}</div>' if alias_str else ""}
+                            {f'<div class="npc-desc">{n["description"]}</div>' if n.get("description") else ""}
+                        </div>''')
         if deceased_npcs:
             with ui.expansion(f"\u2620\ufe0f {t('sidebar.deceased_persons', lang)} ({len(deceased_npcs)})").classes("w-full"):
                 for n in deceased_npcs:
