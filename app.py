@@ -801,15 +801,15 @@ def render_sidebar_status(game: GameState, session=None) -> None:
         pct = max(0, val / 5 * 100)
         ui.label(f"{label}: {val}/5").classes("text-sm font-semibold")
         ui.html(f'<div class="track-bar" aria-hidden="true"><div class="track-fill {cls}" style="width:{pct:.0f}%"></div></div>').classes("w-full")
-    # Chaos — label + sr-only danger level; progressbar visual-only
+    # Chaos — label only; danger level in progressbar aria-label for screen readers
     ui.separator()
     chaos = int(game.chaos_factor)
-    ci = {3:E['green_circle'],4:E['green_circle'],5:E['orange_circle'],6:E['orange_circle'],7:E['red_circle'],8:E['red_circle'],9:E['skull']}.get(chaos, E['white_circle'])
     pct = max(0, chaos / 9 * 100)
     _chaos_level_key = "aria.chaos_low" if chaos <= 4 else ("aria.chaos_medium" if chaos <= 6 else ("aria.chaos_high" if chaos <= 8 else "aria.chaos_critical"))
     _chaos_level = t(_chaos_level_key, lang)
-    ui.html(f'<div class="text-sm font-semibold">{E["tornado"]} {t("sidebar.chaos", lang)}: {ci} {chaos}/9<span class="sr-only"> — {_chaos_level}</span></div>').classes("w-full")
-    ui.html(f'<div class="track-bar" aria-hidden="true"><div class="track-fill chaos" style="width:{pct:.0f}%"></div></div>').classes("w-full")
+    _chaos_aria = t("aria.chaos_bar", lang, n=chaos, level=_chaos_level)
+    ui.html(f'<div class="text-sm font-semibold">{E["tornado"]} {t("sidebar.chaos", lang)}: {chaos}/9</div>').classes("w-full")
+    ui.html(f'<div class="track-bar" role="progressbar" aria-valuenow="{int(pct)}" aria-valuemin="0" aria-valuemax="100" aria-label="{_chaos_aria}"><div class="track-fill chaos" style="width:{pct:.0f}%"></div></div>').classes("w-full")
     # Clocks — label already communicates value, progressbar is visual-only
     active = [c for c in game.clocks if c["filled"] < c["segments"]]
     if active:
