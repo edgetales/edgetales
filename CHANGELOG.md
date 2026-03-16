@@ -30,6 +30,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ### Technical Notes
 - Dialog-Highlight nutzt `***Markdown***` statt `<span>`-Injection weil NiceGUI's `ui.markdown()` über `setHTML()` (kein Safari-Support) bzw. DOMPurify sanitized — beide strippten injizierte Spans zuverlässig.
 - `body::before` (Health-Vignette) und `body::after` (Chaos-Ambient) als getrennte Pseudo-Elemente damit beide gleichzeitig aktiv sein können.
+- **`_status_context_block(game)`** — neue Hilfsfunktion in `engine.py`. Mappt die aktuellen Spielwerte Health/Spirit/Supply auf je 6 narrative Stufen (5→0) und injiziert einen `<character_state>`-Block in den Narrator-System-Prompt. Der Narrator bekommt damit explizit mitgeteilt was die Zahlen atmosphärisch bedeuten (z.B. h=3 → „injured — clearly hurting, moving with effort"), ohne dass Zahlen in der Prosa auftauchen. Instruktion: Zustand durch Körpersprache/Sensorik widerspiegeln, Konsistenz über Szenen halten. Nur aktiv wenn `game` vorhanden (Opening-Calls ohne GameState unberührt).
 
 ---
 

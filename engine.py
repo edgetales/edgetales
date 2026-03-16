@@ -3513,14 +3513,60 @@ def _backstory_block(game: Optional[GameState] = None) -> str:
     )
 
 
+def _status_context_block(game: Optional[GameState] = None) -> str:
+    """Return a narrative status context block mapping h/sp/su values to physical/mental states.
+    Only injected when game is present. Tells the Narrator what the numbers MEAN narratively
+    so that prose stays coherent with mechanical state — without ever mentioning numbers."""
+    if not game:
+        return ""
+    h, sp, su = game.health, game.spirit, game.supply
+
+    health_desc = (
+        "uninjured" if h >= 5 else
+        "bruised — minor aches, nothing that slows them down" if h == 4 else
+        "injured — clearly hurting, moving with effort" if h == 3 else
+        "seriously wounded — every motion costs something" if h == 2 else
+        "critically injured — barely holding together, on the edge of collapse" if h == 1 else
+        "WOUNDED — at the limit, physical collapse imminent (flag already set)"
+    )
+    spirit_desc = (
+        "steady and composed" if sp >= 5 else
+        "mildly unsettled — small cracks under the surface" if sp == 4 else
+        "shaken — stress is showing, focus is harder to maintain" if sp == 3 else
+        "deeply troubled — holding on by a thread, doubt and fear are present" if sp == 2 else
+        "near breaking — barely functioning, the weight is crushing" if sp == 1 else
+        "BROKEN — at the limit, mental collapse imminent (flag already set)"
+    )
+    supply_desc = (
+        "well-equipped" if su >= 5 else
+        "adequate — supplies are fine for now" if su == 4 else
+        "running low — rationing has begun, choices are being made" if su == 3 else
+        "critically short — scarcity is a real pressure" if su == 2 else
+        "nearly nothing — desperation is setting in" if su == 1 else
+        "DEPLETED — out of resources (flag already set)"
+    )
+
+    return (
+        "<character_state>\n"
+        "Reflect these states through sensory detail, body language, and atmosphere. "
+        "NEVER state numbers or game terms. Maintain consistency across scenes — "
+        "do NOT describe the character as healthy if they are injured, or calm if they are shaken.\n"
+        f"Physical: {health_desc}\n"
+        f"Mental/Emotional: {spirit_desc}\n"
+        f"Resources/Equipment: {supply_desc}\n"
+        "</character_state>"
+    )
+
+
 def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) -> str:
     """Build narrator system prompt with configured language."""
     lang = get_narration_lang(config)
     kf = _kid_friendly_block(config)
     cb = _content_boundaries_block(game)
     bs = _backstory_block(game)
+    sc = _status_context_block(game)
     return f"""<role>Narrator of an immersive RPG. All output in {lang}, second person singular.</role>
-{kf}{cb}{bs}
+{kf}{cb}{bs}{sc}
 <rules>
 - NEVER mention dice, stats, numbers, or game mechanics
 - MISS: concrete failure, situation worsens, NO silver linings
