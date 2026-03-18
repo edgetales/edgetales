@@ -1212,6 +1212,9 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                                     return do_delete
                                 _del_aria = t("aria.delete_save", lang, name=display_name)
                                 ui.button(icon="delete_outline", on_click=make_delete(sname)).props(f'flat round dense size=sm aria-label="{_del_aria}"').tooltip(t("actions.delete", lang)).style("color: var(--error)")
+                            else:
+                                # Invisible spacer — same size as delete button to keep info centered
+                                ui.element("div").style("width: 36px; height: 36px")
                         # --- Chapter archives (inside active save card) ---
                         if is_active and chapter > 1:
                             archived = list_chapter_archives(username, sname)
