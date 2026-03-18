@@ -344,6 +344,69 @@ def _highlight_dialog(text: str) -> str:
     return text
 
 
+# ---------------------------------------------------------------
+# Entity Highlighting (EdgeTales Design mode)
+# Builds a data payload of known NPC names (colored by disposition)
+# and the player name (accent color).
+# The JS function _etHighlight() in custom_head.html walks the DOM
+# after markdown rendering and wraps matched names in <span> elements.
+# ---------------------------------------------------------------
+
+_DISPOSITION_CSS = {
+    "friendly": "et-npc-warm",  "loyal": "et-npc-warm",
+    "hostile": "et-npc-hostile", "aggressive": "et-npc-hostile",
+    "fearful": "et-npc-wary",   "wary": "et-npc-wary",
+}
+
+def _build_entity_data(game) -> dict:
+    """Build entity highlight payload from game state for JS post-processing.
+    Includes NPC names (colored by disposition) and player name (accent)."""
+    entities = []
+    seen = set()
+
+    def _add(name: str, cls: str):
+        if name and name not in seen and len(name) >= 3:
+            entities.append({"name": name, "cls": cls})
+            seen.add(name)
+
+    # Player name — full name + parts ≥ 4 chars
+    if game.player_name:
+        _add(game.player_name, "et-player")
+        for part in game.player_name.split():
+            if len(part) >= 4:
+                _add(part, "et-player")
+
+    # NPC names — colored by disposition
+    for npc in game.npcs:
+        status = npc.get("status", "active")
+        if status == "inactive":
+            continue
+        disp = npc.get("disposition", "neutral")
+        css_cls = _DISPOSITION_CSS.get(disp, "")
+        if not css_cls:
+            continue  # neutral/curious: no coloring, blend with text
+        name = npc.get("name", "")
+        _add(name, css_cls)
+        for part in name.split():
+            if len(part) >= 4:
+                _add(part, css_cls)
+        for alias in npc.get("aliases", []):
+            if len(alias) >= 4:
+                _add(alias, css_cls)
+
+    # Sort longest-first to avoid partial matches (e.g. "Anna" inside "Annabelle")
+    entities.sort(key=lambda e: len(e["name"]), reverse=True)
+    return {"entities": entities}
+
+
+def _inject_entity_highlights(game) -> None:
+    """Inject JS call to highlight entity names in narrator text (Design mode only)."""
+    import json as _json
+    data = _build_entity_data(game)
+    if data["entities"]:
+        ui.run_javascript(f"setTimeout(function(){{ _etHighlight({_json.dumps(data, ensure_ascii=False)}); }}, 80)")
+
+
 def init_session() -> None:
     """Initialize session state for a new tab."""
     s = S()
@@ -840,7 +903,7 @@ def render_sidebar_status(game: GameState, session=None) -> None:
     ui.run_javascript(_chaos_js)
     # Health vignette: opacity steigt wenn Gesundheit <= 3 sinkt (highlight mode)
     _health = int(game.health)
-    _vignette_op = {5: 0.0, 4: 0.0, 3: 0.10, 2: 0.28, 1: 0.48, 0: 0.65}.get(_health, 0.0)
+    _vignette_op = {5: 0.0, 4: 0.0, 3: 0.18, 2: 0.40, 1: 0.62, 0: 0.82}.get(_health, 0.0)
     ui.run_javascript(f"document.body.style.setProperty('--health-vignette', '{_vignette_op}')")
     # Clocks — label already communicates value, progressbar is visual-only
     active = [c for c in game.clocks if c["filled"] < c["segments"]]
@@ -1093,6 +1156,42 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                                 return do_load
                             _load_aria = t("aria.load_save", lang, name=display_name)
                             ui.button(icon="play_arrow", on_click=make_load(sname, display_name, is_active)).props(f'flat round dense size=sm aria-label="{_load_aria}"').tooltip(t("actions.load", lang))
+
+                            # --- Setup info tooltip ---
+                            _si_genre = info.get("setting_genre", "")
+                            _si_tone = info.get("setting_tone", "")
+                            _si_arch = info.get("setting_archetype", "")
+                            _si_concept = info.get("character_concept", "")
+                            _si_back = info.get("backstory", "")
+                            _si_wishes = info.get("player_wishes", "")
+                            _si_bounds = info.get("content_lines", "")
+                            # Only show button if there's anything to display
+                            if any([_si_genre, _si_tone, _si_arch, _si_concept, _si_back, _si_wishes, _si_bounds]):
+                                with ui.button(icon="info_outline").props(
+                                    'flat round dense size=sm'
+                                ).classes("text-gray-400").style("min-width: 36px; min-height: 36px"):
+                                    with ui.menu().props("anchor='top middle' self='bottom middle' :offset='[0,6]'"):
+                                        with ui.column().classes("gap-1").style(
+                                            "max-width: 280px; max-height: 320px; overflow-y: auto;"
+                                            " padding: 8px 12px; font-size: 0.82rem; line-height: 1.45"
+                                        ):
+                                            if _si_genre:
+                                                _gl = get_genre_label(_si_genre, lang) if not " " in _si_genre else _si_genre
+                                                ui.html(f'<b>{t("save_info.genre", lang)}:</b> {html_mod.escape(_gl)}')
+                                            if _si_tone:
+                                                _tl = get_tone_label(_si_tone, lang) if not " " in _si_tone else _si_tone
+                                                ui.html(f'<b>{t("save_info.tone", lang)}:</b> {html_mod.escape(_tl)}')
+                                            if _si_arch:
+                                                _al = get_archetype_label(_si_arch, lang) if not " " in _si_arch else _si_arch
+                                                ui.html(f'<b>{t("save_info.archetype", lang)}:</b> {html_mod.escape(_al)}')
+                                            if _si_concept:
+                                                ui.html(f'<b>{t("save_info.concept", lang)}:</b> {html_mod.escape(_si_concept)}')
+                                            if _si_back:
+                                                ui.html(f'<b>{t("save_info.backstory", lang)}:</b> {html_mod.escape(_si_back)}')
+                                            if _si_wishes:
+                                                ui.html(f'<b>{t("save_info.wishes", lang)}:</b> {html_mod.escape(_si_wishes)}')
+                                            if _si_bounds:
+                                                ui.html(f'<b>{t("save_info.boundaries", lang)}:</b> {html_mod.escape(_si_bounds)}')
 
                             if sname != "autosave":
                                 def make_delete(n=sname):
@@ -1562,6 +1661,9 @@ def render_chat_messages(container) -> Optional[str]:
             ui.markdown(f"{_sr_prefix}{prefix}{_content}")
             rd = msg.get("roll_data")
             if rd: render_dice_display(rd)
+    # Entity highlights (Design mode): inject JS after all messages are rendered
+    if s.get("narrator_font") == "highlight" and s.get("game"):
+        _inject_entity_highlights(s["game"])
     return last_scene_marker_id
 
 
@@ -1947,6 +2049,7 @@ def _render_confirm():
                 if not s.get("api_key", "").strip():
                     ui.notify(t("game.invalid_api_key", lang), type="negative")
                     return
+                start_btn.disable(); reroll_btn.disable()
                 with confirm_container:
                     with ui.row().classes("w-full items-center gap-3").props('role="status"'):
                         ui.spinner("dots", size="md", color="primary")
@@ -1983,12 +2086,15 @@ def _render_confirm():
                     save_game(game,username,s["messages"],s["active_save"])
                     if s.get("tts_enabled",False): s["pending_tts"]=narration
                     ui.navigate.reload()
-                except Exception as e: ui.notify(t("creation.error", lang, error=e), type="negative")
-            ui.button(f"{E['swords']} {t('creation.start', lang)}", on_click=start, color="primary").classes("text-lg px-8")
+                except Exception as e:
+                    start_btn.enable(); reroll_btn.enable()
+                    ui.notify(t("creation.error", lang, error=e), type="negative")
+            start_btn = ui.button(f"{E['swords']} {t('creation.start', lang)}", on_click=start, color="primary").classes("text-lg px-8")
             async def reroll():
                 if not s.get("api_key", "").strip():
                     ui.notify(t("game.invalid_api_key", lang), type="negative")
                     return
+                start_btn.disable(); reroll_btn.disable()
                 with confirm_container:
                     with ui.row().classes("w-full items-center gap-3"):
                         ui.spinner("dots", size="md", color="primary")
@@ -2004,8 +2110,10 @@ def _render_confirm():
                     updated["selected_draft"]=len(updated["drafts"])-1
                     s["creation"]=updated
                     ui.navigate.reload()
-                except Exception as e: ui.notify(t("creation.error", lang, error=e), type="negative")
-            ui.button(f"{E['refresh']} {t('creation.reroll', lang)}", on_click=reroll, color="primary").props("outline").classes("text-lg px-8")
+                except Exception as e:
+                    start_btn.enable(); reroll_btn.enable()
+                    ui.notify(t("creation.error", lang, error=e), type="negative")
+            reroll_btn = ui.button(f"{E['refresh']} {t('creation.reroll', lang)}", on_click=reroll, color="primary").props("outline").classes("text-lg px-8")
             ui.button(t("creation.back", lang), on_click=_creation_back_to_wishes).props("flat")
     return True
 
@@ -2150,6 +2258,9 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
                         _narr = _highlight_dialog(_narr)
                     ui.markdown(f"{_sr_prefix}{_narr}")
                     if roll_data: render_dice_display(roll_data)
+        # Entity highlights (Design mode) — process newly rendered message
+        if s.get("narrator_font") == "highlight":
+            _inject_entity_highlights(game)
         # Two-step scroll: bottom first (forces DOM render), then up to scene marker
         await _scroll_chat_bottom()
         if scroll_target_id:

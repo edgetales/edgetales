@@ -71,7 +71,7 @@ body[data-narrator-font="highlight"] .chat-msg.assistant { font-family: system-u
 .chat-msg.recap { background: transparent; border: none; border-top: 1px solid var(--border); padding-top: 1rem; }
 .correction-badge { display: inline-block; font-size: 0.72em; color: var(--text-secondary); opacity: 0.65; margin-bottom: 0.3em; letter-spacing: 0.03em; }
 .chat-msg h1, .chat-msg h2, .chat-msg h3 { font-size: 1.1rem !important; font-weight: 600; margin: 0.5em 0 0.3em 0; }
-.scene-marker { display: block; text-align: center; color: var(--text-secondary); font-size: 0.8em; letter-spacing: 0.06em; margin: 0.75em 0; padding: 0.45em 0.5em; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); line-height: 1.5; }
+.scene-marker { display: block; width: 100%; text-align: center; color: var(--text-secondary); font-size: 0.8em; letter-spacing: 0.06em; margin: 0.75em 0; padding: 0.45em 0.5em; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); line-height: 1.5; }
 h2.scene-marker { font-weight: normal; }
 .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
 .stat-item { padding: 0.4rem 0.6rem; background: transparent; border-radius: 8px; text-align: center; position: relative; }
@@ -135,20 +135,20 @@ body[data-narrator-font="highlight"] .chat-msg.assistant strong em {
         /* Hauptstrich: hell bei 4%, dann ausklingend — Marker-Druck-Simulation */
         linear-gradient(
             to right,
-            rgba(45,143,109,0.04),
-            rgba(60,190,144,0.41) 4%,
-            rgba(45,143,109,0.29) 40%,
-            rgba(60,190,144,0.23) 100%
+            hsla(0, 52%, 20%, 0.04),
+            hsla(0, 52%, 28%, 0.40) 4%,
+            hsla(0, 52%, 20%, 0.28) 40%,
+            hsla(0, 52%, 28%, 0.22) 100%
         );
     /* Asymmetrischer Radius: links rund (Marker-Ansatz), rechts spitzer (Auslauf) */
-    border-radius: 0.5em 0.3em;
-    padding: 0.05em 0.55em 0.0em;
-    color: hsl(159,32%,89%);
+    border-radius: 0.7em 0.3em;
+    padding: 0.00em 0.50em 0.0em;
+    color: hsl(0, 32%, 86%);
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
-    text-shadow: 0 0 20px rgba(60,190,144,0.25);
+    text-shadow: 0 0 20px hsla(0, 52%, 28%, 0.47);
     position: relative;
-    top: -0.05em;
+    top: 0em;
     font-weight: 400;
 }
 
@@ -179,8 +179,8 @@ body[data-chaos-high]::after {
 /*
  * HEALTH VIGNETTE: Sichtfeld-Einschränkung bei sinkender Gesundheit.
  * --health-vignette wird per JS in render_sidebar_status gesetzt:
- *   5/5 → 0.0   4/5 → 0.0   3/5 → 0.10
- *   2/5 → 0.28  1/5 → 0.48  0/5 → 0.65
+ *   5/5 → 0.0   4/5 → 0.0   3/5 → 0.18
+ *   2/5 → 0.40  1/5 → 0.62  0/5 → 0.82
  * Nur im highlight-Modus aktiv. transition: 4s für sanften Übergang.
  */
 :root { --health-vignette: 0; }
@@ -190,13 +190,33 @@ body[data-narrator-font="highlight"]::before {
     inset: 0;
     pointer-events: none;
     background: radial-gradient(ellipse at 50% 48%,
-        transparent 28%,
-        rgba(0,0,0,0.65) 100%
+        transparent 22%,
+        rgba(0,0,0,0.85) 100%
     );
     opacity: var(--health-vignette);
     transition: opacity 4s ease;
     z-index: 9000;
 }
+
+/* ==========================================
+   ENTITY HIGHLIGHTING (NPC names, locations, player name)
+   Only active in EdgeTales Design mode.
+   Spans are injected via JS post-processing (_etHighlight)
+   after ui.markdown() has rendered the DOM.
+   ========================================== */
+body[data-narrator-font="highlight"] .chat-msg.assistant .et-npc-warm    { color: hsl(152, 32%, 64%); }
+body[data-narrator-font="highlight"] .chat-msg.assistant .et-npc-hostile  { color: hsl(0, 38%, 66%); }
+body[data-narrator-font="highlight"] .chat-msg.assistant .et-npc-wary    { color: hsl(36, 45%, 64%); }
+body[data-narrator-font="highlight"] .chat-msg.assistant .et-player      { color: var(--accent-light); }
+/* Inside dialog highlight: slightly brighter to stand out against teal background */
+body[data-narrator-font="highlight"] .chat-msg.assistant em strong .et-npc-warm,
+body[data-narrator-font="highlight"] .chat-msg.assistant strong em .et-npc-warm    { color: hsl(152, 38%, 72%); }
+body[data-narrator-font="highlight"] .chat-msg.assistant em strong .et-npc-hostile,
+body[data-narrator-font="highlight"] .chat-msg.assistant strong em .et-npc-hostile  { color: hsl(0, 42%, 72%); }
+body[data-narrator-font="highlight"] .chat-msg.assistant em strong .et-npc-wary,
+body[data-narrator-font="highlight"] .chat-msg.assistant strong em .et-npc-wary    { color: hsl(36, 50%, 72%); }
+body[data-narrator-font="highlight"] .chat-msg.assistant em strong .et-player,
+body[data-narrator-font="highlight"] .chat-msg.assistant strong em .et-player      { color: var(--accent-light); }
 
 /* ==========================================
    MOBILE RESPONSIVE
@@ -230,4 +250,47 @@ body[data-narrator-font="highlight"]::before {
     });
     o.observe(document.documentElement, {childList:true, subtree:true});
 })();
+
+/* --- Entity Highlighting: NPC names, locations, player name --- */
+/* Called from Python via ui.run_javascript() after markdown render.
+   Walks text nodes in .chat-msg.assistant elements and wraps known
+   entity names in <span> elements with CSS classes. */
+function _etHighlight(data) {
+    if (!data || !data.entities || data.entities.length === 0) return;
+    document.querySelectorAll('.chat-msg.assistant').forEach(function(msg) {
+        if (msg.dataset.etDone) return;
+        var walker = document.createTreeWalker(msg, NodeFilter.SHOW_TEXT);
+        var nodes = [];
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+        nodes.forEach(function(node) {
+            if (!node.textContent.trim()) return;
+            /* Skip screen-reader-only spans */
+            if (node.parentElement && node.parentElement.classList.contains('sr-only')) return;
+            /* Skip if already inside an entity span */
+            if (node.parentElement && node.parentElement.className &&
+                node.parentElement.className.indexOf('et-') === 0) return;
+            var html = node.textContent.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            var changed = false;
+            for (var i = 0; i < data.entities.length; i++) {
+                var ent = data.entities[i];
+                var escaped = ent.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                var re = new RegExp('\\b' + escaped + '\\b', 'g');
+                var escName = ent.name.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                var newHtml = html.replace(re, '<span class="' + ent.cls + '">' + escName + '</span>');
+                if (newHtml !== html) {
+                    html = newHtml;
+                    changed = true;
+                }
+            }
+            if (changed) {
+                var frag = document.createDocumentFragment();
+                var temp = document.createElement('span');
+                temp.innerHTML = html;
+                while (temp.firstChild) frag.appendChild(temp.firstChild);
+                node.parentNode.replaceChild(frag, node);
+            }
+        });
+        msg.dataset.etDone = '1';
+    });
+}
 </script>

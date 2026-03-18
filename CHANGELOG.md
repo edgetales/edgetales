@@ -5,6 +5,28 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.56]
+
+### Added
+- **Entity Highlighting im EdgeTales Design Modus.** NPC-Namen und Spielername werden im Erzählertext farblich hervorgehoben — datengetrieben aus dem GameState, keine Wortlisten. Dispositionsfarben: friendly/loyal → gedämpftes Grün, hostile/aggressive → gedämpftes Rot, fearful/wary → Amber. Spielername in Accent-Gold. Neutrale NPCs bleiben ungefärbt. Innerhalb von Dialog-Highlights leicht hellere Varianten für Kontrast gegen den Marker-Hintergrund. Neue Python-Funktionen: `_build_entity_data(game)` (baut Payload aus NPCs + Spielername, longest-first sortiert), `_inject_entity_highlights(game)` (JS-Call nach Render). Neue JS-Funktion `_etHighlight(data)` in `custom_head.html` walkt Text-Nodes per `TreeWalker` und wrapped Matches in `<span>`-Elemente. Injection an zwei Stellen: `render_chat_messages()` (Page-Load) und `process_player_input()` (Live-Turns). CSS-Klassen: `.et-npc-warm`, `.et-npc-hostile`, `.et-npc-wary`, `.et-player`
+- **Setup-Info-Tooltip auf Savegame-Karten.** Neuer ℹ️-Button auf jeder Savegame-Karte (zwischen Load und Delete) zeigt die Erstellungsparameter: Genre, Ton, Archetyp, Konzept, Hintergrund, Wünsche, Grenzen. Scrollbar bei langen Inhalten (`max-height: 320px; overflow-y: auto`). Genre/Tone/Archetype-Codes werden über `get_genre_label()`/`get_tone_label()`/`get_archetype_label()` in lokalisierte Labels aufgelöst. Button erscheint nur wenn mindestens ein Feld gefüllt ist. Nutzt `_info_btn()`-Pattern mit `ui.menu()` (click-to-dismiss). `get_save_info()` erweitert: liefert jetzt `setting_tone`, `setting_archetype`, `character_concept`, `backstory`, `player_wishes`, `content_lines`
+- **`setting_archetype` im GameState.** Neues Feld `setting_archetype: str` in `GameState` und `SAVE_FIELDS`. `start_new_game()` speichert den gewählten Archetyp-Code. Bestehende Saves ohne das Feld zeigen keine Archetyp-Zeile im Tooltip (graceful degradation)
+- i18n-Keys: `save_info.genre`, `save_info.tone`, `save_info.archetype`, `save_info.concept`, `save_info.backstory`, `save_info.wishes`, `save_info.boundaries` (DE + EN)
+
+### Changed
+- **Dialog-Highlight Farbe: Teal → Dunkelrot.** Textmarker-Effekt umgestellt von `hsl(159, 52%, 49%)` (Teal) auf `hsl(0, 52%, 20%)` (dunkles Rot/Maroon). Stärkerer Glow (0.47 statt 0.25). Dialogtext-Helligkeit 86% statt 89%. Border-Radius links von 0.5em auf 0.7em (weicherer Marker-Ansatz)
+- **Health-Vignette deutlich verstärkt.** Neuer transparenter Bereich beginnt bei 22% statt 28%. Randverdunkelung 0.85 statt 0.65. Opacity-Staffelung: 3→0.18 (vorher 0.10), 2→0.40 (0.28), 1→0.62 (0.48), 0→0.82 (0.65). Bei Health 0 bleibt nur noch ein schmaler Tunnel in der Mitte lesbar
+
+---
+
+## [0.9.55]
+
+### Fixed
+- **Scene-Marker-Zentrierung konsistent.** `width: 100%` direkt im `.scene-marker`-CSS ergänzt (`custom_head.html`). Zuvor lag die Breite nur auf dem NiceGUI-Wrapper-Div (`.classes("w-full")`), der erst nach dem initialen Paint durch Quasar gesetzt wird — `text-align: center` griff daher nicht zuverlässig beim ersten Laden. Mit explizitem `width: 100%` im Stylesheet ist der Marker sofort beim ersten Paint korrekt zentriert.
+- **Doppelklick-Schutz in der Charakter-Erstellung.** „Geschichte erschaffen"- und „Neu würfeln"-Buttons deaktivieren sich beim ersten Klick gegenseitig (`start_btn.disable(); reroll_btn.disable()`), um parallele API-Aufrufe zu verhindern. Bei einem Fehler werden beide Buttons wieder freigegeben. Auf dem Erfolgspfad macht `ui.navigate.reload()` das Freigeben hinfällig.
+
+---
+
 ## [0.9.54] — EdgeTales Design Modus (Work in Progress)
 
 ### Added

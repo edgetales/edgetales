@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.54"
+VERSION = "0.9.56"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-5-20250929"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -2427,6 +2427,7 @@ class GameState:
     character_concept: str = ""
     setting_genre: str = ""
     setting_tone: str = ""
+    setting_archetype: str = ""
     setting_description: str = ""
     edge: int = 1
     heart: int = 2
@@ -5099,7 +5100,7 @@ def _apply_memory_updates(game: GameState, json_text: str):
 # ===============================================================
 
 SAVE_FIELDS = [
-    "player_name", "character_concept", "setting_genre", "setting_tone",
+    "player_name", "character_concept", "setting_genre", "setting_tone", "setting_archetype",
     "setting_description", "edge", "heart", "iron", "shadow", "wits",
     "health", "spirit", "supply", "momentum", "max_momentum", "scene_count",
     "current_location", "current_scene_context", "npcs", "clocks",
@@ -5255,12 +5256,21 @@ def get_save_info(username: str, name: str) -> dict | None:
             "chapter_number": data.get("chapter_number", 1),
             "saved_at": data.get("saved_at", ""),
             "setting_genre": data.get("setting_genre", ""),
+            "setting_tone": data.get("setting_tone", ""),
+            "setting_archetype": data.get("setting_archetype", ""),
+            "character_concept": data.get("character_concept", ""),
+            "backstory": data.get("backstory", ""),
+            "player_wishes": data.get("player_wishes", ""),
+            "content_lines": data.get("content_lines", ""),
             "engine_version": data.get("engine_version", ""),
             "version_history": data.get("version_history", []),
         }
     except Exception:
         return {"name": name, "player_name": "?", "scene_count": 0,
                 "chapter_number": 1, "saved_at": "", "setting_genre": "",
+                "setting_tone": "", "setting_archetype": "",
+                "character_concept": "", "backstory": "", "player_wishes": "",
+                "content_lines": "",
                 "engine_version": "", "version_history": []}
 
 
@@ -5569,11 +5579,14 @@ def start_new_game(client: anthropic.Anthropic, creation_data: dict,
     if tone == "custom" and creation_data.get("tone_description"):
         tone = creation_data["tone_description"]
 
+    archetype = creation_data.get("archetype", "")
+
     game = GameState(
         player_name=setup.get("character_name", "Namenlos"),
         character_concept=setup.get("character_concept", ""),
         setting_genre=genre,
         setting_tone=tone,
+        setting_archetype=archetype,
         setting_description=setup.get("setting_description", ""),
         edge=stats.get("edge", 1), heart=stats.get("heart", 2),
         iron=stats.get("iron", 1), shadow=stats.get("shadow", 1),

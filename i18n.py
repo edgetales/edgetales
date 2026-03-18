@@ -236,6 +236,15 @@ _STRINGS = {
         "actions.no_saves": "Keine Spielst\u00e4nde vorhanden.",
         "actions.autosave": "Automatisch",
 
+        # Save card — setup info tooltip
+        "save_info.genre": "Genre",
+        "save_info.tone": "Ton",
+        "save_info.archetype": "Archetyp",
+        "save_info.concept": "Konzept",
+        "save_info.backstory": "Hintergrund",
+        "save_info.wishes": "W\u00fcnsche",
+        "save_info.boundaries": "Grenzen",
+
         # Settings
         "settings.title": "Einstellungen",
         "settings.api_key": "API Key",
@@ -623,6 +632,15 @@ _STRINGS = {
         "actions.save_date": "{date}",
         "actions.no_saves": "No save games found.",
         "actions.autosave": "Autosave",
+
+        # Save card — setup info tooltip
+        "save_info.genre": "Genre",
+        "save_info.tone": "Tone",
+        "save_info.archetype": "Archetype",
+        "save_info.concept": "Concept",
+        "save_info.backstory": "Backstory",
+        "save_info.wishes": "Wishes",
+        "save_info.boundaries": "Boundaries",
 
         # Settings
         "settings.title": "Settings",
