@@ -491,6 +491,7 @@ def load_user_settings(username: str) -> None:
     # Voice sample: "" or missing → no-sample label; filename → keep as-is
     saved_sample = cfg.get("cb_voice_sample", "")
     s["cb_voice_sample"] = get_no_voice_sample_label(lang) if not saved_sample else saved_sample
+    s["narrator_font"] = cfg.get("narrator_font", "sans")
 
 
 # ---------------------------------------------------------------------------
@@ -1213,8 +1214,8 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                                 _del_aria = t("aria.delete_save", lang, name=display_name)
                                 ui.button(icon="delete_outline", on_click=make_delete(sname)).props(f'flat round dense size=sm aria-label="{_del_aria}"').tooltip(t("actions.delete", lang)).style("color: var(--error)")
                             else:
-                                # Invisible button — same component as delete to keep info centered
-                                ui.button(icon="delete_outline").props('flat round dense size=sm').style("visibility: hidden")
+                                # Invisible spacer — same size as delete button to keep info centered
+                                ui.element("div").style("width: 36px; height: 36px")
                         # --- Chapter archives (inside active save card) ---
                         if is_active and chapter > 1:
                             archived = list_chapter_archives(username, sname)
@@ -2248,7 +2249,7 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
             scroll_target_id = f"msg-{len(s['messages'])}"
             with chat_container:
                 if game.scene_count > 1:
-                    ui.html(f'<h2 id="{scroll_target_id}" class="scene-marker">{t("game.scene_marker", L(), n=game.scene_count, location=game.current_location)}</h2>')
+                    ui.html(f'<h2 id="{scroll_target_id}" class="scene-marker">{t("game.scene_marker", L(), n=game.scene_count, location=game.current_location)}</h2>').classes("w-full")
                 else:
                     ui.html(f'<div id="{scroll_target_id}"></div>')
                 msg_col = ui.column().classes("chat-msg assistant w-full")
@@ -2374,6 +2375,30 @@ def render_momentum_burn() -> bool:
                                   "roll_data":rd}
                     save_game(game,username,s["messages"],s.get("active_save","autosave"))
                     if s.get("tts_enabled",False): s["pending_tts"]=narration
+                    # Rewind effect: VHS-Scan-Linien + Chrom-Schimmer vor dem Reload
+                    try:
+                        await ui.run_javascript('''
+                            (function(){
+                                var style = document.createElement('style');
+                                style.textContent =
+                                    '@keyframes _rw_lines{0%{background-position:0 0;opacity:0.85}40%{opacity:1}100%{background-position:0 -300px;opacity:0}}' +
+                                    '@keyframes _rw_flash{0%,100%{opacity:0}8%{opacity:0.9}20%{opacity:0.3}50%{opacity:0.6}80%{opacity:0.15}}' +
+                                    '@keyframes _rw_chrom{0%{opacity:0;transform:translateY(0)}15%{opacity:1}100%{opacity:0;transform:translateY(-8px)}}' +
+                                    '._rw_wrap{position:fixed;inset:0;z-index:99999;pointer-events:none;overflow:hidden}' +
+                                    '._rw_lines{position:absolute;inset:0;background:repeating-linear-gradient(to bottom,transparent 0px,transparent 3px,rgba(255,255,255,0.045) 3px,rgba(255,255,255,0.045) 4px);background-size:100% 4px;animation:_rw_lines 0.6s linear forwards}' +
+                                    '._rw_flash{position:absolute;inset:0;background:linear-gradient(180deg,rgba(220,180,80,0) 0%,rgba(220,180,80,0.55) 40%,rgba(220,180,80,0) 100%);animation:_rw_flash 0.55s ease forwards}' +
+                                    '._rw_chrom{position:absolute;inset:0;background:linear-gradient(180deg,transparent 30%,rgba(150,220,255,0.12) 50%,rgba(255,200,100,0.1) 52%,transparent 70%);animation:_rw_chrom 0.55s ease forwards}';
+                                document.head.appendChild(style);
+                                var wrap = document.createElement('div');
+                                wrap.className = '_rw_wrap';
+                                wrap.innerHTML = '<div class="_rw_lines"></div><div class="_rw_flash"></div><div class="_rw_chrom"></div>';
+                                document.body.appendChild(wrap);
+                                setTimeout(function(){ wrap.remove(); style.remove(); }, 750);
+                            })();
+                        ''', timeout=3.0)
+                        await asyncio.sleep(0.55)
+                    except Exception:
+                        pass
                     ui.navigate.reload()
                 except Exception as e:
                     btn_row.set_visibility(True)
@@ -2503,8 +2528,36 @@ def render_game_over() -> bool:
     s=S();game=s.get("game");lang=L()
     if not game or not game.game_over: return False
     kid=s.get("kid_friendly",False)
-    with ui.card().classes("w-full p-4").style("background: var(--error-dim); border: 1px solid var(--error-border)"):
-        ui.markdown(f"{t('gameover.title', lang)} " + (t("gameover.kid", lang) if kid else t("gameover.dark", lang)))
+    import json as _json
+
+    # Inject full-screen "Schwarzer Vorhang" overlay via JS.
+    # It fades out after the animation and hands off to the NiceGUI buttons below.
+    _sub   = t("gameover.dark", lang) if not kid else t("gameover.kid", lang)
+    _flavor = t("gameover.flavor_kid" if kid else "gameover.flavor", lang, name=game.player_name)
+    _skull  = "⭐" if kid else "💀"
+    _title  = "ABENTEUER ZU ENDE" if lang == "de" else "ADVENTURE OVER"
+    ui.run_javascript(f'''
+        (function(){{
+            if (document.querySelector('._go_overlay')) return;
+            var ov = document.createElement('div');
+            ov.className = '_go_overlay';
+            ov.innerHTML =
+                '<span class="_go_skull">{_skull}</span>'
+                + '<div class="_go_title">{_title}</div>'
+                + '<div class="_go_sub">{html_mod.escape(_sub)}</div>'
+                + '<div class="_go_line"></div>'
+                + '<div class="_go_flavor">{html_mod.escape(_flavor)}</div>';
+            document.body.appendChild(ov);
+            // Remove from DOM after animation completes
+            setTimeout(function(){{ ov.remove(); }}, 5500);
+        }})();
+    ''')
+
+    # NiceGUI card — becomes visible once overlay fades (after ~5.2s)
+    with ui.card().classes("w-full p-4").style(
+        "background: var(--error-dim); border: 1px solid var(--error-border)"
+    ):
+        ui.markdown(f"{t('gameover.title', lang)} " + (_sub))
         with ui.row().classes("gap-4 mt-4"):
             new_ch, full_new = _make_chapter_action(game, "gameover.chapter_msg")
             ui.button(f"{E['refresh']} {t('gameover.new_chapter', lang)}", on_click=new_ch, color="primary")

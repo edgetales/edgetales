@@ -5,78 +5,96 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.57]
+
+### Added
+- **Game Over — Black Curtain.** `render_game_over()` now displays a dramatic fullscreen overlay: skull (💀 / ⭐ in kid mode), title, subtitle, red divider line, and flavor text appear in a staggered sequence (0.3s–2.5s). Overlay fades out after 5.2s, revealing the NiceGUI buttons. Injected as a `position:fixed` div via `ui.run_javascript()`, with `pointer-events:none` so buttons remain clickable even during the animation. All CSS animations defined in `custom_head.html` (`._go_overlay`, `._go_skull`, `._go_title`, etc.)
+- **Kid Mode Game Over:** displays ⭐ instead of 💀 and a friendlier flavor text.
+- **Momentum Burn — Rewind Effect.** Just before `ui.navigate.reload()` after confirming a burn, a VHS rewind effect plays: horizontal scan lines rush upward, golden chroma shimmer (three CSS layers: `_rw_lines`, `_rw_flash`, `_rw_chrom`). Effect runs for 550ms; Python waits with `asyncio.sleep(0.55)` so the new text appears only after the visual peak. CSS is dynamically injected via a `<style>` tag and removed after playback. Replaces the earlier amber burst effect.
+- **New i18n keys:** `gameover.flavor` (`"{name} lies still. The story falls silent."`) and `gameover.flavor_kid` — DE + EN.
+- **Cinzel font** (`wght@300;400;700;900`) added to Google Fonts import in `custom_head.html` (used by Game Over overlay title).
+
+### Fixed
+- **`narrator_font` now loaded in `load_user_settings()`.** The setting was written to user config in `save_cfg()` but never read back into session state on load. After any reload (e.g. after Momentum Burn) dialog highlights and entity highlighting were missing. Fix: `s["narrator_font"] = cfg.get("narrator_font", "sans")` added to `load_user_settings()`.
+- **Scene marker missing `w-full` in `process_player_input()`.** The live-rendered scene marker (between scenes after a turn) was missing `.classes("w-full")` — the wrapping NiceGUI `<div>` was too narrow, causing `text-align: center` to appear left-aligned. `render_chat_messages()` already had the class correctly; only the live render path did not.
+
+### Changed
+- **Dialog highlight: `margin-left: -0.5em` added.** The symmetric `padding: 0 0.5em` was pushing the first character of each quote inward from the body text margin. With `margin-left: -0.5em` the text remains flush-left with the prose — the marker background overhangs slightly to the left, like a real highlighter pen on paper.
+
+---
+
 ## [0.9.56]
 
 ### Added
-- **Entity Highlighting im EdgeTales Design Modus.** NPC-Namen und Spielername werden im Erzählertext farblich hervorgehoben — datengetrieben aus dem GameState, keine Wortlisten. Dispositionsfarben: friendly/loyal → gedämpftes Grün, hostile/aggressive → gedämpftes Rot, fearful/wary → Amber. Spielername in Accent-Gold. Neutrale NPCs bleiben ungefärbt. Innerhalb von Dialog-Highlights leicht hellere Varianten für Kontrast gegen den Marker-Hintergrund. Neue Python-Funktionen: `_build_entity_data(game)` (baut Payload aus NPCs + Spielername, longest-first sortiert), `_inject_entity_highlights(game)` (JS-Call nach Render). Neue JS-Funktion `_etHighlight(data)` in `custom_head.html` walkt Text-Nodes per `TreeWalker` und wrapped Matches in `<span>`-Elemente. Injection an zwei Stellen: `render_chat_messages()` (Page-Load) und `process_player_input()` (Live-Turns). CSS-Klassen: `.et-npc-warm`, `.et-npc-hostile`, `.et-npc-wary`, `.et-player`
-- **Setup-Info-Tooltip auf Savegame-Karten.** Neuer ℹ️-Button auf jeder Savegame-Karte (zwischen Load und Delete) zeigt die Erstellungsparameter: Genre, Ton, Archetyp, Konzept, Hintergrund, Wünsche, Grenzen. Scrollbar bei langen Inhalten (`max-height: 320px; overflow-y: auto`). Genre/Tone/Archetype-Codes werden über `get_genre_label()`/`get_tone_label()`/`get_archetype_label()` in lokalisierte Labels aufgelöst. Button erscheint nur wenn mindestens ein Feld gefüllt ist. Nutzt `_info_btn()`-Pattern mit `ui.menu()` (click-to-dismiss). `get_save_info()` erweitert: liefert jetzt `setting_tone`, `setting_archetype`, `character_concept`, `backstory`, `player_wishes`, `content_lines`
-- **`setting_archetype` im GameState.** Neues Feld `setting_archetype: str` in `GameState` und `SAVE_FIELDS`. `start_new_game()` speichert den gewählten Archetyp-Code. Bestehende Saves ohne das Feld zeigen keine Archetyp-Zeile im Tooltip (graceful degradation)
-- i18n-Keys: `save_info.genre`, `save_info.tone`, `save_info.archetype`, `save_info.concept`, `save_info.backstory`, `save_info.wishes`, `save_info.boundaries` (DE + EN)
+- **Entity Highlighting in EdgeTales Design Mode.** NPC names and the player name are color-highlighted in narrator text — data-driven from GameState, no word lists. Disposition colors: friendly/loyal → muted green, hostile/aggressive → muted red, fearful/wary → amber. Player name in accent gold. Neutral NPCs remain uncolored. Inside dialog highlights, slightly brighter variants for contrast against the marker background. New Python functions: `_build_entity_data(game)` (builds payload from NPCs + player name, sorted longest-first), `_inject_entity_highlights(game)` (JS call after render). New JS function `_etHighlight(data)` in `custom_head.html` walks text nodes via `TreeWalker` and wraps matches in `<span>` elements. Injection at two points: `render_chat_messages()` (page load) and `process_player_input()` (live turns). CSS classes: `.et-npc-warm`, `.et-npc-hostile`, `.et-npc-wary`, `.et-player`
+- **Setup info tooltip on save cards.** New ℹ️ button on each save card (between Load and Delete) shows the creation parameters: genre, tone, archetype, concept, backstory, wishes, content boundaries. Scrollable for long content (`max-height: 320px; overflow-y: auto`). Genre/tone/archetype codes resolved to localized labels via `get_genre_label()`/`get_tone_label()`/`get_archetype_label()`. Button only shown when at least one field is populated. Uses `_info_btn()` pattern with `ui.menu()` (click-to-dismiss). `get_save_info()` extended: now returns `setting_tone`, `setting_archetype`, `character_concept`, `backstory`, `player_wishes`, `content_lines`
+- **`setting_archetype` in GameState.** New field `setting_archetype: str` in `GameState` and `SAVE_FIELDS`. `start_new_game()` stores the chosen archetype code. Existing saves without the field show no archetype row in the tooltip (graceful degradation).
+- i18n keys: `save_info.genre`, `save_info.tone`, `save_info.archetype`, `save_info.concept`, `save_info.backstory`, `save_info.wishes`, `save_info.boundaries` (DE + EN)
 
 ### Changed
-- **Dialog-Highlight Farbe: Teal → Dunkelrot.** Textmarker-Effekt umgestellt von `hsl(159, 52%, 49%)` (Teal) auf `hsl(0, 52%, 20%)` (dunkles Rot/Maroon). Stärkerer Glow (0.47 statt 0.25). Dialogtext-Helligkeit 86% statt 89%. Border-Radius links von 0.5em auf 0.7em (weicherer Marker-Ansatz)
-- **Health-Vignette deutlich verstärkt.** Neuer transparenter Bereich beginnt bei 22% statt 28%. Randverdunkelung 0.85 statt 0.65. Opacity-Staffelung: 3→0.18 (vorher 0.10), 2→0.40 (0.28), 1→0.62 (0.48), 0→0.82 (0.65). Bei Health 0 bleibt nur noch ein schmaler Tunnel in der Mitte lesbar
+- **Dialog highlight color: Teal → Dark Red.** Marker effect changed from `hsl(159, 52%, 49%)` (teal) to `hsl(0, 52%, 20%)` (dark red/maroon). Stronger glow (0.47 vs 0.25). Dialog text brightness 86% instead of 89%. Left border-radius from 0.5em to 0.7em (softer marker entry).
+- **Health vignette significantly strengthened.** Transparent center now starts at 22% instead of 28%. Edge darkening 0.85 instead of 0.65. Opacity scale: 3→0.18 (was 0.10), 2→0.40 (0.28), 1→0.62 (0.48), 0→0.82 (0.65). At health 0 only a narrow tunnel remains readable in the center.
 
 ---
 
 ## [0.9.55]
 
 ### Fixed
-- **Scene-Marker-Zentrierung konsistent.** `width: 100%` direkt im `.scene-marker`-CSS ergänzt (`custom_head.html`). Zuvor lag die Breite nur auf dem NiceGUI-Wrapper-Div (`.classes("w-full")`), der erst nach dem initialen Paint durch Quasar gesetzt wird — `text-align: center` griff daher nicht zuverlässig beim ersten Laden. Mit explizitem `width: 100%` im Stylesheet ist der Marker sofort beim ersten Paint korrekt zentriert.
-- **Doppelklick-Schutz in der Charakter-Erstellung.** „Geschichte erschaffen"- und „Neu würfeln"-Buttons deaktivieren sich beim ersten Klick gegenseitig (`start_btn.disable(); reroll_btn.disable()`), um parallele API-Aufrufe zu verhindern. Bei einem Fehler werden beide Buttons wieder freigegeben. Auf dem Erfolgspfad macht `ui.navigate.reload()` das Freigeben hinfällig.
+- **Scene marker centering consistent.** `width: 100%` added directly to the `.scene-marker` CSS in `custom_head.html`. Previously the width was only on the NiceGUI wrapper div (`.classes("w-full")`), which Quasar applies after the initial paint — `text-align: center` therefore did not reliably take effect on first load. With explicit `width: 100%` in the stylesheet the marker is correctly centered from the very first paint.
+- **Double-click guard in character creation.** "Create Story" and "Re-roll" buttons now disable each other on first click (`start_btn.disable(); reroll_btn.disable()`) to prevent parallel API calls. On error both buttons are re-enabled. On the success path `ui.navigate.reload()` makes re-enabling unnecessary.
 
 ---
 
-## [0.9.54] — EdgeTales Design Modus (Work in Progress)
+## [0.9.54] — EdgeTales Design Mode (Work in Progress)
 
 ### Added
-- **„EdgeTales Design" Lesemodus** (`narrator_font = "highlight"`). Neuer Eintrag im Schriftart-Dropdown (DE/EN: „EdgeTales Design"). Aktiviert ein Bündel atmosphärischer Lese-Effekte die im normalen `serif`/`sans`-Modus inaktiv bleiben. Status: Work in Progress — wird durch Testing weiter kalibriert.
+- **"EdgeTales Design" reading mode** (`narrator_font = "highlight"`). New entry in the font dropdown (DE/EN: "EdgeTales Design"). Activates a bundle of atmospheric reading effects that are inactive in the normal `serif`/`sans` modes. Status: Work in Progress — being refined through testing.
 
-- **Dialog-Highlight:** Gesprochener Dialog (alle Anführungszeichentypen: `„"` DE, `""` EN-curly, `«»` / `»«` Guillemets) wird server-seitig in `_highlight_dialog()` mit `***...**` (bold-italic Markdown) gewrappt — Anführungszeichen inklusive. CSS-Selektor `.chat-msg.assistant em strong` rendert den Textmarker: `linear-gradient(to right, ...)` mit organischem `border-radius: 0.5em 0.3em`. Aktuelle Farbe: Teal (h=159, s=52%, l=49%). Kein HTML-Injection — läuft problemlos durch DOMPurify/`setHTML`.
+- **Dialog Highlight:** Spoken dialog (all quote types: `„"` DE, `""` EN curly, `«»` / `»«` guillemets) is wrapped server-side in `_highlight_dialog()` with `***...**` (bold-italic Markdown) — including the quote marks. CSS selector `.chat-msg.assistant em strong` renders the text marker: `linear-gradient(to right, ...)` with organic `border-radius: 0.5em 0.3em`. Initial color: Teal (h=159, s=52%, l=49%). No HTML injection — passes cleanly through DOMPurify/`setHTML`.
 
-- **`_highlight_dialog(text)`** — neue Hilfsfunktion in `app.py` (nach `_clean_narration`). Aufgerufen in `render_chat_messages()` und `process_player_input()` wenn `narrator_font == "highlight"`.
+- **`_highlight_dialog(text)`** — new helper function in `app.py` (after `_clean_narration`). Called in `render_chat_messages()` and `process_player_input()` when `narrator_font == "highlight"`.
 
-- **Chaos-Textbewegung:** Ab `chaos_factor >= 8` atmet der Erzählertext minimal (`letter-spacing`/`word-spacing` pulsiert alle 4s, ease-in-out). Nur im highlight-Modus aktiv.
+- **Chaos text motion:** From `chaos_factor >= 8`, narrator text breathes minimally (`letter-spacing`/`word-spacing` pulses every 4s, ease-in-out). Active in highlight mode only.
 
-- **Chaos Ambient:** Ab `chaos_factor >= 7` pulsiert ein subtiler roter Randschimmer (`body::after`, radial-gradient, 5s Zyklus). Unabhängig vom Schrift-Modus. JS-Call in `render_sidebar_status()` setzt/entfernt `data-chaos-high` Attribut.
+- **Chaos Ambient:** From `chaos_factor >= 7`, a subtle red edge shimmer pulses (`body::after`, radial-gradient, 5s cycle). Independent of font mode. JS call in `render_sidebar_status()` sets/removes `data-chaos-high` attribute.
 
-- **Health Vignette:** Bei `health <= 3` zieht sich das Sichtfeld durch ein radiales Dunkel-Overlay ein (`body[data-narrator-font="highlight"]::before`, opacity via CSS-Variable `--health-vignette`). Staffelung: 5/4→0.0, 3→0.10, 2→0.28, 1→0.48, 0→0.65. 4s CSS-Transition. JS-Call in `render_sidebar_status()`.
+- **Health Vignette:** When `health <= 3`, the field of view narrows via a radial dark overlay (`body[data-narrator-font="highlight"]::before`, opacity via CSS variable `--health-vignette`). Scale: 5/4→0.0, 3→0.10, 2→0.28, 1→0.48, 0→0.65. 4s CSS transition. JS call in `render_sidebar_status()`.
 
-- **Live Font-Switching:** Schriftwahl wirkt sofort nach dem Speichern ohne Browser-Reload. `save_cfg()` setzt `data-narrator-font` direkt per JS. Reload nur bei Wechsel von/nach `highlight` (server-seitige Markdown-Neuverarbeitung nötig).
+- **Live font switching:** Font selection takes effect immediately after saving without a browser reload. `save_cfg()` sets `data-narrator-font` directly via JS. Reload only required when switching to/from `highlight` (server-side Markdown re-processing needed).
 
 ### Changed
-- **Schriftart-Dropdown neu benannt und vereinfacht.** Crimson Pro entfernt. Drei Optionen: „Serifen" / „Serifenlos" / „EdgeTales Design" (DE+EN). Google Fonts lädt nur noch Inter. Default-Serif ist jetzt Georgia/Times New Roman.
-- **`i18n.py`:** `narrator_font_crimson` Key entfernt, verbleibende Keys auf neue Kurz-Labels aktualisiert.
-- **`save_cfg()` Bugfix:** `old_font` wurde bisher nach dem Überschreiben gelesen — Reload-Trigger für Highlight-Wechsel hat nie gefeuert. Lesereihenfolge korrigiert.
+- **Font dropdown renamed and simplified.** Crimson Pro removed. Three options: "Serif" / "Sans-Serif" / "EdgeTales Design" (DE+EN). Google Fonts now loads only Inter. Default serif is now Georgia/Times New Roman.
+- **`i18n.py`:** `narrator_font_crimson` key removed, remaining keys updated to new short labels.
+- **`save_cfg()` bugfix:** `old_font` was previously read after being overwritten — the reload trigger for highlight mode switches never fired. Read order corrected.
 
 ### Technical Notes
-- Dialog-Highlight nutzt `***Markdown***` statt `<span>`-Injection weil NiceGUI's `ui.markdown()` über `setHTML()` (kein Safari-Support) bzw. DOMPurify sanitized — beide strippten injizierte Spans zuverlässig.
-- `body::before` (Health-Vignette) und `body::after` (Chaos-Ambient) als getrennte Pseudo-Elemente damit beide gleichzeitig aktiv sein können.
-- **`_status_context_block(game)`** — neue Hilfsfunktion in `engine.py`. Mappt die aktuellen Spielwerte Health/Spirit/Supply auf je 6 narrative Stufen (5→0) und injiziert einen `<character_state>`-Block in den Narrator-System-Prompt. Der Narrator bekommt damit explizit mitgeteilt was die Zahlen atmosphärisch bedeuten (z.B. h=3 → „injured — clearly hurting, moving with effort"), ohne dass Zahlen in der Prosa auftauchen. Instruktion: Zustand durch Körpersprache/Sensorik widerspiegeln, Konsistenz über Szenen halten. Nur aktiv wenn `game` vorhanden (Opening-Calls ohne GameState unberührt).
+- Dialog highlight uses `***Markdown***` instead of `<span>` injection because NiceGUI's `ui.markdown()` sanitizes via `setHTML()` (no Safari support) or DOMPurify — both reliably stripped injected spans.
+- `body::before` (health vignette) and `body::after` (chaos ambient) as separate pseudo-elements so both can be active simultaneously.
+- **`_status_context_block(game)`** — new helper in `engine.py`. Maps current Health/Spirit/Supply values to 6 narrative stages each (5→0) and injects a `<character_state>` block into the narrator system prompt. The narrator is told explicitly what the numbers mean atmospherically (e.g. h=3 → "injured — clearly hurting, moving with effort"), without numbers appearing in prose. Instruction: reflect condition through body language and sensory detail, maintain consistency across scenes. Only active when `game` is present (opening calls without GameState are unaffected).
 
 ---
 
 ## [0.9.53]
 
 ### Changed
-- **Info-Tooltips in Settings: hover → click-to-dismiss (mobile-friendly).** Alle 4 Info-Icons in den Einstellungen (Kid Mode, TTS, STT, Screen Reader) verwenden jetzt `ui.menu()` statt `ui.tooltip()`. Das Popover öffnet sich per Klick, bleibt sichtbar bis der Nutzer anderswo klickt, und wird nicht mehr vom Finger verdeckt. Neue Hilfsfunktion `_info_btn(tip_text)` in `app.py`. ARIA-Label auf dem Button bleibt für Screen Reader erhalten
-- **CSS-Variablen-System vervollständigt.** `custom_head.html` `:root` um 9 semantische Variablen erweitert: `--user-border` (#C45C3A, Terrakotta für User-Messages), `--success` / `--success-dim`, `--error` / `--error-dark` / `--error-dim` / `--error-border`, `--accent-border` / `--accent-dim-strong`. Alle zuvor hardcoded Hex-Werte in `custom_head.html` und `app.py` auf Variablen umgestellt: Track-Fills, Dice-Display-Farben, STT-Waveform, Correction-Badge-Border, Retry-Banner, Game-Over-Karte, Chapter-Banner, Epilog-/Momentum-Karten, STT-Status-Text, Delete-Button, Erfolgs-Labels, Help-Text-Inline-Spans. Einzige verbleibende Hartkodierungen: Spirit-Blau (#2563eb/#60a5fa) und Scrollbar-Weiß — beide semantisch eigenständig
-- **Chapter-Archiv-Banner harmonisiert.** Hintergrund war zuvor `rgba(106,76,147,0.15)` (Lila) — Ausreißer ohne Ankerpunkt im Farbsystem. Jetzt `var(--accent-dim)` / `var(--accent-border)`, konsistent mit allen anderen inhaltlichen Karten
-- **Choice-Button Hover-Transition.** `transition: border-color 0.15s ease, background-color 0.15s ease` auf `.choice-btn.q-btn` — Farbwechsel bei Hover weich statt abrupt
-- **Scene-Marker visuell aufgewertet.** `display: block` mit `border-top` / `border-bottom` statt Flexbox-Linien — funktioniert korrekt bei mehrzeiligen Ortsnamen. `letter-spacing: 0.06em` (reduziert von 0.12em), Font-Size 0.80em. Die `—`-Dekoratoren im Python-Code entfernt, da die Borders die Trennung übernehmen
-- **Sidebar: Chaos-Anzeige bereinigt.** Orange-Circle-Emoji und sichtbare Gefahrenstufe entfernt (redundant neben Progressbar). Gefahrenstufe in `aria-label` der Progressbar verlagert (`role="progressbar"` + `aria-valuenow/min/max` + `aria-label="Chaos 5 von 9 — mittel"`). Visuell zeigt die Zeile nur noch `🌪 Chaos: 5/9`
-- **Typografie: Inter + Crimson Pro.** Google Fonts via `<link preconnect>` + einzigem kombinierten Request. Inter (Variable Font `wght@300..700`) als globale UI-Schrift auf `body`. Crimson Pro (`ital,wght@0,400;0,600;1,400;1,600`) optional für Narrator-Nachrichten (`.chat-msg.assistant`) — wählbar per Setting (s.u.)
-- **Sidebar: NPC-Expansion vollständig strukturiert.** Expansion-Header zeigt jetzt `Disposition-Emoji + Label — Name` (z.B. `💚 Loyal — Emilia`) statt nur den Namen. Aufgeklappt: `Bindung: X/Y`, ggf. Aliase kursiv, dann Description — Name und Disposition-Symbol erscheinen nicht mehr redundant im Inhalt. Implementiert über `.npc-card` CSS-Klasse. Background-NPCs: gleiche Expander-Struktur pro Person (eigener Expander je NPC innerhalb des Gruppen-Expanders), leicht gedimmt via `opacity:0.75`. Deceased-NPCs: Strikethrough mit Padding
-- **Momentum-Burn-Karte: Dringlichkeit durch Glow-Animation.** Neue CSS-Klasse `.burn-card` mit 2s-Keyframe `burn-glow` — subtiler Amber-Glow auf der Box-Shadow pulsiert sanft. Amber-Label-Zeile (`🔥 Momentum`) über dem Markdown-Text als visueller Anker
-- **Export-Button umbenannt.** „Export" → „PDF Export" (DE + EN), Buch-Emoji entfernt. Gilt für Sidebar-Button und Chapter-Export-Button
-- **Erzähler-Schriftart als User-Setting.** Neues Dropdown in den Einstellungen: Crimson Pro (Serifen), System Serifenlos (Default für neue Accounts), System Serifen. Wahl wirkt live ohne Speichern, wird persistent in User-Config abgelegt. Font wird über `data-narrator-font` Attribut auf `body` gesteuert, CSS-Attribute-Selektoren überschreiben die Basis-Regel
+- **Info tooltips in Settings: hover → click-to-dismiss (mobile-friendly).** All 4 info icons in Settings (Kid Mode, TTS, STT, Screen Reader) now use `ui.menu()` instead of `ui.tooltip()`. The popover opens on click, stays visible until the user taps elsewhere, and is no longer obscured by a finger. New helper function `_info_btn(tip_text)` in `app.py`. ARIA label on the button is preserved for screen readers.
+- **CSS variable system completed.** `custom_head.html` `:root` extended with 9 semantic variables: `--user-border` (#C45C3A, terracotta for user messages), `--success` / `--success-dim`, `--error` / `--error-dark` / `--error-dim` / `--error-border`, `--accent-border` / `--accent-dim-strong`. All previously hardcoded hex values in `custom_head.html` and `app.py` replaced with variables: track fills, dice display colors, STT waveform, correction badge border, retry banner, game over card, chapter banner, epilogue/momentum cards, STT status text, delete button, success labels, help text inline spans. Only remaining hardcoded values: spirit blue (#2563eb/#60a5fa) and scrollbar white — both semantically independent.
+- **Chapter archive banner harmonized.** Background was previously `rgba(106,76,147,0.15)` (purple) — an outlier with no anchor in the color system. Now `var(--accent-dim)` / `var(--accent-border)`, consistent with all other content cards.
+- **Choice button hover transition.** `transition: border-color 0.15s ease, background-color 0.15s ease` on `.choice-btn.q-btn` — color change on hover is now smooth instead of instant.
+- **Scene marker visually improved.** `display: block` with `border-top` / `border-bottom` instead of flexbox lines — works correctly with multi-line location names. `letter-spacing: 0.06em` (reduced from 0.12em), font-size 0.80em. Removed `—` decorators from Python code since borders handle the separation.
+- **Sidebar: Chaos display cleaned up.** Orange circle emoji and visible danger level removed (redundant alongside progress bar). Danger level moved into the progress bar's `aria-label` (`role="progressbar"` + `aria-valuenow/min/max` + `aria-label="Chaos 5 of 9 — medium"`). Visually the row now only shows `🌪 Chaos: 5/9`.
+- **Typography: Inter + Crimson Pro.** Google Fonts via `<link preconnect>` + single combined request. Inter (variable font `wght@300..700`) as global UI font on `body`. Crimson Pro (`ital,wght@0,400;0,600;1,400;1,600`) optional for narrator messages (`.chat-msg.assistant`) — selectable via setting (see below).
+- **Sidebar: NPC expansion fully structured.** Expansion header now shows `Disposition emoji + label — Name` (e.g. `💚 Loyal — Emilia`) instead of just the name. Expanded: `Bond: X/Y`, aliases in italics if present, then description — name and disposition symbol no longer appear redundantly in the body. Implemented via `.npc-card` CSS class. Background NPCs: same expander structure per person (individual expander per NPC inside the group expander), slightly dimmed via `opacity:0.75`. Deceased NPCs: strikethrough with padding.
+- **Momentum burn card: urgency via glow animation.** New CSS class `.burn-card` with 2s keyframe `burn-glow` — subtle amber glow on box-shadow pulses gently. Amber label row (`🔥 Momentum`) above the Markdown text as a visual anchor.
+- **Export button renamed.** "Export" → "PDF Export" (DE + EN), book emoji removed. Applies to sidebar button and chapter export button.
+- **Narrator font as user setting.** New dropdown in Settings: Crimson Pro (serif), System sans-serif (default for new accounts), System serif. Selection takes effect live without saving, persisted to user config. Font controlled via `data-narrator-font` attribute on `body`, CSS attribute selectors override the base rule.
 
 ### Added
-- `_info_btn(tip_text)` — Hilfsfunktion in `app.py`. Rendert flat-round Icon-Button mit `ui.menu()` als Kind; Touch-freundlicher Ersatz für hover-basiertes `ui.tooltip()`
-- CSS-Variablen: `--user-border`, `--success`, `--success-dim`, `--error`, `--error-dark`, `--error-dim`, `--error-border`, `--accent-border`, `--accent-dim-strong`
-- CSS-Klassen: `.npc-card`, `.npc-name`, `.npc-meta`, `.npc-desc`, `.burn-card`
-- CSS-Keyframe: `@keyframes burn-glow`
-- i18n-Keys: `settings.narrator_font`, `settings.narrator_font_crimson`, `settings.narrator_font_sans`, `settings.narrator_font_serif`, `sidebar.bond`, `aria.chaos_bar` (DE + EN)
+- `_info_btn(tip_text)` — helper function in `app.py`. Renders a flat-round icon button with `ui.menu()` as child; touch-friendly replacement for hover-based `ui.tooltip()`.
+- CSS variables: `--user-border`, `--success`, `--success-dim`, `--error`, `--error-dark`, `--error-dim`, `--error-border`, `--accent-border`, `--accent-dim-strong`
+- CSS classes: `.npc-card`, `.npc-name`, `.npc-meta`, `.npc-desc`, `.burn-card`
+- CSS keyframe: `@keyframes burn-glow`
+- i18n keys: `settings.narrator_font`, `settings.narrator_font_crimson`, `settings.narrator_font_sans`, `settings.narrator_font_serif`, `sidebar.bond`, `aria.chaos_bar` (DE + EN)
 
 ---
 

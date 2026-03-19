@@ -374,6 +374,8 @@ _STRINGS = {
         "gameover.new_chapter": "Neues Kapitel",
         "gameover.restart": "Komplett neu",
         "gameover.chapter_msg": "Kapitel {n}...",
+        "gameover.flavor": "{name} liegt reglos. Die Geschichte verstummt.",
+        "gameover.flavor_kid": "Das war ein hartes Abenteuer — aber jedes Ende ist ein neuer Anfang.",
 
         # Epilogue
         "epilogue.offer_title": "Die Geschichte hat ihr Ziel erreicht",
@@ -772,6 +774,8 @@ _STRINGS = {
         "gameover.new_chapter": "New Chapter",
         "gameover.restart": "Start Over",
         "gameover.chapter_msg": "Chapter {n}...",
+        "gameover.flavor": "{name} lies still. The story falls silent.",
+        "gameover.flavor_kid": "That was a tough adventure — but every ending is a new beginning.",
 
         # Epilogue
         "epilogue.offer_title": "The story has reached its conclusion",

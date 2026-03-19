@@ -5,7 +5,7 @@
 <meta name="apple-mobile-web-app-title" content="EdgeTales">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300..700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@300;400;700;900&family=Inter:wght@300..700&display=swap" rel="stylesheet">
 <style>
 :root {
     --bg-primary: #121212;
@@ -143,6 +143,7 @@ body[data-narrator-font="highlight"] .chat-msg.assistant strong em {
     /* Asymmetrischer Radius: links rund (Marker-Ansatz), rechts spitzer (Auslauf) */
     border-radius: 0.7em 0.3em;
     padding: 0.00em 0.50em 0.0em;
+    margin-left: -0.5em;
     color: hsl(0, 32%, 86%);
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
@@ -219,8 +220,71 @@ body[data-narrator-font="highlight"] .chat-msg.assistant em strong .et-player,
 body[data-narrator-font="highlight"] .chat-msg.assistant strong em .et-player      { color: var(--accent-light); }
 
 /* ==========================================
-   MOBILE RESPONSIVE
+   GAME OVER — Schwarzer Vorhang Overlay
+   Injiziert via ui.run_javascript() in render_game_over.
+   Fadet nach der Animation weg (pointer-events:none)
+   und gibt die NiceGUI-Buttons frei.
    ========================================== */
+@keyframes _go_appear   { to { opacity: 1; } }
+@keyframes _go_line     { to { width: 180px; opacity: 0.5; } }
+@keyframes _go_fadeout  { 0%{opacity:1} 80%{opacity:1} 100%{opacity:0} }
+
+._go_overlay {
+    position: fixed; inset: 0; z-index: 9990;
+    background: #000;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center; padding: 2rem;
+    animation: _go_fadeout 1s ease-in 4.2s forwards;
+    pointer-events: none;
+}
+._go_skull {
+    font-size: 3.5rem;
+    opacity: 0;
+    display: block;
+    margin-bottom: 1.2rem;
+    filter: drop-shadow(0 0 28px rgba(220,38,38,0.5));
+    animation: _go_appear 0.8s ease-out 0.3s forwards;
+}
+._go_title {
+    font-family: 'Cinzel', serif;
+    font-size: clamp(2.2rem, 8vw, 4.5rem);
+    font-weight: 900;
+    letter-spacing: 0.2em;
+    color: #fff;
+    opacity: 0;
+    line-height: 1.1;
+    text-shadow: 0 0 60px rgba(220,38,38,0.35);
+    animation: _go_appear 1s ease-out 0.9s forwards;
+}
+._go_sub {
+    font-family: 'Cinzel', serif;
+    font-size: 0.72rem;
+    font-weight: 300;
+    letter-spacing: 0.3em;
+    color: #444;
+    text-transform: uppercase;
+    opacity: 0;
+    margin-top: 0.6rem;
+    animation: _go_appear 1s ease-out 1.6s forwards;
+}
+._go_line {
+    width: 0; height: 1px;
+    background: #dc2626;
+    margin: 1.8rem auto;
+    opacity: 0;
+    animation: _go_line 1s ease-out 2.1s forwards;
+}
+._go_flavor {
+    font-family: Georgia, serif;
+    font-style: italic;
+    color: #777;
+    font-size: 0.92rem;
+    max-width: 360px;
+    line-height: 1.75;
+    opacity: 0;
+    animation: _go_appear 1s ease-out 2.5s forwards;
+}
 @media (max-width: 768px) {
     .chat-msg.user { padding: 0.5rem 0.75rem; }
     .stat-value { font-size: 1.4rem; } .stat-label { font-size: 0.75rem; } .stat-item { padding: 0.35rem 0.5rem; }
