@@ -765,7 +765,8 @@ def _setup_stt_button(mic_btn, inp, chat_container, stt_status, stt_status_conte
 
     async def _transcribe_and_send(b64: str):
         """Common handler: decode base64 audio, transcribe, and send as player input."""
-        _show_status(f'<span class="stt-spinner-inline"></span> {t("stt.transcribing", L())}')
+        _lang = L()  # Capture now — L() loses NiceGUI request context after await
+        _show_status(f'<span class="stt-spinner-inline"></span> {t("stt.transcribing", _lang)}')
 
         async def _keepalive():
             """Periodically update the spinner to prevent WebSocket timeout
@@ -776,7 +777,7 @@ def _setup_stt_button(mic_btn, inp, chat_container, stt_status, stt_status_conte
                 elapsed += 10
                 _show_status(
                     f'<span class="stt-spinner-inline"></span>'
-                    f' {t("stt.transcribing", L())} ({elapsed}s)'
+                    f' {t("stt.transcribing", _lang)} ({elapsed}s)'
                 )
 
         _ka_task = asyncio.create_task(_keepalive())
