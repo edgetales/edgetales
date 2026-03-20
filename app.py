@@ -766,6 +766,20 @@ def _setup_stt_button(mic_btn, inp, chat_container, stt_status, stt_status_conte
     async def _transcribe_and_send(b64: str):
         """Common handler: decode base64 audio, transcribe, and send as player input."""
         _show_status(f'<span class="stt-spinner-inline"></span> {t("stt.transcribing", L())}')
+
+        async def _keepalive():
+            """Periodically update the spinner to prevent WebSocket timeout
+            during long transcriptions on slow hardware (e.g. Raspberry Pi CPU)."""
+            elapsed = 0
+            while True:
+                await asyncio.sleep(10)
+                elapsed += 10
+                _show_status(
+                    f'<span class="stt-spinner-inline"></span>'
+                    f' {t("stt.transcribing", L())} ({elapsed}s)'
+                )
+
+        _ka_task = asyncio.create_task(_keepalive())
         try:
             import base64 as b64mod
             audio_bytes = b64mod.b64decode(b64)
@@ -784,6 +798,8 @@ def _setup_stt_button(mic_btn, inp, chat_container, stt_status, stt_status_conte
             log(f"[STT] Error: {ex}", level="warning")
             _show_status(f'{E["x_mark"]} <span style="color: var(--error)">{t("stt.error", L(), error=ex)}</span>')
             asyncio.create_task(_hide_status_delayed(4000))
+        finally:
+            _ka_task.cancel()
 
     async def handle_audio(e):
         """Receive complete base64 audio from browser (small recordings)."""
