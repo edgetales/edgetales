@@ -1158,7 +1158,7 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                             _load_aria = t("aria.load_save", lang, name=display_name)
                             ui.button(icon="play_arrow", on_click=make_load(sname, display_name, is_active)).props(f'flat round dense size=sm aria-label="{_load_aria}"').tooltip(t("actions.load", lang))
 
-                            # --- Setup info tooltip ---
+                            # --- Setup info tooltip (slot always rendered for stable layout) ---
                             _si_genre = info.get("setting_genre", "")
                             _si_tone = info.get("setting_tone", "")
                             _si_arch = info.get("setting_archetype", "")
@@ -1166,11 +1166,12 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                             _si_back = info.get("backstory", "")
                             _si_wishes = info.get("player_wishes", "")
                             _si_bounds = info.get("content_lines", "")
-                            # Only show button if there's anything to display
-                            if any([_si_genre, _si_tone, _si_arch, _si_concept, _si_back, _si_wishes, _si_bounds]):
-                                with ui.button(icon="info_outline").props(
-                                    'flat round dense size=sm'
-                                ).classes("text-gray-400").style("min-width: 36px; min-height: 36px"):
+                            _has_info = any([_si_genre, _si_tone, _si_arch, _si_concept, _si_back, _si_wishes, _si_bounds])
+                            _info_visibility = "" if _has_info else "visibility: hidden; pointer-events: none"
+                            with ui.button(icon="info_outline").props(
+                                'flat round dense size=sm'
+                            ).classes("text-gray-400").style(f"min-width: 36px; min-height: 36px; {_info_visibility}"):
+                                if _has_info:
                                     with ui.menu().props("anchor='top middle' self='bottom middle' :offset='[0,6]'"):
                                         with ui.column().classes("gap-1").style(
                                             "max-width: 280px; max-height: 320px; overflow-y: auto;"
@@ -1194,6 +1195,7 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                                             if _si_bounds:
                                                 ui.html(f'<b>{t("save_info.boundaries", lang)}:</b> {html_mod.escape(_si_bounds)}')
 
+                            # --- Delete slot (always rendered for stable layout) ---
                             if sname != "autosave":
                                 def make_delete(n=sname):
                                     async def do_delete():
@@ -1214,8 +1216,8 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                                 _del_aria = t("aria.delete_save", lang, name=display_name)
                                 ui.button(icon="delete_outline", on_click=make_delete(sname)).props(f'flat round dense size=sm aria-label="{_del_aria}"').tooltip(t("actions.delete", lang)).style("color: var(--error)")
                             else:
-                                # Invisible spacer — same size as delete button to keep info centered
-                                ui.element("div").style("width: 36px; height: 36px")
+                                # Phantom button — invisible, keeps delete slot for stable centering
+                                ui.button(icon="delete_outline").props('flat round dense size=sm').style("min-width: 36px; min-height: 36px; visibility: hidden; pointer-events: none")
                         # --- Chapter archives (inside active save card) ---
                         if is_active and chapter > 1:
                             archived = list_chapter_archives(username, sname)
