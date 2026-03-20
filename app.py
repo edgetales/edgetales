@@ -1128,8 +1128,8 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                         if date_str:
                             meta += f" {E['dot']} {date_str}"
                         ui.label(meta).classes("text-xs").style("color: var(--text-secondary)")
-                        # Action buttons — own row, load left, delete right
-                        with ui.row().classes("w-full items-center justify-between mt-1").style("padding: 0 0.25rem"):
+                        # Action buttons — 3-column grid, one slot per button (stable layout regardless of visibility)
+                        with ui.element("div").style("display: grid; grid-template-columns: 1fr 1fr 1fr; width: 100%; align-items: center; margin-top: 4px; padding: 0 0.25rem"):
                             def make_load(n=sname, dn=display_name, _active=is_active):
                                 async def do_load():
                                     async def _execute_load():
@@ -1156,7 +1156,7 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                                         await _execute_load()
                                 return do_load
                             _load_aria = t("aria.load_save", lang, name=display_name)
-                            ui.button(icon="play_arrow", on_click=make_load(sname, display_name, is_active)).props(f'flat round dense size=sm aria-label="{_load_aria}"').tooltip(t("actions.load", lang))
+                            ui.button(icon="play_arrow", on_click=make_load(sname, display_name, is_active)).props(f'flat round dense size=sm aria-label="{_load_aria}"').tooltip(t("actions.load", lang)).style("justify-self: start")
 
                             # --- Setup info tooltip (slot always rendered for stable layout) ---
                             _si_genre = info.get("setting_genre", "")
@@ -1170,7 +1170,7 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                             _info_visibility = "" if _has_info else "visibility: hidden; pointer-events: none"
                             with ui.button(icon="info_outline").props(
                                 'flat round dense size=sm'
-                            ).classes("text-gray-400").style(f"min-width: 36px; min-height: 36px; {_info_visibility}"):
+                            ).classes("text-gray-400").style(f"min-width: 36px; min-height: 36px; justify-self: center; {_info_visibility}"):
                                 if _has_info:
                                     with ui.menu().props("anchor='top middle' self='bottom middle' :offset='[0,6]'"):
                                         with ui.column().classes("gap-1").style(
@@ -1214,10 +1214,10 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                                         dlg.open()
                                     return do_delete
                                 _del_aria = t("aria.delete_save", lang, name=display_name)
-                                ui.button(icon="delete_outline", on_click=make_delete(sname)).props(f'flat round dense size=sm aria-label="{_del_aria}"').tooltip(t("actions.delete", lang)).style("color: var(--error)")
+                                ui.button(icon="delete_outline", on_click=make_delete(sname)).props(f'flat round dense size=sm aria-label="{_del_aria}"').tooltip(t("actions.delete", lang)).style("color: var(--error); justify-self: end")
                             else:
                                 # Phantom button — invisible, keeps delete slot for stable centering
-                                ui.button(icon="delete_outline").props('flat round dense size=sm').style("min-width: 36px; min-height: 36px; visibility: hidden; pointer-events: none")
+                                ui.button(icon="delete_outline").props('flat round dense size=sm').style("min-width: 36px; min-height: 36px; visibility: hidden; pointer-events: none; justify-self: end")
                         # --- Chapter archives (inside active save card) ---
                         if is_active and chapter > 1:
                             archived = list_chapter_archives(username, sname)
