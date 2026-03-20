@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.56"
+VERSION = "0.9.58"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-5-20250929"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -4933,6 +4933,11 @@ def parse_narrator_response(game: GameState, raw: str) -> str:
     narration = re.sub(r'\*(.+?)\*', r'\1', narration)
     # Strip orphaned asterisks (unclosed emphasis: opening * without matching close)
     narration = re.sub(r'(?<!\*)\*(?!\*)', '', narration)
+
+    # --- 8.5) Normalize em-dash spacing (model drift: "word—word" → "word — word") ---
+    # Ensure exactly one space on each side of em-dashes.  Handles all forms:
+    # no spaces ("A—B"), space only before ("A— B"), space only after ("A —B").
+    narration = re.sub(r'\s*—\s*', ' — ', narration)
 
     # --- 9) Normalize NPC dispositions ---
     _normalize_npc_dispositions(game.npcs)

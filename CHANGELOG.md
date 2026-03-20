@@ -5,6 +5,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.58]
+
+### Fixed
+- **Em-dash spacing normalized in narrator output.** Recent model versions started generating em-dashes without surrounding spaces (`word—word` instead of `word — word`). New Step 8.5 in `parse_narrator_response()` applies `re.sub(r'\s*—\s*', ' — ', narration)` — catches all variants (no spaces, space only before, space only after) and normalizes to exactly one space on each side. Applied to all narrator output paths: normal turns, corrections, epilogue, chapter openings.
+
+---
+
 ## [0.9.57]
 
 ### Added
