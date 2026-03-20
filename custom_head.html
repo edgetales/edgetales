@@ -318,11 +318,14 @@ body[data-narrator-font="highlight"] .chat-msg.assistant strong em .et-player   
 /* --- Entity Highlighting: NPC names, locations, player name --- */
 /* Called from Python via ui.run_javascript() after markdown render.
    Walks text nodes in .chat-msg.assistant elements and wraps known
-   entity names in <span> elements with CSS classes. */
-function _etHighlight(data) {
+   entity names in <span> elements with CSS classes.
+   scopeNew=true → only process elements with .et-new class (live turns). */
+function _etHighlight(data, scopeNew) {
     if (!data || !data.entities || data.entities.length === 0) return;
-    document.querySelectorAll('.chat-msg.assistant').forEach(function(msg) {
+    var sel = scopeNew ? '.chat-msg.assistant.et-new' : '.chat-msg.assistant';
+    document.querySelectorAll(sel).forEach(function(msg) {
         if (msg.dataset.etDone) return;
+        msg.classList.remove('et-new');
         var walker = document.createTreeWalker(msg, NodeFilter.SHOW_TEXT);
         var nodes = [];
         while (walker.nextNode()) nodes.push(walker.currentNode);

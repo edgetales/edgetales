@@ -399,12 +399,14 @@ def _build_entity_data(game) -> dict:
     return {"entities": entities}
 
 
-def _inject_entity_highlights(game) -> None:
-    """Inject JS call to highlight entity names in narrator text (Design mode only)."""
+def _inject_entity_highlights(game, scope_new: bool = False) -> None:
+    """Inject JS call to highlight entity names in narrator text (Design mode only).
+    scope_new=True → only process elements with .et-new class (live turn optimization)."""
     import json as _json
     data = _build_entity_data(game)
     if data["entities"]:
-        ui.run_javascript(f"setTimeout(function(){{ _etHighlight({_json.dumps(data, ensure_ascii=False)}); }}, 80)")
+        _scope = "true" if scope_new else "false"
+        ui.run_javascript(f"setTimeout(function(){{ _etHighlight({_json.dumps(data, ensure_ascii=False)},{_scope}); }}, 80)")
 
 
 def init_session() -> None:
@@ -544,9 +546,10 @@ async def _scroll_to_element(element_id: str) -> None:
         pass
 
 
-def render_audio_player(audio_bytes: bytes, fmt: str = "audio/mp3", autoplay: bool = False) -> None:
+def render_audio_player(audio_bytes: bytes, fmt: str = "audio/mp3", autoplay: bool = False):
     """Render an HTML5 audio player by serving audio as a temp file.
-    Schedules delayed deletion of the temp file after serving."""
+    Schedules delayed deletion of the temp file after serving.
+    Returns the NiceGUI audio element for lifecycle tracking."""
     _run_temp_cleanup()  # Clean up old temp files first
     ext = ".mp3" if "mp3" in fmt else ".wav" if "wav" in fmt else ".ogg"
     tmp = Path(tempfile.gettempdir()) / f"rpg_audio_{uuid.uuid4().hex[:8]}{ext}"
@@ -575,6 +578,7 @@ def render_audio_player(audio_bytes: bytes, fmt: str = "audio/mp3", autoplay: bo
         ''')
     # Schedule temp file cleanup after browser had time to download (60s)
     _schedule_temp_cleanup(tmp)
+    return a
 
 
 # --- Temp file cleanup ---
@@ -607,10 +611,18 @@ def _run_temp_cleanup() -> None:
 
 
 async def do_tts(narration: str, chat_container=None, autoplay: bool = True) -> None:
-    """Run TTS in background thread if enabled. Renders audio player inline (ephemeral)."""
+    """Run TTS in background thread if enabled. Renders audio player inline (ephemeral).
+    Only the most recent audio player is kept — previous ones are removed from the DOM."""
     s = S()
     if not s.get("tts_enabled", False):
         return
+    # Remove previous audio player (only keep the latest)
+    prev_player = s.pop("_tts_player", None)
+    if prev_player:
+        try:
+            prev_player.delete()
+        except Exception:
+            pass
     # Show loading indicator
     tts_indicator = None
     if chat_container:
@@ -632,7 +644,8 @@ async def do_tts(narration: str, chat_container=None, autoplay: bool = True) -> 
             log(f"[TTS] Audio generated: {len(audio)} bytes, format={fmt}")
             if chat_container:
                 with chat_container:
-                    render_audio_player(audio, fmt, autoplay=autoplay)
+                    player = render_audio_player(audio, fmt, autoplay=autoplay)
+                    s["_tts_player"] = player
         else:
             log("[TTS] Backend returned None — no audio generated.", level="warning")
             ui.notify(t("tts.no_audio", L()), type="warning")
@@ -1003,7 +1016,7 @@ def render_sidebar_status(game: GameState, session=None) -> None:
                     ui.label(f"\u2620\ufe0f {n['name']}").classes("text-xs").style("opacity: 0.4; text-decoration: line-through; padding: 0.15rem 0.5rem")
 
 
-def render_sidebar_actions(on_switch_user=None) -> None:
+def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=False, on_chapter_view_change=None) -> None:
     s = S()
     lang = L()
     game = s.get("game")
@@ -1048,8 +1061,9 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                     await _scroll_chat_bottom()
                     await do_tts(recap, recap_el)
                 else:
-                    # Fallback: no chat container available, reload
-                    ui.navigate.reload()
+                    # Chat container not available (edge case) — recap is saved,
+                    # will appear on next natural page render. No disruptive reload needed.
+                    ui.notify(f"{E['scroll']} {t('actions.recap_prefix', lang)}", type="positive")
             except Exception as e: ui.notify(t("creation.error", lang, error=e), type="negative")
             finally:
                 s["processing"] = False
@@ -1060,7 +1074,7 @@ def render_sidebar_actions(on_switch_user=None) -> None:
         recap_status = ui.label("").classes("text-xs text-center w-full").style("color: var(--text-secondary)")
         recap_status.set_visibility(False)
     # Save/Load
-    with ui.expansion(f"{E['floppy']} {t('actions.saves', lang)}").classes("w-full"):
+    with ui.expansion(f"{E['floppy']} {t('actions.saves', lang)}", value=saves_open).classes("w-full"):
         active = s.get("active_save", "autosave")
         active_display = t("actions.autosave", lang) if active == "autosave" else active
 
@@ -1101,7 +1115,10 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                         return
                     save_game(game, username, s["messages"], new_name)
                     s["active_save"] = new_name
-                    ui.navigate.reload()
+                    if on_refresh:
+                        on_refresh()
+                    else:
+                        ui.navigate.reload()
                 ui.button(f"{E['floppy']} {t('actions.save_as_btn', lang)}", on_click=do_save_as).classes("w-full")
             save_as_container.set_visibility(False)
 
@@ -1189,28 +1206,28 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                                 'flat round dense size=sm'
                             ).classes("text-gray-400").style(f"min-width: 36px; min-height: 36px; justify-self: center; {_info_visibility}"):
                                 if _has_info:
+                                    _lines = []
+                                    if _si_genre:
+                                        _gl = get_genre_label(_si_genre, lang) if " " not in _si_genre else _si_genre
+                                        _lines.append(f'<b>{t("save_info.genre", lang)}:</b> {html_mod.escape(_gl)}')
+                                    if _si_tone:
+                                        _tl = get_tone_label(_si_tone, lang) if " " not in _si_tone else _si_tone
+                                        _lines.append(f'<b>{t("save_info.tone", lang)}:</b> {html_mod.escape(_tl)}')
+                                    if _si_arch:
+                                        _al = get_archetype_label(_si_arch, lang) if " " not in _si_arch else _si_arch
+                                        _lines.append(f'<b>{t("save_info.archetype", lang)}:</b> {html_mod.escape(_al)}')
+                                    if _si_concept:
+                                        _lines.append(f'<b>{t("save_info.concept", lang)}:</b> {html_mod.escape(_si_concept)}')
+                                    if _si_back:
+                                        _lines.append(f'<b>{t("save_info.backstory", lang)}:</b> {html_mod.escape(_si_back)}')
+                                    if _si_wishes:
+                                        _lines.append(f'<b>{t("save_info.wishes", lang)}:</b> {html_mod.escape(_si_wishes)}')
+                                    if _si_bounds:
+                                        _lines.append(f'<b>{t("save_info.boundaries", lang)}:</b> {html_mod.escape(_si_bounds)}')
                                     with ui.menu().props("anchor='top middle' self='bottom middle' :offset='[0,6]'"):
-                                        with ui.column().classes("gap-1").style(
-                                            "max-width: 280px; max-height: 320px; overflow-y: auto;"
-                                            " padding: 8px 12px; font-size: 0.82rem; line-height: 1.45"
-                                        ):
-                                            if _si_genre:
-                                                _gl = get_genre_label(_si_genre, lang) if not " " in _si_genre else _si_genre
-                                                ui.html(f'<b>{t("save_info.genre", lang)}:</b> {html_mod.escape(_gl)}')
-                                            if _si_tone:
-                                                _tl = get_tone_label(_si_tone, lang) if not " " in _si_tone else _si_tone
-                                                ui.html(f'<b>{t("save_info.tone", lang)}:</b> {html_mod.escape(_tl)}')
-                                            if _si_arch:
-                                                _al = get_archetype_label(_si_arch, lang) if not " " in _si_arch else _si_arch
-                                                ui.html(f'<b>{t("save_info.archetype", lang)}:</b> {html_mod.escape(_al)}')
-                                            if _si_concept:
-                                                ui.html(f'<b>{t("save_info.concept", lang)}:</b> {html_mod.escape(_si_concept)}')
-                                            if _si_back:
-                                                ui.html(f'<b>{t("save_info.backstory", lang)}:</b> {html_mod.escape(_si_back)}')
-                                            if _si_wishes:
-                                                ui.html(f'<b>{t("save_info.wishes", lang)}:</b> {html_mod.escape(_si_wishes)}')
-                                            if _si_bounds:
-                                                ui.html(f'<b>{t("save_info.boundaries", lang)}:</b> {html_mod.escape(_si_bounds)}')
+                                        ui.html('<div style="max-width:280px;max-height:320px;overflow-y:auto;'
+                                                'padding:8px 12px;font-size:0.82rem;line-height:1.45">'
+                                                + '<br>'.join(_lines) + '</div>')
 
                             # --- Delete slot (always rendered for stable layout) ---
                             if sname != "autosave":
@@ -1221,11 +1238,17 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                                             ui.label(t("actions.delete_confirm", lang, name=display))
                                             with ui.row().classes("gap-4 mt-2"):
                                                 async def confirm_del():
-                                                    delete_save(username, n)
+                                                    try:
+                                                        delete_save(username, n)
+                                                    except Exception as e:
+                                                        log(f"[Save] Delete failed for {n}: {e}", level="warning")
                                                     if s.get("active_save") == n:
                                                         s["active_save"] = "autosave"
                                                     dlg.close()
-                                                    ui.navigate.reload()
+                                                    if on_refresh:
+                                                        on_refresh()
+                                                    else:
+                                                        ui.navigate.reload()
                                                 ui.button(t("user.yes", lang), on_click=confirm_del, color="positive")
                                                 ui.button(t("user.no", lang), on_click=dlg.close)
                                         dlg.open()
@@ -1255,7 +1278,10 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                                                 s["viewing_chapter"] = n
                                                 s["chapter_view_messages"] = msgs
                                                 s["chapter_view_title"] = ttl
-                                                ui.navigate.reload()
+                                                if on_chapter_view_change:
+                                                    await on_chapter_view_change()
+                                                else:
+                                                    ui.navigate.reload()
                                             else:
                                                 ui.notify(t("chapters.not_found", lang), type="warning")
                                         return do_view
@@ -1267,9 +1293,12 @@ def render_sidebar_actions(on_switch_user=None) -> None:
                                 # Current chapter (not clickable when active)
                                 cur_lbl = f"{E['book']} {t('chapters.chapter_label', lang, n=chapter)} {E['check']}"
                                 if viewing:
-                                    def back_to_current():
+                                    async def back_to_current():
                                         s["viewing_chapter"] = None; s["chapter_view_messages"] = None; s["chapter_view_title"] = None
-                                        ui.navigate.reload()
+                                        if on_chapter_view_change:
+                                            await on_chapter_view_change()
+                                        else:
+                                            ui.navigate.reload()
                                     ui.button(cur_lbl, on_click=back_to_current).props("flat dense size=sm no-caps").classes("w-full text-left text-xs")
                                 else:
                                     ui.label(cur_lbl).classes("text-xs w-full").style("color: var(--success); padding: 0.25rem 0.5rem")
@@ -2155,6 +2184,8 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
         return
     s["processing"] = True
     turn_gen = s.get("_turn_gen", 0)  # Capture generation to detect save-switch during processing
+    s["_director_gen"] = s.get("_director_gen", 0) + 1  # Invalidate any in-flight director
+    director_gen = s["_director_gen"]
     config=get_engine_config();username=s["current_user"]
     # On retry, the message is already in s["messages"] and rendered — don't duplicate
     if not is_retry:
@@ -2271,7 +2302,7 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
                     ui.html(f'<h2 id="{scroll_target_id}" class="scene-marker">{t("game.scene_marker", L(), n=game.scene_count, location=game.current_location)}</h2>').classes("w-full")
                 else:
                     ui.html(f'<div id="{scroll_target_id}"></div>')
-                msg_col = ui.column().classes("chat-msg assistant w-full")
+                msg_col = ui.column().classes("chat-msg assistant w-full et-new")
                 if not s.get("sr_chat", True):
                     msg_col.props('aria-hidden="true"')
                 with msg_col:
@@ -2282,8 +2313,9 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
                     ui.markdown(f"{_sr_prefix}{_narr}")
                     if roll_data: render_dice_display(roll_data)
         # Entity highlights (Design mode) — process newly rendered message
-        if s.get("narrator_font") == "highlight":
-            _inject_entity_highlights(game)
+        # For corrections: render_chat_messages() already called _inject_entity_highlights
+        if s.get("narrator_font") == "highlight" and not _is_correction:
+            _inject_entity_highlights(game, scope_new=True)
         # Two-step scroll: bottom first (forces DOM render), then up to scene marker
         await _scroll_chat_bottom()
         if scroll_target_id:
@@ -2292,13 +2324,22 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
         save_game(game,username,s["messages"],s.get("active_save","autosave"))
         # Fire Director in background — doesn't block narration display
         if director_ctx:
-            _dc=director_ctx; _g=game; _u=username; _s=s; _gen=turn_gen
+            _dc=director_ctx; _g=game; _u=username; _s=s; _gen=turn_gen; _dgen=director_gen
             async def _bg_director():
                 try:
+                    # Don't even run if a newer turn has already started
+                    # (the game object may be mutated by the new turn's thread)
+                    if _s.get("_director_gen", 0) != _dgen:
+                        log("[Director] Skipping — newer turn already started")
+                        return
                     await asyncio.to_thread(run_deferred_director, client, _g, _dc)
                     # Don't save if user switched to a different game during Director processing
                     if _s.get("_turn_gen", 0) != _gen:
                         log("[Director] Discarding stale save (game context changed)")
+                        return
+                    # Don't save if another turn started while Director was running
+                    if _s.get("_director_gen", 0) != _dgen:
+                        log("[Director] Discarding stale save (newer turn started)")
                         return
                     save_game(_g, _u, _s["messages"], _s.get("active_save", "autosave"))
                     log("[Director] Background save complete")
@@ -2965,7 +3006,18 @@ async def main_page(client: Client):
             if game:
                 with sidebar_status_container:
                     render_sidebar_status(game)
-            render_sidebar_actions(on_switch_user=_handle_switch_user)
+            sidebar_actions_container = ui.column().classes("w-full")
+            def _refresh_sidebar_actions():
+                sidebar_actions_container.clear()
+                with sidebar_actions_container:
+                    render_sidebar_actions(on_switch_user=_handle_switch_user,
+                                           on_refresh=_refresh_sidebar_actions,
+                                           saves_open=True,
+                                           on_chapter_view_change=_show_main_phase)
+            with sidebar_actions_container:
+                render_sidebar_actions(on_switch_user=_handle_switch_user,
+                                       on_refresh=_refresh_sidebar_actions,
+                                       on_chapter_view_change=_show_main_phase)
             # Version display at bottom of sidebar
             ui.label(f"v{VERSION}").classes("w-full text-center text-xs mt-4").style("color: var(--text-secondary); opacity: 0.5")
         drawer.set_value(False)
@@ -3013,9 +3065,9 @@ async def main_page(client: Client):
                         "background: var(--accent-dim); border: 1px solid var(--accent-border); border-radius: 8px"):
                         with ui.row().classes("w-full items-center justify-between"):
                             ui.label(banner_text).classes("text-sm font-semibold")
-                            def _exit_view():
+                            async def _exit_view():
                                 s["viewing_chapter"] = None; s["chapter_view_messages"] = None; s["chapter_view_title"] = None
-                                ui.navigate.reload()
+                                await _show_main_phase()
                             ui.button(t("chapters.back", L()), icon="arrow_back", on_click=_exit_view).props("flat dense size=sm no-caps").classes("text-xs")
 
                 last_scene_id = render_chat_messages(chat_container)
@@ -3095,9 +3147,9 @@ async def main_page(client: Client):
                             ch_n = s.get("viewing_chapter", 0)
                             ui.download(pdf_bytes, f"{g.player_name}_Chapter_{ch_n}.pdf")
                     ui.button(t('chapters.export', L()), on_click=_do_chapter_export).props("flat dense no-caps").classes("text-sm")
-                    def _exit_view_footer():
+                    async def _exit_view_footer():
                         s["viewing_chapter"] = None; s["chapter_view_messages"] = None; s["chapter_view_title"] = None
-                        ui.navigate.reload()
+                        await _show_main_phase()
                     ui.button(f"{t('chapters.back', L())}", icon="arrow_back", on_click=_exit_view_footer).props("flat dense no-caps").classes("text-sm")
             footer.set_value(True)
             # Trigger footer alignment (same as normal footer)
