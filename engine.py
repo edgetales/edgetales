@@ -86,6 +86,7 @@ NPC_ACTIVATION_THRESHOLD = 0.7     # Minimum score for full NPC activation
 NPC_MENTION_THRESHOLD = 0.3        # Minimum score for NPC name mention
 DIRECTOR_INTERVAL = 3              # Call director every N scenes (when no trigger)
 MEMORY_RECENCY_DECAY = 0.92        # Exponential decay factor for memory recency
+AUTONOMOUS_CLOCK_TICK_CHANCE = 0.18  # Per-scene chance each threat clock ticks autonomously
 DIRECTOR_MODEL = BRAIN_MODEL       # Director uses same model as Brain (Haiku)
 
 # --- Max output tokens per call ---
@@ -2792,6 +2793,36 @@ def apply_consequences(game: GameState, roll: RollResult, brain: dict) -> tuple[
     return consequences, clock_events
 
 
+def _tick_autonomous_clocks(game: GameState) -> list:
+    """Autonomously advance threat clocks by chance each scene.
+    Each unfilled threat clock rolls AUTONOMOUS_CLOCK_TICK_CHANCE independently —
+    simulates the world moving forward regardless of player roll results.
+    Owner-controlled clocks (owner != '') are excluded.
+    Returns a list of clock_event dicts (same format as apply_consequences)."""
+    ticked = []
+    for clock in game.clocks:
+        if clock.get("clock_type") != "threat":
+            continue
+        if clock.get("filled", 0) >= clock.get("segments", 6):
+            continue  # Already full
+        if clock.get("owner", ""):
+            continue  # Owner-controlled clocks tick via dedicated mechanics
+        if random.random() < AUTONOMOUS_CLOCK_TICK_CHANCE:
+            clock["filled"] = min(clock["segments"], clock["filled"] + 1)
+            triggered = clock["filled"] >= clock["segments"]
+            event = {
+                "clock": clock["name"],
+                "trigger": clock["trigger_description"],
+                "autonomous": True,
+            }
+            if triggered:
+                event["triggered"] = True
+            ticked.append(event)
+            status = "TRIGGERED" if triggered else f"{clock['filled']}/{clock['segments']}"
+            log(f"[Clock] Autonomous tick: '{clock['name']}' → {status}")
+    return ticked
+
+
 def can_burn_momentum(game: GameState, roll: RollResult) -> Optional[str]:
     """Check if momentum burn can upgrade the result. Returns new result or None.
     Does NOT mutate game state — actual burn happens in process_momentum_burn."""
@@ -4047,7 +4078,14 @@ strong feelings about another NPC, the reflection can be about that relationship
 
 Be SPECIFIC in narrator_guidance. Not "make things interesting" but
 "Borin should test the player's loyalty with a dangerous request before
-revealing the secret passage." """
+revealing the secret passage."
+
+Clocks represent threats and world events with a fill level (e.g. 3/6).
+They advance when the player fails rolls OR autonomously as the world moves
+forward. When a clock is full, its trigger fires as a hard narrative event —
+not optional, not avoidable. Reference clocks in arc_notes and narrator_guidance
+when they are ≥50% filled or have recently ticked — they signal what is at stake
+and what is coming. A nearly-full clock should create visible narrative pressure. """
 
 
 def _should_call_director(game: GameState, roll_result: str = "",
@@ -4184,6 +4222,18 @@ def build_director_prompt(game: GameState, latest_narration: str,
         if n.get("status") in ("active", "background")
     ) or "(none)"
 
+    # Clocks overview — all clocks with fill bar, percentage and trigger text
+    clocks_lines = []
+    for c in game.clocks:
+        filled  = c.get("filled", 0)
+        segs    = c.get("segments", 6)
+        bar     = "█" * filled + "░" * (segs - filled)
+        pct     = int(filled / segs * 100) if segs else 0
+        ctype   = c.get("clock_type", "threat")
+        trigger = c.get("trigger_description", "")
+        clocks_lines.append(f'- {c["name"]} [{ctype}] {bar} {filled}/{segs} ({pct}%) — {trigger}')
+    clocks_block = "<clocks>\n" + "\n".join(clocks_lines) + "\n</clocks>" if clocks_lines else ""
+
     return f"""<scene_history>
 {log_text}
 </scene_history>
@@ -4195,6 +4245,8 @@ def build_director_prompt(game: GameState, latest_narration: str,
 <npcs>
 {npc_overview}
 </npcs>
+
+{clocks_block}
 {story_info}
 {reflection_section}
 
@@ -4210,7 +4262,7 @@ Field instructions:
 - npc_reflections: Only for NPCs listed in <reflect> tags. Each object has:
   - npc_id: the NPC's ID from the <reflect> tag
   - reflection: 1-2 sentence higher-level insight (in {lang})
-  - tone: 1-3 English words capturing the emotional shift (e.g. 'protective_guilt', 'reluctant_trust')
+  - tone: 1-3 lowercase English words, underscore-separated, capturing the emotional shift (e.g. 'protective_guilt', 'reluctant_trust')
   - tone_key: ONE word from the enum (neutral, curious, wary, suspicious, grateful, terrified, loyal, conflicted, betrayed, devastated, euphoric, defiant, guilty, protective, angry, devoted, impressed, hopeful)
   - updated_description: STRICTLY in {lang}. Max 100 characters. Role + key visual traits + personality. Keep physical details like age, hair, build. Do NOT start with the NPC's name. NO actions, NO posture. Example: 'Grumpy dwarf blacksmith with burn scars, secretly loyal'. null if unchanged.
   - about_npc: If this reflection is primarily about the NPC's feelings toward ANOTHER NPC (not the player), set to that NPC's npc_id. Example: Sophie reflects on her growing attraction to Bruce → about_npc="npc_2". null if the reflection is about the player or general.
@@ -6100,6 +6152,10 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
                                  "npc_activation": npc_activation_debug})
         if len(game.session_log) > MAX_SESSION_LOG:
             game.session_log = game.session_log[-MAX_SESSION_LOG:]
+        # Autonomous clock ticks — world moves forward independent of player rolls
+        auto_clock_events = _tick_autonomous_clocks(game)
+        if auto_clock_events and game.session_log:
+            game.session_log[-1]["clock_events"].extend(auto_clock_events)
         # Check story completion
         _check_story_completion(game)
 
@@ -6186,6 +6242,10 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
                              "npc_activation": npc_activation_debug})
     if len(game.session_log) > MAX_SESSION_LOG:
         game.session_log = game.session_log[-MAX_SESSION_LOG:]
+    # Autonomous clock ticks — world moves forward independent of player rolls
+    auto_clock_events = _tick_autonomous_clocks(game)
+    if auto_clock_events and game.session_log:
+        game.session_log[-1]["clock_events"].extend(auto_clock_events)
     # Check story completion
     _check_story_completion(game)
 

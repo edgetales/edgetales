@@ -282,7 +282,7 @@ _STRINGS = {
         "settings.narrator_font": "Erz\u00e4hler-Schriftart",
         "settings.narrator_font_sans": "Serifenlos",
         "settings.narrator_font_serif": "Serifen",
-        "settings.narrator_font_highlight": "EdgeTales Design",
+        "settings.narrator_font_highlight": "Visual Effects",
         "settings.save_btn": "Speichern",
         "settings.saved_confirm": "Gespeichert!",
 
@@ -681,7 +681,7 @@ _STRINGS = {
         "settings.narrator_font": "Narrator Font",
         "settings.narrator_font_sans": "Sans-serif",
         "settings.narrator_font_serif": "Serif",
-        "settings.narrator_font_highlight": "EdgeTales Design",
+        "settings.narrator_font_highlight": "Visual Effects",
         "settings.save_btn": "Save",
         "settings.saved_confirm": "Saved!",
 

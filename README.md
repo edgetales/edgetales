@@ -31,7 +31,7 @@ EdgeTales is a self-hosted, AI-driven solo tabletop RPG engine. Type what your c
 
 **Narrative**
 - Free-form player input - type anything, the AI understands your intent
-- Triple-AI architecture: fast *Brain* (Haiku) parses mechanics, creative *Narrator* (Sonnet) writes the scene, strategic *Director* (Haiku) steers story pacing and NPC development behind the scenes
+- Multi-agent AI architecture: fast *Brain* (Haiku) parses mechanics, creative *Narrator* (Sonnet) writes the scene, *Metadata Extractor* (Haiku) extracts state changes from the prose, strategic *Director* (Haiku) steers story pacing and NPC development behind the scenes
 - Player Authorship guarantee - your exact words are never rewritten or reinterpreted by the AI
 - **`##` Correction system** — prefix any input with `##` to correct the last scene. The engine distinguishes between a *misread input* (Brain misunderstood what you did — full state rollback, re-roll if needed, narrator rewrites) and a *state error* (wrong NPC identity, location, relationship — world patched in-place, narrator rewrites with corrections applied). No scene is ever permanently broken by an AI misunderstanding
 - Dynamic NPC system with persistent memory, evolving dispositions, bonds, agendas, NPC-to-NPC relationships, and mid-game discovery
@@ -58,7 +58,7 @@ EdgeTales doesn't invent its own rules from scratch. It draws on proven, beloved
 
 - **NPC Bonds & Dispositions (inspired by Ironsworn's bonds system):** Named characters are tracked persistently. They have dispositions (neutral, friendly, hostile, loyal) and bond levels that shift based on your interactions. The AI narrator knows who trusts you, who resents you, and who owes you a favour.
 
-- **Threat & Progress Clocks (from Blades in the Dark):** Ticking clocks track dangers that build in the background and goals that take multiple steps to achieve. When a threat clock fills, something bad happens whether the player is ready or not. The narrator manages clocks organically within the fiction.
+- **Threat & Progress Clocks (inspired by Blades in the Dark):** Ticking clocks track dangers that build in the background and goals that take multiple steps to achieve. When a threat clock fills, something bad happens whether the player is ready or not. EdgeTales extends the original concept: clocks don't only advance when the player fails a roll — each scene, every active threat clock has an independent chance to tick forward on its own, simulating a world that moves regardless of what the player does. The Director is aware of all clocks and weaves them into its pacing guidance, creating narrative pressure as clocks approach their limit.
 
 **Tech & UX**
 - Mobile-first PWA - add to iOS/Android home screen
@@ -69,6 +69,7 @@ EdgeTales doesn't invent its own rules from scratch. It draws on proven, beloved
 - HTTPS with auto-generated self-signed certificates
 - Kid-friendly mode (ages 8–12, see below)
 - Multiple save slots with full story export to PDF
+- **Visual Effects mode** — an optional narrator display mode that brings the story to life with subtle visual cues: NPC names are highlighted in the narration text with colours based on their current disposition (hostile NPCs in red, loyal ones in green, etc.), your character's name appears in accent gold. As the chaos factor rises, a faint ambient glow pulses around the chat area. When health drops low, a dark vignette creeps in at the edges of the screen. Dialogue lines are subtly highlighted to stand out from prose. All effects are purely cosmetic and can be switched off at any time in the narrator font settings.
 
 **Accessibility — Screen Reader & Voice Support**
 
@@ -180,44 +181,57 @@ edgetales/
 └── logs/               # Application logs (auto-created)
 ```
 
-### Triple-AI Pipeline
+### AI Pipeline
 
-Every player turn flows through three specialised AI agents, each with a distinct role:
+Every player turn flows through several specialised AI agents, each with a distinct role:
 
 ```
 Player types action
         │
         ▼
   ┌──────────────┐
-  │    Brain     │  Claude Haiku — fast, cheap
-  │              │  Parses: move type, stat, intent,
-  └──────┬───────┘  target NPC, position, effect
-         │  structured JSON
+  │    Brain     │  Claude Haiku — fast, cheap (~300ms)
+  │              │  Parses: move, stat, intent, target NPC,
+  └──────┬───────┘  position, effect, location/time change,
+         │  structured JSON    world addition, dramatic question
          ▼
-  Dice rolled (2d6+stat vs 2d10)
+  NPC Activation — TF-IDF scoring selects who gets
+  full context vs. name-only in the narrator prompt
+         │
+         ▼
+  Dice rolled (2d6+stat vs 2d10)    ← action turns only
+  (dialog turns skip this step)
          │  result + full context
          ▼
   ┌──────────────┐
-  │   Narrator   │  Claude Sonnet — creative, immersive
-  │              │  Writes: atmospheric prose, NPC dialog,
-  └──────┬───────┘  world updates, new NPC discovery
-         │  narration displayed immediately
+  │   Narrator   │  Claude Sonnet — creative, immersive (~2s)
+  │              │  Writes: pure atmospheric prose only.
+  └──────┬───────┘  No metadata, no JSON — story text only.
+         │  narration displayed + saved immediately
+         ▼
+  ┌──────────────┐
+  │  Metadata    │  Claude Haiku — Structured Outputs (~300ms)
+  │  Extractor   │  Reads the prose, extracts state changes:
+  └──────┬───────┘  NPC updates, memories, location, time,
+         │          new characters, deaths
          ▼
   ┌──────────────┐
   │   Director   │  Claude Haiku — runs in background
   │              │  Strategic: pacing guidance, NPC reflections,
-  └──────────────┘  story arc notes, scene summaries
+  └──────────────┘  clock awareness, act transitions, scene summaries
 ```
 
-**The Brain** receives the player's raw input along with the full game state and decides *what happens mechanically*: which move to roll, which stat to use, what position and effect apply, and whether the player is moving to a new location. It returns structured JSON - no prose, no creativity.
+**The Brain** receives the player's raw input along with the full game state and decides *what happens mechanically*: which move to roll, which stat to use, what position and effect apply, whether the player is moving to a new location or time is progressing, and what the player's dramatic question is for the scene. It returns structured JSON — no prose, no creativity.
 
-**The Narrator** receives the Brain's analysis plus the dice result, and writes the scene. It produces pure atmospheric prose in the player's chosen narration language — no metadata, no JSON, no technical markup. A separate metadata extractor (Haiku with Structured Outputs) then analyses the prose and extracts game state changes: NPC updates, memory events, scene context, location and time changes, and new character introductions. The narrator never decides outcomes — it dramatises what the dice already determined.
+**The Narrator** receives the Brain's analysis, the relevant NPC context, and the dice result, then writes the scene. It produces pure atmospheric prose in the player's chosen narration language — no metadata, no JSON, no technical markup. The narrator never decides outcomes — it dramatises what the dice already determined.
 
-**The Director** runs asynchronously after the narration is already displayed to the player — it never slows down gameplay. Think of it as the showrunner watching from behind the scenes. It analyses what just happened and provides strategic guidance: where should the story go next? Which NPCs have untapped potential? Is the pacing right? When enough has happened to a particular NPC (tracked via an importance accumulator), the Director writes a *reflection* — a higher-level insight about how that character views the player. These reflections feed back into future narrator prompts, giving NPCs the sense of evolving opinions and growing relationships.
+**The Metadata Extractor** is a separate Haiku call that runs immediately after the Narrator. It reads the finished prose and extracts all game state changes as structured JSON: NPC memory events, new character introductions, scene context, location and time updates, deaths. This two-step design means the Narrator can focus entirely on storytelling quality, while the Extractor handles the bookkeeping with guaranteed valid JSON (Structured Outputs).
 
-The Director also generates enriched scene summaries that replace the Brain's bare-bones log entries, giving the narrator better context about *why* things matter, not just *what* happened.
+**The Director** runs as a background task after the narration is already displayed and saved — it never adds latency to gameplay. Think of it as the showrunner watching from behind the scenes. It analyses recent scenes, the current story arc, clock fill levels, and NPC states to provide strategic guidance: where should the story go next? Which NPCs have untapped potential? Is the pacing right? When enough has happened to a particular NPC (tracked via an importance accumulator), the Director writes a *reflection* — a higher-level insight about how that character views the player. These reflections surface in future narrator prompts as `insight:` memories, giving NPCs the sense of evolving opinions and growing relationships.
 
-A fourth agent — the **Story Architect** — runs once at game start and once per chapter start, using Sonnet to generate a story blueprint (3-act or Kishōtenketsu structure) with act goals, transition triggers, revelations, a thematic thread, and possible endings. Each act has a narrative condition (the transition trigger) that signals when the story should advance to the next act — the Director evaluates these during play, allowing act transitions to follow the player's choices rather than rigid scene counts. The thematic thread carries the story's emotional core question across every scene, connecting individual moments to a larger narrative arc.
+The Director also generates enriched scene summaries that replace the Brain's bare-bones log entries, giving the narrator richer context about *why* things matter, not just *what* happened. And it evaluates act transition triggers, signalling when the story should advance to the next act based on what actually happened — not a fixed scene count.
+
+A fifth agent — the **Story Architect** — runs once at game start and once per chapter start, using Sonnet to generate a story blueprint (3-act or Kishōtenketsu structure) with act goals, transition triggers, revelations, a thematic thread, and possible endings. The thematic thread carries the story's emotional core question across every scene, connecting individual moments to a larger narrative arc.
 
 ### Core Design Principle: AI Narrates, It Does Not Decide
 
@@ -517,4 +531,4 @@ EdgeTales builds on the creative work of these tabletop RPG designers:
 
 - **Shawn Tomkin** - [Ironsworn](https://www.ironswornrpg.com/) and [Starforged](https://www.ironswornrpg.com/product-ironsworn-starforged): Action roll system (2d6+stat vs 2d10), stats, momentum, fateful roll / match mechanic, NPC bonds. Ironsworn is free to use under a Creative Commons Attribution 4.0 license.
 - **Tana Pigeon** - [Mythic Game Master Emulator](https://www.wordmillgames.com/mythic-game-master-emulator.html): Chaos factor, the concept of emergent solo play driven by a dynamic tension tracker.
-- **John Harper** - [Blades in the Dark](https://bladesinthedark.com/): Position & Effect framework for assessing risk and narrative consequence before an action roll. Threat and progress clocks.
+- **John Harper** - [Blades in the Dark](https://bladesinthedark.com/): Position & Effect framework for assessing risk and narrative consequence before an action roll. Threat and progress clocks — EdgeTales extends the original concept with autonomous world-ticking and Director-driven narrative pressure.
