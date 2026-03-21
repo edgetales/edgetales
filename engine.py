@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.59"
+VERSION = "0.9.60"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-5-20250929"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -73,6 +73,36 @@ LOG_DIR.mkdir(exist_ok=True)
 
 # --- Tuning constants ---
 STAT_TARGET_SUM = 7                # Character stats must total this
+
+# Primary stat per archetype (must be ≥ 2 after validation).
+# Used by call_setup_brain for both prompt guidance and engine correction.
+_ARCHETYPE_PRIMARY_STAT: dict[str, str] = {
+    "outsider_loner": "shadow",
+    "investigator":   "wits",
+    "trickster":      "shadow",
+    "protector":      "iron",
+    "hardboiled":     "iron",
+    "scholar":        "wits",
+    "healer":         "heart",
+    "inventor":       "wits",
+    "artist":         "heart",
+}
+
+# Archetype-aware fallback stats (sum=7, primary≥2).
+# Used when the AI returns an invalid stat total.
+_ARCHETYPE_STAT_DEFAULTS: dict[str, dict] = {
+    "outsider_loner": {"edge": 1, "heart": 1, "iron": 1, "shadow": 3, "wits": 1},
+    "investigator":   {"edge": 1, "heart": 1, "iron": 1, "shadow": 1, "wits": 3},
+    "trickster":      {"edge": 2, "heart": 1, "iron": 1, "shadow": 2, "wits": 1},
+    "protector":      {"edge": 1, "heart": 2, "iron": 2, "shadow": 1, "wits": 1},
+    "hardboiled":     {"edge": 1, "heart": 1, "iron": 3, "shadow": 1, "wits": 1},
+    "scholar":        {"edge": 1, "heart": 1, "iron": 1, "shadow": 1, "wits": 3},
+    "healer":         {"edge": 1, "heart": 3, "iron": 1, "shadow": 1, "wits": 1},
+    "inventor":       {"edge": 2, "heart": 1, "iron": 1, "shadow": 1, "wits": 2},
+    "artist":         {"edge": 1, "heart": 2, "iron": 1, "shadow": 1, "wits": 2},
+    "_default":       {"edge": 1, "heart": 2, "iron": 1, "shadow": 1, "wits": 2},
+}
+
 MAX_ACTIVE_NPCS = 12               # Soft limit; excess NPCs get retired
 MAX_NPC_MEMORY_ENTRIES = 25        # Per NPC (total: observations + reflections)
 MAX_NPC_OBSERVATIONS = 15          # Max observation memories per NPC
@@ -3058,6 +3088,7 @@ def call_setup_brain(client: anthropic.Anthropic, creation_data: dict,
 - character_concept = WHO the character is NOW (identity, role, current situation) — 1 sentence, no backstory
 - Do NOT put backstory details (past events, relationships, family) into character_concept — the player's backstory is stored separately and will be provided to the narrator directly
 - Stats MUST total exactly {STAT_TARGET_SUM}, each 0-3, matched to archetype
+- Each archetype has a primary stat that MUST be at least 2: outsider_loner→shadow, investigator→wits, trickster→shadow, protector→iron, hardboiled→iron, scholar→wits, healer→heart, inventor→wits, artist→heart
 - All text fields in {lang}
 </rules>"""
 
@@ -3092,18 +3123,39 @@ creativity_seed: {seed} (Use as loose inspiration for names, locations, and deta
         )
         result = json.loads(response.content[0].text)
 
-        # Validate stat sum — structured outputs guarantee valid JSON + correct types,
-        # but cannot enforce cross-field constraints like "all stats must total 7"
+        # --- Stat validation (two-layer: prompt + engine) ---
+        # Structured outputs guarantee types but not cross-field constraints.
         stats = result["stats"]
         stat_keys = ("edge", "heart", "iron", "shadow", "wits")
-        # Clamp individual stats to 0-3
+
+        # Layer 0: Clamp each stat to valid range 0–3
         for k in stat_keys:
             stats[k] = max(0, min(3, stats[k]))
+
+        # Layer 1: If sum is wrong, reset to archetype-aware defaults
         total = sum(stats[k] for k in stat_keys)
         if total != STAT_TARGET_SUM:
             log(f"[Setup] AI returned stats summing to {total}, "
-                f"normalizing to {STAT_TARGET_SUM}", level="warning")
-            result["stats"] = {"edge":1,"heart":2,"iron":1,"shadow":1,"wits":2}
+                f"resetting to archetype defaults for '{raw_archetype}'", level="warning")
+            stats = dict(_ARCHETYPE_STAT_DEFAULTS.get(raw_archetype,
+                         _ARCHETYPE_STAT_DEFAULTS["_default"]))
+            result["stats"] = stats
+
+        # Layer 2: Enforce primary stat ≥ 2 (skip for custom archetype)
+        primary = _ARCHETYPE_PRIMARY_STAT.get(raw_archetype)
+        if primary and stats.get(primary, 0) < 2:
+            needed = 2 - stats[primary]
+            for _ in range(needed):
+                donor = max(
+                    (s for s in stat_keys if s != primary and stats[s] > 1),
+                    key=lambda s: stats[s], default=None,
+                )
+                if donor is None:
+                    break
+                stats[donor] -= 1
+                stats[primary] += 1
+            log(f"[Setup] primary-stat fix: {primary}→{stats[primary]} "
+                f"for archetype '{raw_archetype}'", level="warning")
 
         log(f"[Setup] Success: name={result['character_name']!r}, "
             f"location={result['starting_location']!r}")

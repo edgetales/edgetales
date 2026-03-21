@@ -520,7 +520,8 @@ _STRINGS = {
         "aria.tone_selection": "Stimmung ausw\u00e4hlen",
         "aria.archetype_selection": "Archetyp ausw\u00e4hlen",
         "aria.load_save": "Spielstand {name} laden",
-        "aria.delete_save": "Spielstand {name} l\u00f6schen",
+        "aria.delete_save": "Spielstand {name} löschen",
+        "aria.save_info": "Spielstand-Info anzeigen",
         "aria.location": "Ort",
 
         # Settings
@@ -919,6 +920,7 @@ _STRINGS = {
         "aria.archetype_selection": "Select archetype",
         "aria.load_save": "Load save {name}",
         "aria.delete_save": "Delete save {name}",
+        "aria.save_info": "Show save info",
         "aria.location": "Location",
 
         # Settings

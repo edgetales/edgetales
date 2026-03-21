@@ -5,6 +5,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.60]
+
+### Fixed
+- **Quasar `q-focus-helper` flash removed on all buttons.** Quasar injects an empty `<span class="q-focus-helper">` into every button to render hover/active background effects. This element briefly lit up as a narrow rectangle on click — most visibly on Back, Next, Confirm, Hamburger, and drawer-close buttons. Previously suppressed only for `.choice-btn`; now suppressed globally via `.q-btn .q-focus-helper { display: none !important; }` in `custom_head.html`. Focus indication is retained via the existing `outline: 2px solid var(--accent-light)` on `:focus-visible`.
+- **Missing `aria-label` on save card info button.** The `icon=info_outline` button on save slot cards had no `aria-label`, making it unnamed for screen readers. New i18n keys `aria.save_info` (DE: "Spielstand-Info anzeigen" / EN: "Show save info") added to `i18n.py`; button props updated in `app.py`.
+- **Phantom delete button now `aria-hidden`.** The invisible placeholder button that keeps the delete column stable for the `autosave` slot had no `aria-hidden` attribute, so screen readers could discover and announce an unlabelled interactive element. Added `aria-hidden="true"` to its props.
+
+---
+
 ## [0.9.59]
 
 ### Added
@@ -13,6 +22,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **Director `tone` field enforces lowercase.** Prompt instruction for `tone` in NPC reflections now reads `1-3 lowercase English words, underscore-separated` instead of just `1-3 English words`. Prevents values like `"Vindicated_hopeful"` or `"Protective_loyal, emerging_confidence"` — these get copied into `emotional_weight` and should be consistently formatted. When a user logs in, EdgeTales now loads the save slot they last used instead of always defaulting to `autosave`. The active slot name is written to `settings.json` as `last_save` in three places: when a save is manually loaded via the sidebar, when a new game is created (writes `"autosave"`), and on login (reads `last_save`, falls back to `"autosave"` if that slot no longer exists, then falls back to no game if neither exists).
 
 ### Changed
+- **Archetype-aware stat validation in `call_setup_brain`.** Two-layer safety net replaces the old single-fallback approach. Layer 0: clamp each stat 0–3 (unchanged). Layer 1: if sum ≠ 7, reset to archetype-specific defaults (`_ARCHETYPE_STAT_DEFAULTS`) instead of the blind `heart:2/wits:2` fallback. Layer 2: enforce the primary stat ≥ 2 per archetype (outsider_loner→shadow, investigator/scholar/inventor→wits, trickster→shadow, protector/hardboiled→iron, healer/artist→heart) — if below 2, points are taken from the highest non-primary stat. Custom archetype skips Layer 2. All corrections are logged as warnings. Prompt rule updated: explicit primary-stat mapping added.
 - **Em-dash and en-dash replaced by regular hyphen in all AI output.** `parse_narrator_response()` Step 8.5 previously normalized spacing around em-dashes and kept them. Now both em-dash (`—`, U+2014) and en-dash (`–`, U+2013) are replaced with a spaced regular hyphen (` - `), regardless of surrounding whitespace. Same replacement applied in `call_recap()` and `generate_epilogue()`, which previously bypassed `parse_narrator_response()`.
 - **Load confirmation dialog wording corrected.** "Aktuellen Fortschritt verwerfen und … laden?" → "Aktuelles Spiel verlassen und … laden?" (DE) / "Leave current game and load …?" (EN). The old wording implied unsaved data loss; since every turn auto-saves, no progress is actually discarded.
 

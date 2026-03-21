@@ -1205,7 +1205,7 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                             _has_info = any([_si_genre, _si_tone, _si_arch, _si_concept, _si_back, _si_wishes, _si_bounds])
                             _info_visibility = "" if _has_info else "visibility: hidden; pointer-events: none"
                             with ui.button(icon="info_outline").props(
-                                'flat round dense size=sm'
+                                f'flat round dense size=sm aria-label="{t("aria.save_info", lang)}"'
                             ).classes("text-gray-400").style(f"min-width: 36px; min-height: 36px; justify-self: center; {_info_visibility}"):
                                 if _has_info:
                                     _lines = []
@@ -1259,7 +1259,7 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                                 ui.button(icon="delete_outline", on_click=make_delete(sname)).props(f'flat round dense size=sm aria-label="{_del_aria}"').tooltip(t("actions.delete", lang)).style("color: var(--error); justify-self: end")
                             else:
                                 # Phantom button — invisible, keeps delete slot for stable centering
-                                ui.button(icon="delete_outline").props('flat round dense size=sm').style("min-width: 36px; min-height: 36px; visibility: hidden; pointer-events: none; justify-self: end")
+                                ui.button(icon="delete_outline").props('flat round dense size=sm aria-hidden="true"').style("min-width: 36px; min-height: 36px; visibility: hidden; pointer-events: none; justify-self: end")
                         # --- Chapter archives (inside active save card) ---
                         if is_active and chapter > 1:
                             archived = list_chapter_archives(username, sname)
