@@ -5,6 +5,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.59]
+
+### Added
+- **Last-used save restored on login.** When a user logs in, EdgeTales now loads the save slot they last used instead of always defaulting to `autosave`. The active slot name is written to `settings.json` as `last_save` in three places: when a save is manually loaded via the sidebar, when a new game is created (writes `"autosave"`), and on login (reads `last_save`, falls back to `"autosave"` if that slot no longer exists, then falls back to no game if neither exists).
+
+### Changed
+- **Em-dash and en-dash replaced by regular hyphen in all AI output.** `parse_narrator_response()` Step 8.5 previously normalized spacing around em-dashes and kept them. Now both em-dash (`—`, U+2014) and en-dash (`–`, U+2013) are replaced with a spaced regular hyphen (` - `), regardless of surrounding whitespace. Same replacement applied in `call_recap()` and `generate_epilogue()`, which previously bypassed `parse_narrator_response()`.
+- **Load confirmation dialog wording corrected.** "Aktuellen Fortschritt verwerfen und … laden?" → "Aktuelles Spiel verlassen und … laden?" (DE) / "Leave current game and load …?" (EN). The old wording implied unsaved data loss; since every turn auto-saves, no progress is actually discarded.
+
+---
+
 ## [0.9.58]
 
 ### Fixed

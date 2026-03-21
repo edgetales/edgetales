@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.58"
+VERSION = "0.9.59"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-5-20250929"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -3144,7 +3144,7 @@ def call_recap(client: anthropic.Anthropic, game: GameState,
                            f"{arc_info}{campaign_info}\nnow:{game.current_scene_context}\n"
                            f"recent_scenes:\n{recent_narrations}"}],
             )
-            return response.content[0].text
+            return re.sub(r'\s*[—–]\s*', ' - ', response.content[0].text)
         except Exception as e:
             log(f"[Recap] Attempt {attempt + 1}/3 failed: {e}", level="warning")
             if attempt < 2:
@@ -4934,10 +4934,10 @@ def parse_narrator_response(game: GameState, raw: str) -> str:
     # Strip orphaned asterisks (unclosed emphasis: opening * without matching close)
     narration = re.sub(r'(?<!\*)\*(?!\*)', '', narration)
 
-    # --- 8.5) Normalize em-dash spacing (model drift: "word—word" → "word — word") ---
-    # Ensure exactly one space on each side of em-dashes.  Handles all forms:
-    # no spaces ("A—B"), space only before ("A— B"), space only after ("A —B").
-    narration = re.sub(r'\s*—\s*', ' — ', narration)
+    # --- 8.5) Normalize em-dash spacing, then replace with regular hyphen ---
+    # First ensure exactly one space on each side (handles "A—B", "A— B", "A —B"),
+    # then convert em-dash (—) and en-dash (–) to a spaced hyphen for cleaner rendering.
+    narration = re.sub(r'\s*[—–]\s*', ' - ', narration)
 
     # --- 9) Normalize NPC dispositions ---
     _normalize_npc_dispositions(game.npcs)
@@ -5805,6 +5805,8 @@ def generate_epilogue(client: anthropic.Anthropic, game: GameState,
         '', narration, count=1, flags=re.IGNORECASE
     )
     narration = narration.strip()
+
+    narration = re.sub(r'\s*[—–]\s*', ' - ', narration)
 
     if not narration:
         narration = "(The narrator pauses, then offers a quiet reflection on the journey...)"

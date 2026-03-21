@@ -1175,6 +1175,8 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                                             s["_turn_gen"] = s.get("_turn_gen", 0) + 1
                                             s["viewing_chapter"] = None; s["chapter_view_messages"] = None; s["chapter_view_title"] = None
                                             s["messages"].append({"role":"assistant","content":f"*{E['checkmark']} {t('actions.game_loaded', lang, name=loaded.player_name, scene=loaded.scene_count)}*"})
+                                            # Persist last used save so next login restores it
+                                            _ucfg = load_user_config(username); _ucfg["last_save"] = n; save_user_config(username, _ucfg)
                                             ui.navigate.reload()
                                     if game and not _active:
                                         with ui.dialog() as dlg, ui.card():
@@ -2136,6 +2138,7 @@ def _render_confirm():
                     s["messages"].append({"scene_marker":t("game.scene_marker", lang, n=1, location=game.current_location)})
                     s["messages"].append({"role":"assistant","content":narration})
                     save_game(game,username,s["messages"],s["active_save"])
+                    _ucfg=load_user_config(username);_ucfg["last_save"]="autosave";save_user_config(username,_ucfg)
                     if s.get("tts_enabled",False): s["pending_tts"]=narration
                     ui.navigate.reload()
                 except Exception as e:
@@ -2955,13 +2958,18 @@ async def main_page(client: Client):
         # First-time user: show language onboarding before entering the app
         if not load_user_config(name):
             await _show_language_onboarding(name)
-        # Auto-load autosave if it exists
+        # Auto-load last used save (or autosave as fallback)
         if not s.get("game"):
-            loaded, hist = load_game(name, "autosave")
+            _login_cfg = load_user_config(name)
+            _last_save = _login_cfg.get("last_save", "autosave")
+            loaded, hist = load_game(name, _last_save)
+            if not loaded and _last_save != "autosave":
+                loaded, hist = load_game(name, "autosave")
+                _last_save = "autosave"
             if loaded:
                 s["game"] = loaded
                 s["messages"] = hist
-                s["active_save"] = "autosave"
+                s["active_save"] = _last_save
         await _show_main_phase()
 
     async def _handle_switch_user():
