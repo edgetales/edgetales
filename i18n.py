@@ -219,6 +219,7 @@ _STRINGS = {
         "actions.new_game": "Neues Spiel",
         "actions.new_game_confirm": "Aktuelles Spiel beenden und neu starten?",
         "actions.export": "PDF Export",
+        "actions.wrap_story": "Geschichte abschlie\u00dfen",
         # Export story
         "export.subtitle": "Eine Geschichte",
         "export.exported_at": "Exportiert am {timestamp}",
@@ -389,6 +390,7 @@ _STRINGS = {
         "epilogue.restart": "Komplett neu",
         "epilogue.chapter_msg": "Kapitel {n}...",
         "epilogue.marker": "Epilog",
+        "epilogue.dismiss_hint": "Du kannst die Geschichte jederzeit \u00fcber \u201eGeschichte abschlie\u00dfen\u201c im Men\u00fc beenden.",
 
         # Chapter Archives
         "chapters.viewing": "\U0001F4D6 Kapitel {n}",
@@ -619,6 +621,7 @@ _STRINGS = {
         "actions.new_game": "New Game",
         "actions.new_game_confirm": "End current game and start fresh?",
         "actions.export": "PDF Export",
+        "actions.wrap_story": "Wrap Up Story",
         # Export story
         "export.subtitle": "A Story",
         "export.exported_at": "Exported on {timestamp}",
@@ -790,6 +793,7 @@ _STRINGS = {
         "epilogue.restart": "Start Over",
         "epilogue.chapter_msg": "Chapter {n}...",
         "epilogue.marker": "Epilogue",
+        "epilogue.dismiss_hint": "You can wrap up the story anytime via \u201cWrap Up Story\u201d in the menu.",
 
         # Chapter Archives
         "chapters.viewing": "\U0001F4D6 Chapter {n}",

@@ -5,6 +5,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.61]
+
+### Added
+- **„Geschichte abschließen"-Button im Menü.** Wenn ein Spieler das Epilog-Angebot über „Weiterspielen" dismissed hat, erscheint im Menü (oberhalb des Recap-Buttons) ein neuer Button „Geschichte abschließen" (EN: „Wrap Up Story"). Er ist nur sichtbar wenn `story_complete && epilogue_dismissed && !epilogue_shown`. Klick setzt `epilogue_dismissed = False`, speichert und reloaded — das Epilog-Angebot erscheint daraufhin wieder normal im Chat. So kann der Spieler den Epilog jederzeit selbst auslösen, ohne auf einen automatischen Trigger warten zu müssen.
+- **Hinweis-Label im Epilog-Angebot.** Direkt unterhalb der Buttons im Epilog-Offer-Block erscheint ein dezenter Hinweistext (`epilogue.dismiss_hint`), der den Spieler bereits beim ersten Angebot auf den Menü-Button hinweist — sichtbar bevor er „Weiterspielen" klickt. Neues i18n-Key-Paar in DE + EN.
+
+---
+
 ## [0.9.60]
 
 ### Fixed

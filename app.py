@@ -1070,6 +1070,14 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                 if recap_status:
                     recap_status.set_visibility(False)
     if game:
+        # --- Wrap Up Story (re-offer epilogue after dismiss) ---
+        _bp = game.story_blueprint or {}
+        if _bp.get("story_complete") and game.epilogue_dismissed and not game.epilogue_shown:
+            def wrap_story():
+                game.epilogue_dismissed = False
+                save_game(game, s["current_user"], s["messages"], s.get("active_save", "autosave"))
+                ui.navigate.reload()
+            ui.button(t('actions.wrap_story', lang), on_click=wrap_story, color="primary").props("flat dense").classes("w-full")
         ui.button(f"{E['scroll']} {t('actions.recap', lang)}", on_click=do_recap).props("flat dense").classes("w-full")
         recap_status = ui.label("").classes("text-xs text-center w-full").style("color: var(--text-secondary)")
         recap_status.set_visibility(False)
@@ -2584,6 +2592,7 @@ def render_epilogue() -> bool:
                 ui.button(f"{E['star']} {t('epilogue.generate', lang)}", on_click=gen_epilogue, color="primary")
                 def dismiss(): game.epilogue_dismissed=True; save_game(game,s["current_user"],s["messages"],s.get("active_save","autosave")); ui.navigate.reload()
                 ui.button(t("epilogue.continue", lang), on_click=dismiss).props("flat")
+            ui.label(t("epilogue.dismiss_hint", lang)).classes("text-xs mt-2").style("color: var(--text-secondary)")
     return False  # Keep footer active — player can still type
 
 
