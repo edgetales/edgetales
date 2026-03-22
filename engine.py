@@ -2506,7 +2506,8 @@ class GameState:
     backstory: str = ""        # Raw player-authored backstory — canon facts, NOT plot seeds
     # v5.11: Director guidance (stored between turns)
     director_guidance: dict = field(default_factory=dict)  # Last DirectorGuidance output
-    # Transient — NOT in SAVE_FIELDS. Full pre-turn snapshot for ## correction flow.
+    # Persisted in SAVE_FIELDS. Full pre-turn snapshot for ## correction flow.
+    # Allows one correction after reload (e.g. after accidental disconnect).
     last_turn_snapshot: Optional[dict] = field(default=None, repr=False)
 
     def get_stat(self, name: str) -> int:
@@ -5399,6 +5400,8 @@ SAVE_FIELDS = [
     "backstory",
     # v5.11: Director guidance
     "director_guidance",
+    # v5.12: Last turn snapshot (persisted to allow ## correction after reload)
+    "last_turn_snapshot",
 ]
 
 def save_game(game: GameState, username: str, chat_messages: list = None,
