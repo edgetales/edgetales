@@ -259,11 +259,14 @@ DIRECTOR_OUTPUT_SCHEMA = {
                     ]},
                     "about_npc":           {"type": ["string", "null"]},
                     "updated_description": {"type": ["string", "null"]},
+                    "updated_agenda":      {"type": ["string", "null"]},
+                    "updated_instinct":    {"type": ["string", "null"]},
                     "agenda":              {"type": ["string", "null"]},
                     "instinct":            {"type": ["string", "null"]},
                 },
                 "required": ["npc_id", "reflection", "tone", "tone_key",
-                             "about_npc", "updated_description", "agenda", "instinct"],
+                             "about_npc", "updated_description", "updated_agenda",
+                             "updated_instinct", "agenda", "instinct"],
                 "additionalProperties": False,
             },
         },
@@ -1347,9 +1350,9 @@ def _description_match_existing_npc(game, new_desc: str, new_name_lower: str) ->
             continue
         # Spatial guard: if existing NPC has a known location that differs from
         # the player's current location, they can't be the same person appearing here
-        npc_loc = n.get("last_location", "").strip().lower()
-        current_loc = (game.current_location or "").strip().lower()
-        if npc_loc and current_loc and npc_loc != current_loc:
+        npc_loc = n.get("last_location", "").strip()
+        current_loc = (game.current_location or "").strip()
+        if npc_loc and current_loc and not _locations_match(npc_loc, current_loc):
             continue
 
         existing_desc = n.get("description", "")
@@ -1518,6 +1521,10 @@ def _absorb_duplicate_npc(game, original: dict, merged_name: str):
         log(f"[NPC] Absorbed duplicate '{dup.get('name', '?')}' ({dup_id}) "
             f"into '{original['name']}' ({original.get('id', '?')}): "
             f"{len(dup_mems)} memories transferred")
+        # Sanitize: strip parenthetical descriptor aliases the dup name may have introduced
+        _apply_name_sanitization(original)
+        # Consolidate: merged memory lists may now exceed MAX_NPC_MEMORY_ENTRIES
+        _consolidate_memory(original)
         break  # Only one duplicate expected
 
 
@@ -2570,6 +2577,38 @@ def advance_time(game: GameState, progression: str):
         game.time_of_day = TIME_PHASES[new_idx]
 
 
+def _locations_match(loc_a: str, loc_b: str) -> bool:
+    """Fuzzy location equality: two location strings are considered the same place
+    if one's significant word-set is a subset of the other's.
+    Handles AI-appended suffixes like 'Serges Heim in Lyon' vs 'Serges Heim',
+    underscore variants, and minor word-order differences.
+    Empty strings are treated as 'unknown / possibly here' → always True
+    (backward-compat: NPCs without last_location are never wrongly excluded).
+    Single-significant-word check uses prefix matching, not subset, to prevent
+    a bare city name ('Lyon') from matching any location that mentions the city
+    ('Serges Heim in Lyon', 'Gefängnis in Lyon')."""
+    if not loc_a or not loc_b:
+        return True
+    # Stopwords to ignore when comparing (common in German & English location strings)
+    _STOP = {"in", "im", "an", "am", "auf", "bei", "vor", "der", "die", "das",
+              "des", "dem", "den", "von", "the", "of", "at", "in", "near"}
+    def _wordlist(s: str) -> list:
+        return [w.strip(".,;:!?\"'()").lower().replace("_", " ")
+                for w in s.split()
+                if w.strip(".,;:!?\"'()").lower() not in _STOP]
+    wa, wb = _wordlist(loc_a), _wordlist(loc_b)
+    if not wa or not wb:
+        return True
+    # Multi-word: subset check (shorter ⊆ longer)
+    shorter, longer = (wa, wb) if len(wa) <= len(wb) else (wb, wa)
+    if len(shorter) >= 2:
+        return set(shorter).issubset(set(longer))
+    # Single significant word: only match if it's a left-aligned prefix of the longer.
+    # 'Hintergasse' matches 'Hintergasse in Lyon' (prefix) but
+    # 'Lyon' does NOT match 'Serges Heim in Lyon' (suffix/qualifier, not prefix).
+    return shorter[0] == longer[0]
+
+
 def update_location(game: GameState, new_location: str):
     """Update current location and maintain location history."""
     if not new_location:
@@ -2578,18 +2617,17 @@ def update_location(game: GameState, new_location: str):
     new_location = new_location.replace("_", " ").strip()
     if not new_location or new_location == game.current_location:
         return
+    # Skip if new_location is just a qualifier variant of the current location
+    # (e.g. 'Serges Heim in Lyon' when current is 'Serges Heim' — no real move).
+    # Prevents AI-appended city suffixes from overwriting the canonical name.
+    if game.current_location and _locations_match(new_location, game.current_location):
+        return
     if game.current_location:
-        # Dedup: if current location is very similar to last history entry,
-        # replace it instead of appending (prevents "Janas Büro" + "Janas privates Büro")
-        if game.location_history:
-            last = game.location_history[-1]
-            last_words = set(last.lower().split())
-            cur_words = set(game.current_location.lower().split())
-            overlap = len(last_words & cur_words) / max(min(len(last_words), len(cur_words)), 1)
-            if overlap > 0.5:
-                game.location_history[-1] = game.current_location
-            else:
-                game.location_history.append(game.current_location)
+        # Dedup: if current location is a fuzzy match of the last history entry,
+        # replace it instead of appending (prevents drift variants and near-duplicates
+        # like "Janas Büro" + "Janas privates Büro" both accumulating in history).
+        if game.location_history and _locations_match(game.current_location, game.location_history[-1]):
+            game.location_history[-1] = game.current_location
         else:
             game.location_history.append(game.current_location)
         game.location_history = game.location_history[-5:]
@@ -2648,6 +2686,12 @@ def _build_turn_snapshot(game: GameState) -> dict:
     Also used as the authoritative basis for the burn pre_snapshot.
     NOT persisted to disk — transient only.
     """
+    # Snapshot the mutable sub-fields of story_blueprint that can change during a turn:
+    # - "revealed": revelation IDs marked used by mark_revelation_used()
+    # - "triggered_transitions": act transition IDs set by _apply_director_guidance()
+    # - "story_complete": set by _check_story_completion()
+    # The rest of story_blueprint (acts, conflict, endings, …) is immutable during a turn.
+    bp = game.story_blueprint or {}
     return {
         # Resource tracks
         "health": game.health,
@@ -2672,6 +2716,10 @@ def _build_turn_snapshot(game: GameState) -> dict:
         "clocks": copy.deepcopy(game.clocks),
         "director_guidance": copy.deepcopy(game.director_guidance),
         "scene_intensity_history": list(game.scene_intensity_history),
+        # Blueprint sub-fields that mutate during a turn
+        "bp_revealed": list(bp.get("revealed", [])),
+        "bp_triggered_transitions": list(bp.get("triggered_transitions", [])),
+        "bp_story_complete": bp.get("story_complete", False),
         # Log tails — only last entry needed for restore/replace
         "session_log_tail": copy.deepcopy(game.session_log[-1]) if game.session_log else None,
         "narration_history_tail": copy.deepcopy(game.narration_history[-1]) if game.narration_history else None,
@@ -2792,6 +2840,7 @@ def apply_consequences(game: GameState, roll: RollResult, brain: dict) -> tuple[
                 ticks = 2 if position == "desperate" else 1
                 clock["filled"] = min(clock["segments"], clock["filled"] + ticks)
                 if clock["filled"] >= clock["segments"]:
+                    clock["fired"] = True
                     clock_events.append({"clock": clock["name"], "trigger": clock["trigger_description"]})
                 break
 
@@ -2799,6 +2848,22 @@ def apply_consequences(game: GameState, roll: RollResult, brain: dict) -> tuple[
         game.momentum = min(game.max_momentum, game.momentum + 1)
         if roll.move in {"make_connection"} and target:
             target["bond"] = min(target.get("bond_max", 4), target["bond"] + 1)
+        # Recovery moves: partial restore on WEAK_HIT
+        if roll.move == "endure_harm":
+            old = game.health
+            game.health = min(5, game.health + 1)
+            if game.health > old:
+                consequences.append(f"health +{game.health - old}")
+        elif roll.move == "endure_stress":
+            old = game.spirit
+            game.spirit = min(5, game.spirit + 1)
+            if game.spirit > old:
+                consequences.append(f"spirit +{game.spirit - old}")
+        elif roll.move == "resupply":
+            old = game.supply
+            game.supply = min(5, game.supply + 1)
+            if game.supply > old:
+                consequences.append(f"supply +{game.supply - old}")
 
     else:  # STRONG_HIT
         effect = brain.get("effect", "standard")
@@ -2809,6 +2874,25 @@ def apply_consequences(game: GameState, roll: RollResult, brain: dict) -> tuple[
             shifts = {"hostile": "distrustful", "distrustful": "neutral",
                       "neutral": "friendly", "friendly": "loyal"}
             target["disposition"] = shifts.get(target["disposition"], target["disposition"])
+        # Recovery moves: full restore on STRONG_HIT
+        if roll.move == "endure_harm":
+            gain = 2 if effect == "great" else 1
+            old = game.health
+            game.health = min(5, game.health + gain)
+            if game.health > old:
+                consequences.append(f"health +{game.health - old}")
+        elif roll.move == "endure_stress":
+            gain = 2 if effect == "great" else 1
+            old = game.spirit
+            game.spirit = min(5, game.spirit + gain)
+            if game.spirit > old:
+                consequences.append(f"spirit +{game.spirit - old}")
+        elif roll.move == "resupply":
+            gain = 2 if effect == "great" else 1
+            old = game.supply
+            game.supply = min(5, game.supply + gain)
+            if game.supply > old:
+                consequences.append(f"supply +{game.supply - old}")
 
     # --- Crisis check -----------------
     if game.health <= 0 and game.spirit <= 0:
@@ -2840,6 +2924,8 @@ def _tick_autonomous_clocks(game: GameState) -> list:
         if random.random() < AUTONOMOUS_CLOCK_TICK_CHANCE:
             clock["filled"] = min(clock["segments"], clock["filled"] + 1)
             triggered = clock["filled"] >= clock["segments"]
+            if triggered:
+                clock["fired"] = True
             event = {
                 "clock": clock["name"],
                 "trigger": clock["trigger_description"],
@@ -2880,6 +2966,7 @@ def check_npc_agency(game: GameState) -> list[str]:
                         and clock["filled"] < clock["segments"]):
                     clock["filled"] += 1
                     if clock["filled"] >= clock["segments"]:
+                        clock["fired"] = True
                         actions.append(f'CLOCK FILLED "{clock["name"]}": {clock["trigger_description"]}')
     return actions
 
@@ -2900,7 +2987,14 @@ def _story_context_block(game: GameState) -> str:
         rev_hint = f' revelation_ready="{pending[0]["content"][:80]}"'
 
     ending_hint = ""
-    if bp.get("story_complete"):
+    if bp.get("story_complete") and getattr(game, "epilogue_dismissed", False):
+        ending_hint = (
+            f'\n<story_ending>The planned arc is complete and the player chose to continue '
+            f'beyond it (scene {game.scene_count}). Do NOT push toward a conclusion. '
+            f'Follow the player\'s organic lead — new threads, consequences, and character '
+            f'moments are all valid. Treat this as open-ended play.</story_ending>'
+        )
+    elif bp.get("story_complete"):
         endings = bp.get("possible_endings", [])
         ending_hint = f'\n<story_ending>Story has EXCEEDED its planned arc (scene {game.scene_count}). Guide toward a satisfying conclusion in the next 1-2 scenes. Possible endings: {", ".join(e["type"] for e in endings)}. Let player actions determine which ending, but actively weave toward closure.</story_ending>'
     elif act.get("approaching_end"):
@@ -3429,12 +3523,33 @@ npcs:{npc_text}{campaign_ctx}{backstory_text}"""
 def get_current_act(game: GameState) -> dict:
     """Determine which act the story is in based on transition triggers and scene count.
     Dual logic: (1) Check if Director has signaled an act transition via trigger fulfillment,
-    tracked in story_blueprint['triggered_transitions']. (2) Fallback to scene_range."""
+    tracked in story_blueprint['triggered_transitions']. (2) Fallback to scene_range.
+    Special case: story_complete + epilogue_dismissed → synthetic 'aftermath' phase so the
+    Director and Narrator stop pushing toward a climax the player already declined."""
     bp = game.story_blueprint
     if not bp or not bp.get("acts"):
         return {"phase": "setup", "title": "?", "goal": "?", "mood": "mysterious",
                 "act_number": 1, "total_acts": 3, "progress": "early",
                 "approaching_end": False, "transition_trigger": ""}
+
+    # Player dismissed the epilogue and chose to keep playing: the planned arc is done.
+    # Return a synthetic act so all consumers (Director trigger, prompt builders) see
+    # "aftermath" instead of endlessly repeating "climax" or "story ending in 1-2 scenes".
+    if bp.get("story_complete") and getattr(game, "epilogue_dismissed", False):
+        acts = bp["acts"]
+        return {
+            "phase": "aftermath",
+            "title": "Aftermath",
+            "goal": "The planned arc has concluded. The player chose to continue. "
+                    "Follow their lead organically — no forced conclusions.",
+            "mood": "open",
+            "act_number": len(acts),
+            "total_acts": len(acts),
+            "progress": "open",
+            "approaching_end": False,
+            "transition_trigger": "",
+            "scene_range": [game.scene_count, game.scene_count + 99],
+        }
 
     acts = bp["acts"]
     scene = game.scene_count
@@ -3826,7 +3941,7 @@ All text fields (event, description, scene_context) MUST be in {lang}.
 emotional_weight must be ONE of: neutral, curious, wary, angry, grateful, suspicious, terrified, loyal, conflicted, betrayed, devastated, euphoric.
 disposition must be ONE of: neutral, friendly, distrustful, hostile, loyal.
 time_update must be ONE of: early_morning, morning, midday, afternoon, evening, late_evening, night, deep_night — or null if no time change.
-location_update: new location name if the character MOVED, null if they stayed.
+location_update: new location name if the character MOVED to a different place, null if they stayed. IMPORTANT: if no movement occurred, always return null — do NOT add city names, qualifiers, or extra words to the existing location. If a move did occur, use the exact place name as it appears in the narration (short and specific, e.g. "Die Kathedrale", not "Die Kathedrale in Lyon").
 npc_renames: only for identity REVEALS (spy unmasked, alias discovered). NOT for surname additions.
 npc_details: for newly established facts (surname, role change). full_name if name extended, description if role/situation changed.
 new_npcs: ONLY for characters who are PHYSICALLY PRESENT in the scene AND actively interacting (speaking, acting, reacting). They must NOT already be in the known NPC list. NEVER include the player character. NEVER include:
@@ -4137,7 +4252,12 @@ They advance when the player fails rolls OR autonomously as the world moves
 forward. When a clock is full, its trigger fires as a hard narrative event —
 not optional, not avoidable. Reference clocks in arc_notes and narrator_guidance
 when they are ≥50% filled or have recently ticked — they signal what is at stake
-and what is coming. A nearly-full clock should create visible narrative pressure. """
+and what is coming. A nearly-full clock should create visible narrative pressure.
+
+When phase="aftermath": the planned story arc has concluded and the player chose
+to keep playing. Do NOT suggest wrapping up or pushing toward a final scene.
+Instead: surface consequences of past events, develop NPC relationships, introduce
+organic new tensions. Think "Season 2 setup", not "Season 1 finale". """
 
 
 def _should_call_director(game: GameState, roll_result: str = "",
@@ -4162,10 +4282,12 @@ def _should_call_director(game: GameState, roll_result: str = "",
         if npc.get("_needs_reflection") and npc.get("status") in ("active", "background"):
             return f"reflection:{npc.get('name', '?')}"
 
-    # 3. Act phase change
+    # 3. Act phase change — Director is especially valuable in high-stakes phases.
+    # "resolution" = 3-act finale; "ketsu_resolution" = kishotenketsu finale;
+    # "ten_twist" = the perspective-shift act that precedes it.
     if game.story_blueprint and game.story_blueprint.get("acts"):
         act = get_current_act(game)
-        if act.get("phase") in ("climax", "resolution", "ten_twist"):
+        if act.get("phase") in ("climax", "resolution", "ten_twist", "ketsu_resolution"):
             return f"phase:{act['phase']}"
 
     # 4. Regular interval
@@ -4274,9 +4396,11 @@ def build_director_prompt(game: GameState, latest_narration: str,
         if n.get("status") in ("active", "background")
     ) or "(none)"
 
-    # Clocks overview — all clocks with fill bar, percentage and trigger text
+    # Clocks overview — active clocks with fill bar; fired clocks compact
+    active_clocks = [c for c in game.clocks if not c.get("fired")]
+    fired_clocks  = [c for c in game.clocks if c.get("fired")]
     clocks_lines = []
-    for c in game.clocks:
+    for c in active_clocks:
         filled  = c.get("filled", 0)
         segs    = c.get("segments", 6)
         bar     = "█" * filled + "░" * (segs - filled)
@@ -4284,6 +4408,10 @@ def build_director_prompt(game: GameState, latest_narration: str,
         ctype   = c.get("clock_type", "threat")
         trigger = c.get("trigger_description", "")
         clocks_lines.append(f'- {c["name"]} [{ctype}] {bar} {filled}/{segs} ({pct}%) — {trigger}')
+    if fired_clocks:
+        clocks_lines.append("fired (already triggered, no longer active):")
+        for c in fired_clocks:
+            clocks_lines.append(f'  - {c["name"]}: {c.get("trigger_description", "")}')
     clocks_block = "<clocks>\n" + "\n".join(clocks_lines) + "\n</clocks>" if clocks_lines else ""
 
     return f"""<scene_history>
@@ -4317,6 +4445,8 @@ Field instructions:
   - tone: 1-3 lowercase English words, underscore-separated, capturing the emotional shift (e.g. 'protective_guilt', 'reluctant_trust')
   - tone_key: ONE word from the enum (neutral, curious, wary, suspicious, grateful, terrified, loyal, conflicted, betrayed, devastated, euphoric, defiant, guilty, protective, angry, devoted, impressed, hopeful)
   - updated_description: STRICTLY in {lang}. Max 100 characters. Role + key visual traits + personality. Keep physical details like age, hair, build. Do NOT start with the NPC's name. NO actions, NO posture. Example: 'Grumpy dwarf blacksmith with burn scars, secretly loyal'. null if unchanged.
+  - updated_agenda: If this NPC's goals have fundamentally shifted due to recent story events (defeat, revelation, betrayal, alliance formed), write their new driving goal (max 10 words, in {lang}). Use this when the old agenda is clearly obsolete — e.g. an NPC who sought to destroy the player now seeks to understand them. null if the existing agenda still applies.
+  - updated_instinct: Same as updated_agenda but for behavioral pattern. null if unchanged.
   - about_npc: If this reflection is primarily about the NPC's feelings toward ANOTHER NPC (not the player), set to that NPC's npc_id. Example: Sophie reflects on her growing attraction to Bruce → about_npc="npc_2". null if the reflection is about the player or general.
   - agenda: NPC's hidden goal (max 8 words, only if needs_profile="true"), null otherwise
   - instinct: NPC's default behavior pattern (max 8 words, only if needs_profile="true"), null otherwise
@@ -4388,14 +4518,37 @@ def _apply_director_guidance(game: GameState, guidance: dict):
     if guidance.get("act_transition") and game.story_blueprint:
         bp = game.story_blueprint
         bp.setdefault("triggered_transitions", [])
+        acts = bp.get("acts", [])
         act = get_current_act(game)
         act_idx = act.get("act_number", 1) - 1
-        act_id = f"act_{act_idx}"
-        if act_id not in bp["triggered_transitions"]:
-            bp["triggered_transitions"].append(act_id)
-            trigger_text = act.get("transition_trigger", "?")
-            log(f"[Director] Act transition triggered: act {act.get('act_number')} "
-                f"'{act.get('phase')}' → trigger fulfilled: '{trigger_text[:80]}'")
+
+        # Guard: the final act has no transition_trigger by design.
+        # If the Director fires act_transition=true while in the final act
+        # (e.g. with PAST_RANGE=true), silently ignore — recording it would
+        # pollute triggered_transitions without any effect on get_current_act().
+        if act_idx >= len(acts) - 1:
+            log(f"[Director] Ignoring act_transition=true for final act "
+                f"(act_{act_idx}) — final acts have no transition by design")
+        else:
+            # Back-fill: any intermediate acts skipped via scene_range fallback
+            # (never explicitly triggered) should be marked before recording this one.
+            # Without this, triggered_transitions can have gaps (e.g. act_0, act_2)
+            # that make diagnostics misleading.
+            for i in range(act_idx):
+                prev_id = f"act_{i}"
+                if prev_id not in bp["triggered_transitions"]:
+                    sr = acts[i].get("scene_range", [1, 20]) if i < len(acts) else [1, 20]
+                    if game.scene_count > sr[1]:
+                        bp["triggered_transitions"].append(prev_id)
+                        log(f"[Director] Back-filled skipped act: {prev_id} "
+                            f"(scene {game.scene_count} > range end {sr[1]})")
+
+            act_id = f"act_{act_idx}"
+            if act_id not in bp["triggered_transitions"]:
+                bp["triggered_transitions"].append(act_id)
+                trigger_text = act.get("transition_trigger", "?")
+                log(f"[Director] Act transition triggered: act {act.get('act_number')} "
+                    f"'{act.get('phase')}' → trigger fulfilled: '{trigger_text[:80]}'")
 
     # Enrich the latest session log entry with Director's summary
     if guidance.get("scene_summary") and game.session_log:
@@ -4441,6 +4594,21 @@ def _apply_director_guidance(game: GameState, guidance: dict):
         if suggested_instinct and not npc.get("instinct", "").strip():
             npc["instinct"] = suggested_instinct
             log(f"[Director] Instinct set for {npc['name']}: '{suggested_instinct}'")
+
+        # updated_agenda / updated_instinct: always overwrite when provided
+        # (for NPCs whose goals have fundamentally shifted due to story events)
+        new_agenda = (ref.get("updated_agenda") or "").strip()
+        new_instinct = (ref.get("updated_instinct") or "").strip()
+        if new_agenda:
+            old_agenda = npc.get("agenda", "")
+            npc["agenda"] = new_agenda
+            log(f"[Director] Agenda updated for {npc['name']}: "
+                f"'{old_agenda[:60]}' → '{new_agenda}'")
+        if new_instinct:
+            old_instinct = npc.get("instinct", "")
+            npc["instinct"] = new_instinct
+            log(f"[Director] Instinct updated for {npc['name']}: "
+                f"'{old_instinct[:60]}' → '{new_instinct}'")
 
         # Update description if Director provided a meaningful character description
         new_desc = (ref.get("updated_description") or "").strip()
@@ -4594,7 +4762,7 @@ def _activated_npcs_block(activated: list[dict], target_id: Optional[str],
         loc_hint = ""
         npc_loc = npc.get("last_location", "")
         player_loc = game.current_location or ""
-        if npc_loc and player_loc and npc_loc.lower() != player_loc.lower():
+        if npc_loc and player_loc and not _locations_match(npc_loc, player_loc):
             loc_hint = f' last_seen="{npc_loc}"'
 
         parts.append(
@@ -4618,7 +4786,7 @@ def _known_npcs_string(mentioned: list[dict], game: GameState,
             entry += "[bg]"
         # Spatial hint: show last location if different from player
         npc_loc = n.get("last_location", "")
-        if npc_loc and player_loc and npc_loc.lower() != player_loc:
+        if npc_loc and player_loc and not _locations_match(npc_loc, player_loc):
             entry += f'[at:{npc_loc}]'
         return entry
 
@@ -4678,7 +4846,7 @@ def _npcs_present_string(game: GameState) -> str:
         if n.get("aliases"):
             entry += f'(aka {",".join(n["aliases"])})'
         npc_loc = n.get("last_location", "")
-        if npc_loc and player_loc and npc_loc.lower() != player_loc:
+        if npc_loc and player_loc and not _locations_match(npc_loc, player_loc):
             entry += f'[at:{npc_loc}]'
         parts.append(entry)
     return ", ".join(parts) or "none"
@@ -4808,10 +4976,12 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
         constraint = f'<result type="MISS"{match_tag} consequences="{",".join(consequences)}"{clk}>Concrete failure. No silver linings. Make it hurt.{match_hint}</r>'
     elif roll.result == "WEAK_HIT":
         match_hint = ' A MATCH \u2014 despite the cost, something unexpected and significant happens, a twist of fate.' if roll.match else ''
-        constraint = f'<result type="WEAK_HIT"{match_tag}>Success with tangible cost or complication.{match_hint}</r>'
+        cons_attr = f' consequences="{",".join(consequences)}"' if consequences else ''
+        constraint = f'<result type="WEAK_HIT"{match_tag}{cons_attr}>Success with tangible cost or complication.{match_hint}</r>'
     else:
         match_hint = ' A MATCH \u2014 an unexpected boon, a fateful revelation, or a dramatic advantage beyond the clean success.' if roll.match else ''
-        constraint = f'<result type="STRONG_HIT"{match_tag}>Clean success.{match_hint}</r>'
+        cons_attr = f' consequences="{",".join(consequences)}"' if consequences else ''
+        constraint = f'<result type="STRONG_HIT"{match_tag}{cons_attr}>Clean success.{match_hint}</r>'
 
     position_tag = f'<position level="{position}" effect="{effect}"/>'
 
@@ -5338,6 +5508,10 @@ def load_game(username: str, name: str = "autosave") -> tuple[Optional[GameState
         game.location_history = []
     if game.time_of_day is None:
         game.time_of_day = ""
+    # Backward compatibility: backfill fired=True for fully filled clocks in older saves
+    for clock in game.clocks:
+        if clock.get("filled", 0) >= clock.get("segments", 1) and "fired" not in clock:
+            clock["fired"] = True
     chat_messages = data.get("chat_messages", [])
     log(f"[Load] Game loaded: {username}/{name} ({game.player_name}, Scene {game.scene_count}, {len(chat_messages)} chat msgs)")
     return game, chat_messages
@@ -6614,6 +6788,9 @@ def _apply_correction_ops(game: GameState, ops: list) -> None:
                     target["agenda"] = source["agenda"]
                 if not target.get("instinct") and source.get("instinct"):
                     target["instinct"] = source["instinct"]
+                # Sanitize: strip any parenthetical annotations the source name
+                # may have introduced as aliases (e.g. "Ein Mann im braunen Wams")
+                _apply_name_sanitization(target)
                 game.npcs = [n for n in game.npcs if n["id"] != source["id"]]
                 log(f"[Correction] npc_merge: '{source['name']}' absorbed into '{target['name']}'")
 
@@ -6663,6 +6840,18 @@ def _restore_from_snapshot(game: GameState, snap: dict) -> None:
         game.npcs = copy.deepcopy(snap["npcs"])
     if "clocks" in snap:
         game.clocks = copy.deepcopy(snap["clocks"])
+    # Restore blueprint sub-fields that may have mutated during the turn:
+    # revelation marks, act transitions, and story_complete flag.
+    if game.story_blueprint is not None:
+        if "bp_revealed" in snap:
+            game.story_blueprint["revealed"] = list(snap["bp_revealed"])
+        if "bp_triggered_transitions" in snap:
+            game.story_blueprint["triggered_transitions"] = list(snap["bp_triggered_transitions"])
+        if "bp_story_complete" in snap:
+            if snap["bp_story_complete"]:
+                game.story_blueprint["story_complete"] = True
+            else:
+                game.story_blueprint.pop("story_complete", None)
     # Trim session_log and narration_history back by one entry
     # (the turn being corrected will be re-appended by the re-run)
     if snap.get("session_log_tail") is not None and game.session_log:
@@ -6908,6 +7097,17 @@ def process_momentum_burn(client: anthropic.Anthropic, game: GameState,
         # Fix Bug: scene_intensity_history got an entry from MISS narration — restore it
         if "scene_intensity_history" in pre_snapshot:
             game.scene_intensity_history = list(pre_snapshot["scene_intensity_history"])
+        # Restore blueprint sub-fields (revelation marks, act transitions, story_complete)
+        if game.story_blueprint is not None:
+            if "bp_revealed" in pre_snapshot:
+                game.story_blueprint["revealed"] = list(pre_snapshot["bp_revealed"])
+            if "bp_triggered_transitions" in pre_snapshot:
+                game.story_blueprint["triggered_transitions"] = list(pre_snapshot["bp_triggered_transitions"])
+            if "bp_story_complete" in pre_snapshot:
+                if pre_snapshot["bp_story_complete"]:
+                    game.story_blueprint["story_complete"] = True
+                else:
+                    game.story_blueprint.pop("story_complete", None)
         log(f"[Burn] Fully restored state from snapshot: H{game.health} Sp{game.spirit} Su{game.supply} Chaos{game.chaos_factor}")
     else:
         # Legacy fallback (old burn_info without snapshot — backward compat)

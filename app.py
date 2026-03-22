@@ -885,6 +885,43 @@ CUSTOM_CSS = _CSS_FILE.read_text(encoding="utf-8") if _CSS_FILE.exists() else ""
 # SIDEBAR
 # ===============================================================
 
+# Articles that mark a descriptor alias (not a real name or nickname).
+# Used by _display_aliases() to suppress these from the UI.
+_DESCRIPTOR_ARTICLES = {
+    "der", "die", "das", "dem", "den", "des",  # German def. articles
+    "ein", "eine", "einem", "einen", "eines",   # German indef. articles
+    "the", "a", "an",                            # English articles
+}
+
+
+def _display_aliases(aliases: list) -> list:
+    """Filter NPC aliases for sidebar display: suppress descriptor-style aliases
+    that the dedup system accumulates as lookup keys but are ugly to show.
+
+    Kept (display-worthy):  'Cremon', 'der Fass-Schläger', 'Vertreter', 'Black Hand'
+    Suppressed (lookup-only): 'Ein zweiter Mann in braunem Wams',
+                               'Der Mann im braunen Wams', 'kandidatin_blonde'
+    Rules:
+    - More than 4 words → verbose descriptor, suppress
+    - Contains an underscore → snake_case stub, suppress
+    - First word is a German/English article AND 3+ total words → descriptor, suppress
+      (2-word combos like 'der Fass-Schläger' are legitimate epithets and kept)
+    Empty alias list → empty list (no-op)."""
+    result = []
+    for alias in aliases:
+        if not alias:
+            continue
+        if "_" in alias:
+            continue
+        words = alias.split()
+        if len(words) > 4:
+            continue
+        if words[0].lower() in _DESCRIPTOR_ARTICLES and len(words) >= 3:
+            continue
+        result.append(alias)
+    return result
+
+
 def render_sidebar_status(game: GameState, session=None) -> None:
     s = session or S()
     lang = s.get("ui_lang", DEFAULT_UI_LANG or DEFAULT_LANG) if session else L()
@@ -991,7 +1028,8 @@ def render_sidebar_status(game: GameState, session=None) -> None:
                 disp = dl.get(n["disposition"], f"{E['white_circle']} Neutral")
                 bond_max = n.get("bond_max", 4)
                 with ui.expansion(f"{disp} {E['dash']} {n['name']}").classes("w-full"):
-                    alias_str = f"{aka_label} {', '.join(n['aliases'])}" if n.get("aliases") else ""
+                    _da = _display_aliases(n.get("aliases", []))
+                    alias_str = f"{aka_label} {', '.join(_da)}" if _da else ""
                     ui.html(f'''<div class="npc-card">
                         <div class="npc-meta">{bond_label}: {n["bond"]}/{bond_max}</div>
                         {f'<div class="npc-meta" style="font-style:italic">{alias_str}</div>' if alias_str else ""}
@@ -1004,7 +1042,8 @@ def render_sidebar_status(game: GameState, session=None) -> None:
                     disp = dl.get(n["disposition"], f"{E['white_circle']} Neutral")
                     bond_max = n.get("bond_max", 4)
                     with ui.expansion(f"{disp} {E['dash']} {n['name']}").classes("w-full").style("opacity:0.75"):
-                        alias_str = f"{aka_label} {', '.join(n['aliases'])}" if n.get("aliases") else ""
+                        _da = _display_aliases(n.get("aliases", []))
+                        alias_str = f"{aka_label} {', '.join(_da)}" if _da else ""
                         ui.html(f'''<div class="npc-card">
                             <div class="npc-meta">{bond_label}: {n["bond"]}/{bond_max}</div>
                             {f'<div class="npc-meta" style="font-style:italic">{alias_str}</div>' if alias_str else ""}
