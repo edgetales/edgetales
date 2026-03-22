@@ -11,6 +11,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **`##`-Korrektur jetzt auch nach Reload möglich.** `last_turn_snapshot` ist nicht mehr transient, sondern wird in `SAVE_FIELDS` persistiert. Nach einem unbeabsichtigten Verbindungsabbruch oder Browser-Reload steht der Snapshot des letzten Zugs weiterhin zur Verfügung — ein einmaliger `##`-Korrekturversuch ist damit möglich. Ältere Saves ohne dieses Feld verhalten sich unverändert (`None`-Default greift, Korrektur bleibt im selben Zug verfügbar sobald ein neuer Zug gespielt wird).
 
 ### Fixed
+- **`Object of type RollResult is not JSON serializable` nach erstem Zug.** `last_turn_snapshot` enthält ein `RollResult`-Dataclass-Objekt im `roll`-Feld. Da der Snapshot jetzt in `SAVE_FIELDS` persistiert wird, schlug `json.dumps` beim Auto-Save fehl. Fix: `save_game()` konvertiert `snapshot["roll"]` vor der Serialisierung mit `dataclasses.asdict()` in ein plain dict; `load_game()` rekonstruiert daraus via `RollResult(**r)` das Objekt zurück. Ältere Saves und Snapshots ohne `roll` (Dialog-Züge) sind backward-kompatibel.
+
+### Fixed
 - **Chaos-Interrupt-Animation nicht sichtbar trotz Visual Effects Modus.** Die Chaos-Animationen (`chaos-text-breathe`, rotes Ambient-Glow) wurden ausschließlich über das `data-chaos-high`-Attribut gesteuert, das in `render_sidebar_status()` nur bei `chaos_factor >= 7` gesetzt wird. Ein Chaos-Interrupt kann aber bei beliebiger Chaos-Schwelle (3–9) feuern — bei niedrigeren Werten blieb `chaos < 7` und die Animationen wurden nie ausgelöst. Fix: neue CSS-Klasse `.et-chaos` mit einmaligem `chaos-interrupt-pulse`-Keyframe (roter Box-Shadow-Flash, 3.5s ease-out, aktiv in allen Narrator-Modi). `process_player_input()` setzt die Klasse auf `msg_col` wenn `roll_data.chaos_interrupt` gesetzt ist. Läuft unabhängig vom Ambient-Glow-System (das weiterhin für `chaos >= 7` gilt).
 
 ---

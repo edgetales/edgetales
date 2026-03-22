@@ -5428,6 +5428,11 @@ def save_game(game: GameState, username: str, chat_messages: list = None,
     data["engine_version"] = VERSION
     data["version_history"] = version_history
     data.update({k: getattr(game, k) for k in SAVE_FIELDS})
+    # last_turn_snapshot may contain a RollResult dataclass — serialize to plain dict
+    if data.get("last_turn_snapshot") and data["last_turn_snapshot"].get("roll") is not None:
+        import dataclasses
+        data["last_turn_snapshot"] = dict(data["last_turn_snapshot"])
+        data["last_turn_snapshot"]["roll"] = dataclasses.asdict(data["last_turn_snapshot"]["roll"])
     # Chat history for visual restoration (strip audio binary data and transient recaps)
     raw_messages = chat_messages or []
     data["chat_messages"] = [
@@ -5452,6 +5457,11 @@ def load_game(username: str, name: str = "autosave") -> tuple[Optional[GameState
     for k, v in data.items():
         if k not in ("saved_at", "chat_messages") and hasattr(game, k):
             setattr(game, k, v)
+    # Reconstruct RollResult dataclass from plain dict (was serialized in save_game)
+    if (game.last_turn_snapshot is not None
+            and isinstance(game.last_turn_snapshot.get("roll"), dict)):
+        r = game.last_turn_snapshot["roll"]
+        game.last_turn_snapshot["roll"] = RollResult(**r)
     # Normalize dispositions from older saves that may have non-canonical values
     _normalize_npc_dispositions(game.npcs)
     # Backward compatibility: older saves don't have 'introduced' flag -- assume all existing NPCs were introduced
