@@ -2352,7 +2352,8 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
                     ui.html(f'<h2 id="{scroll_target_id}" class="scene-marker">{t("game.scene_marker", L(), n=game.scene_count, location=game.current_location)}</h2>').classes("w-full")
                 else:
                     ui.html(f'<div id="{scroll_target_id}"></div>')
-                msg_col = ui.column().classes("chat-msg assistant w-full et-new")
+                _has_chaos_interrupt = bool(roll_data and roll_data.get("chaos_interrupt"))
+                msg_col = ui.column().classes("chat-msg assistant w-full et-new" + (" et-chaos" if _has_chaos_interrupt else ""))
                 if not s.get("sr_chat", True):
                     msg_col.props('aria-hidden="true"')
                 with msg_col:

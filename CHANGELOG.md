@@ -5,6 +5,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.62]
+
+### Fixed
+- **Chaos-Interrupt-Animation nicht sichtbar trotz Visual Effects Modus.** Die Chaos-Animationen (`chaos-text-breathe`, rotes Ambient-Glow) wurden ausschließlich über das `data-chaos-high`-Attribut gesteuert, das in `render_sidebar_status()` nur bei `chaos_factor >= 7` gesetzt wird. Ein Chaos-Interrupt kann aber bei beliebiger Chaos-Schwelle (3–9) feuern — bei niedrigeren Werten blieb `chaos < 7` und die Animationen wurden nie ausgelöst. Fix: neue CSS-Klasse `.et-chaos` mit einmaligem `chaos-interrupt-pulse`-Keyframe (roter Box-Shadow-Flash, 3.5s ease-out, aktiv in allen Narrator-Modi). `process_player_input()` setzt die Klasse auf `msg_col` wenn `roll_data.chaos_interrupt` gesetzt ist. Läuft unabhängig vom Ambient-Glow-System (das weiterhin für `chaos >= 7` gilt).
+
+---
+
 ## [0.9.61]
 
 ### Added

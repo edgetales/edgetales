@@ -153,6 +153,20 @@ body[data-narrator-font="highlight"] .chat-msg.assistant strong em {
     font-weight: 400;
 }
 
+/* CHAOS INTERRUPT FLASH — einmaliger Effekt wenn ein Chaos-Interrupt feuert.
+   Klasse .et-chaos wird server-seitig von process_player_input() gesetzt.
+   Aktiv in allen Narrator-Modi (nicht nur highlight). */
+.chat-msg.assistant.et-chaos {
+    animation: chaos-interrupt-pulse 3.5s ease-out forwards;
+    border-radius: 4px;
+}
+@keyframes chaos-interrupt-pulse {
+    0%   { box-shadow: 0 0  0px 0px rgba(220,38,38,0.00); background: rgba(110,8,8,0.00); }
+    6%   { box-shadow: 0 0 28px 8px rgba(220,38,38,0.42); background: rgba(110,8,8,0.18); }
+    18%  { box-shadow: 0 0 14px 3px rgba(220,38,38,0.22); background: rgba(110,8,8,0.10); }
+    100% { box-shadow: 0 0  0px 0px rgba(220,38,38,0.00); background: transparent; }
+}
+
 /* CHAOS-TEXTBEWEGUNG ab Chaos >= 8 */
 body[data-narrator-font="highlight"][data-chaos-high] .chat-msg.assistant {
     animation: chaos-text-breathe 4s ease-in-out infinite;
