@@ -139,38 +139,39 @@ The narrative tone reference: *Studio Ghibli, Avatar: The Last Airbender, Harry 
 
 **Character creation** — choose genre, tone, archetype, set wishes & boundaries:
 
-![Choose Genre](docs/genre.png)
-![Choose Tone](docs/tone.png)
-![Choose Archetype](docs/archetype.png)
-![Wishes](docs/wishes.png)
+<img src="docs/genre.png" width="220" alt="Choose Genre">
+<img src="docs/tone.png" width="220" alt="Choose Tone">
+<img src="docs/archetype.png" width="220" alt="Choose Archetype">
+<img src="docs/wishes.png" width="220" alt="Wishes">
 
 **Describe your character, then review the AI-generated draft:**
 
-![Character](docs/character.png)
-
-![Character Draft](docs/draft.png)
+<img src="docs/character.png" width="300" alt="Character">
+<img src="docs/draft.png" width="300" alt="Character Draft">
 
 **The first scene:**
 
-![First scene](docs/firstscene.png)
+<img src="docs/firstscene.png" width="460" alt="First scene">
 
 **Sidebar** — character stats, clocks, chaos meter, story arc, NPCs, save slots:
 
-![Sidebar 1](docs/sidebar1.png)
-![Sidebar 2](docs/sidebar2.png)
+<img src="docs/sidebar1.png" width="300" alt="Sidebar 1">
+<img src="docs/sidebar2.png" width="300" alt="Sidebar 2">
 
-**Save menu** 
-![Save menu](docs/save_menu.png)
-
+**Save menu**
+<img src="docs/save_menu.png" width="300" alt="Save menu">
 
 **Settings menu**
-![Settings menu](docs/settings.png)
+<img src="docs/settings.png" width="300" alt="Settings menu">
 
 **Help menu**
-![Help menu](docs/help.png)
+<img src="docs/help.png" width="300" alt="Help menu">
+
+**Visual mode** — Highlights direct speech, color coding names by bond, visual effects on certain events
+<img src="docs/visual_mode.png" width="460" alt="Visual mode">
 
 **Correction mode** — start your text with ## and use the correction mode to fix AI issues
-![Correction mode](docs/correction1.png)
+<img src="docs/correction1.png" width="460" alt="Correction mode">
 
 ---
 
