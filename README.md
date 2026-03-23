@@ -148,7 +148,6 @@ The narrative tone reference: *Studio Ghibli, Avatar: The Last Airbender, Harry 
 
 ![Character](docs/character.png)
 
-# Screenshots (desktop)
 ![Character Draft](docs/draft.png)
 
 **The first scene:**
