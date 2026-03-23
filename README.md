@@ -133,45 +133,50 @@ A dedicated content mode that transforms EdgeTales into a family-safe adventure 
 
 The narrative tone reference: *Studio Ghibli, Avatar: The Last Airbender, Harry Potter (early books), Legend of Zelda.* Vivid, imaginative, full of wonder - and still a real story with real stakes.
 
----
-
 # Screenshots (mobile)
 
 **Character creation** — choose genre, tone, archetype, set wishes & boundaries:
 
-<img src="docs/genre.png" width="220" alt="Choose Genre">
-<img src="docs/tone.png" width="220" alt="Choose Tone">
-<img src="docs/archetype.png" width="220" alt="Choose Archetype">
-<img src="docs/wishes.png" width="220" alt="Wishes">
+<table><tr>
+  <td><img src="docs/genre.png" width="200" alt="Choose Genre"></td>
+  <td><img src="docs/tone.png" width="200" alt="Choose Tone"></td>
+  <td><img src="docs/archetype.png" width="200" alt="Choose Archetype"></td>
+  <td><img src="docs/wishes.png" width="200" alt="Wishes"></td>
+</tr></table>
 
 **Describe your character, then review the AI-generated draft:**
 
-<img src="docs/character.png" width="300" alt="Character">
-<img src="docs/draft.png" width="300" alt="Character Draft">
+<table><tr>
+  <td><img src="docs/character.png" width="280" alt="Character"></td>
+  <td><img src="docs/draft.png" width="280" alt="Character Draft"></td>
+</tr></table>
 
-**The first scene:**
+**The first scene**
 
-<img src="docs/firstscene.png" width="460" alt="First scene">
+<img src="docs/firstscene.png" width="420" alt="First scene">
 
 **Sidebar** — character stats, clocks, chaos meter, story arc, NPCs, save slots:
 
-<img src="docs/sidebar1.png" width="300" alt="Sidebar 1">
-<img src="docs/sidebar2.png" width="300" alt="Sidebar 2">
+<table><tr>
+  <td><img src="docs/sidebar1.png" width="280" alt="Sidebar 1"></td>
+  <td><img src="docs/sidebar2.png" width="280" alt="Sidebar 2"></td>
+</tr></table>
 
-**Save menu**
-<img src="docs/save_menu.png" width="300" alt="Save menu">
+**Save menu, Settings, Help:**
 
-**Settings menu**
-<img src="docs/settings.png" width="300" alt="Settings menu">
+<table><tr>
+  <td><img src="docs/save_menu.png" width="280" alt="Save menu"></td>
+  <td><img src="docs/settings.png" width="280" alt="Settings menu"></td>
+  <td><img src="docs/help.png" width="280" alt="Help menu"></td>
+</tr></table>
 
-**Help menu**
-<img src="docs/help.png" width="300" alt="Help menu">
+**Visual mode** — highlights direct speech, color-codes names by bond, visual effects on certain events:
 
-**Visual mode** — Highlights direct speech, color coding names by bond, visual effects on certain events
-<img src="docs/visual_mode.png" width="460" alt="Visual mode">
+<img src="docs/visual_mode.png" width="420" alt="Visual mode">
 
-**Correction mode** — start your text with ## and use the correction mode to fix AI issues
-<img src="docs/correction1.png" width="460" alt="Correction mode">
+**Correction mode** — start your text with `##` to fix AI misunderstandings:
+
+<img src="docs/correction1.png" width="420" alt="Correction mode">
 
 ---
 
