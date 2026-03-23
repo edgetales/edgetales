@@ -158,6 +158,20 @@ The narrative tone reference: *Studio Ghibli, Avatar: The Last Airbender, Harry 
 **Sidebar** — character stats, clocks, chaos meter, story arc, NPCs, save slots:
 
 ![Sidebar 1](docs/sidebar1.png)
+![Sidebar 2](docs/sidebar2.png)
+
+**Save menu** 
+![Save menu](docs/save_menu.png)
+
+
+**Settings menu**
+![Settings menu](docs/settings.png)
+
+**Help menu**
+![Help menu](docs/help.png)
+
+**Correction mode** — start your text with ## and use the correction mode to fix AI issues
+![Correction mode](docs/correction1.png)
 
 ---
 
