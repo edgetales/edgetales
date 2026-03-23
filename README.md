@@ -133,22 +133,24 @@ A dedicated content mode that transforms EdgeTales into a family-safe adventure 
 
 The narrative tone reference: *Studio Ghibli, Avatar: The Last Airbender, Harry Potter (early books), Legend of Zelda.* Vivid, imaginative, full of wonder - and still a real story with real stakes.
 
+---
+
 # Screenshots (mobile)
 
 **Character creation** — choose genre, tone, archetype, set wishes & boundaries:
 
-<table><tr>
-  <td><img src="docs/genre.png" width="200" alt="Choose Genre"></td>
-  <td><img src="docs/tone.png" width="200" alt="Choose Tone"></td>
-  <td><img src="docs/archetype.png" width="200" alt="Choose Archetype"></td>
-  <td><img src="docs/wishes.png" width="200" alt="Wishes"></td>
+<table style="border: none; border-collapse: collapse;"><tr>
+  <td style="border: none; padding: 4px;"><img src="docs/genre.png" width="200" alt="Choose Genre"></td>
+  <td style="border: none; padding: 4px;"><img src="docs/tone.png" width="200" alt="Choose Tone"></td>
+  <td style="border: none; padding: 4px;"><img src="docs/archetype.png" width="200" alt="Choose Archetype"></td>
+  <td style="border: none; padding: 4px;"><img src="docs/wishes.png" width="200" alt="Wishes"></td>
 </tr></table>
 
 **Describe your character, then review the AI-generated draft:**
 
-<table><tr>
-  <td><img src="docs/character.png" width="280" alt="Character"></td>
-  <td><img src="docs/draft.png" width="280" alt="Character Draft"></td>
+<table style="border: none; border-collapse: collapse;"><tr>
+  <td style="border: none; padding: 4px;"><img src="docs/character.png" width="280" alt="Character"></td>
+  <td style="border: none; padding: 4px;"><img src="docs/draft.png" width="280" alt="Character Draft"></td>
 </tr></table>
 
 **The first scene**
@@ -157,17 +159,17 @@ The narrative tone reference: *Studio Ghibli, Avatar: The Last Airbender, Harry 
 
 **Sidebar** — character stats, clocks, chaos meter, story arc, NPCs, save slots:
 
-<table><tr>
-  <td><img src="docs/sidebar1.png" width="280" alt="Sidebar 1"></td>
-  <td><img src="docs/sidebar2.png" width="280" alt="Sidebar 2"></td>
+<table style="border: none; border-collapse: collapse;"><tr>
+  <td style="border: none; padding: 4px;"><img src="docs/sidebar1.png" width="280" alt="Sidebar 1"></td>
+  <td style="border: none; padding: 4px;"><img src="docs/sidebar2.png" width="280" alt="Sidebar 2"></td>
 </tr></table>
 
 **Save menu, Settings, Help:**
 
-<table><tr>
-  <td><img src="docs/save_menu.png" width="280" alt="Save menu"></td>
-  <td><img src="docs/settings.png" width="280" alt="Settings menu"></td>
-  <td><img src="docs/help.png" width="280" alt="Help menu"></td>
+<table style="border: none; border-collapse: collapse;"><tr>
+  <td style="border: none; padding: 4px;"><img src="docs/save_menu.png" width="280" alt="Save menu"></td>
+  <td style="border: none; padding: 4px;"><img src="docs/settings.png" width="280" alt="Settings menu"></td>
+  <td style="border: none; padding: 4px;"><img src="docs/help.png" width="280" alt="Help menu"></td>
 </tr></table>
 
 **Visual mode** — highlights direct speech, color-codes names by bond, visual effects on certain events:
