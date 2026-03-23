@@ -167,13 +167,20 @@ body[data-narrator-font="highlight"] .chat-msg.assistant strong em {
     100% { box-shadow: 0 0  0px 0px rgba(220,38,38,0.00); background: transparent; }
 }
 
-/* CHAOS-TEXTBEWEGUNG ab Chaos >= 8 */
+/* CHAOS-TEXTBEWEGUNG ab Chaos >= 8
+   Nur opacity + text-shadow — kein letter/word-spacing,
+   das würde Layout-Reflow triggern und den Scroll verschieben.
+   Doppel-Atemzug mit Pause (Panik-Dyspnoe-Rhythmus). */
 body[data-narrator-font="highlight"][data-chaos-high] .chat-msg.assistant {
-    animation: chaos-text-breathe 4s ease-in-out infinite;
+    animation: chaos-text-breathe 5s ease-in-out infinite;
 }
 @keyframes chaos-text-breathe {
-    0%, 100% { letter-spacing: 0; word-spacing: 0; }
-    50%      { letter-spacing: 0.03em; word-spacing: 0.04em; }
+    0%   { opacity: 1.0;  text-shadow: none; }
+    10%  { opacity: 0.72; text-shadow: 0 0 10px rgba(180,20,20,0.32); }
+    20%  { opacity: 0.94; text-shadow: 0 0 3px  rgba(180,20,20,0.10); }
+    30%  { opacity: 0.65; text-shadow: 0 0 15px rgba(180,20,20,0.44); }
+    44%  { opacity: 1.0;  text-shadow: none; }
+    100% { opacity: 1.0;  text-shadow: none; }
 }
 
 /* CHAOS AMBIENT: Roter Schimmer ab Chaos >= 7 */
@@ -316,6 +323,18 @@ body[data-narrator-font="highlight"] .chat-msg.assistant strong em .et-player   
     .chat-msg.user { padding: 0.4rem 0.6rem; border-radius: 8px; }
     .chat-scroll { padding: 0.35rem; padding-bottom: 5rem; }
 }
+
+/* ==========================================
+   CHAOS LETTER PULSE (ab Chaos >= 8)
+   display:inline-block + transform:scale = composited, kein Layout-Reflow.
+   Spans werden per JS (_etLetterPulse) in Text-Nodes injiziert/entfernt.
+   Zwei Amplituden: full (1.45x) und half (1.22x), zufällig verteilt.
+   ========================================== */
+.cl-pulse { display: inline-block; will-change: transform; }
+.cl-full { animation: cl-beat-full var(--cl-dur, 3.8s) ease-in-out var(--cl-delay, 0s) infinite; }
+.cl-half { animation: cl-beat-half var(--cl-dur, 3.8s) ease-in-out var(--cl-delay, 0s) infinite; }
+@keyframes cl-beat-full { 0%,100% { transform: scale(1.0); } 50% { transform: scale(1.45); } }
+@keyframes cl-beat-half { 0%,100% { transform: scale(1.0); } 50% { transform: scale(1.22); } }
 </style>
 
 <script>
@@ -372,6 +391,57 @@ function _etHighlight(data, scopeNew) {
             }
         });
         msg.dataset.etDone = '1';
+    });
+}
+
+/* Chaos Letter Pulse — inject/remove pulsing scale spans into narrator text nodes.
+   Called from Python via ui.run_javascript() when chaos changes.
+   enable=true  → inject spans (idempotent, only runs once)
+   enable=false → remove spans, normalize text nodes */
+var _etLPActive = false;
+function _etLetterPulse(enable) {
+    if (enable && _etLPActive) return;
+    if (!enable && !_etLPActive) return;
+    if (!enable) {
+        _etLPActive = false;
+        var parents = [];
+        document.querySelectorAll('[data-cl-pulse]').forEach(function(sp) {
+            var p = sp.parentNode;
+            sp.replaceWith(document.createTextNode(sp.textContent));
+            if (p && parents.indexOf(p) === -1) parents.push(p);
+        });
+        parents.forEach(function(p) { try { p.normalize(); } catch(e){} });
+        return;
+    }
+    _etLPActive = true;
+    function sr(seed) { var x = Math.sin(seed+1)*10000; return x - Math.floor(x); }
+    document.querySelectorAll('.chat-msg.assistant').forEach(function(msg, mi) {
+        var walker = document.createTreeWalker(msg, NodeFilter.SHOW_TEXT);
+        var nodes = []; while (walker.nextNode()) nodes.push(walker.currentNode);
+        nodes.forEach(function(node, ni) {
+            var txt = node.textContent;
+            if (!txt.trim()) return;
+            /* skip screen-reader-only and already-pulsing nodes */
+            if (node.parentElement && (node.parentElement.classList.contains('sr-only') ||
+                node.parentElement.dataset.clPulse)) return;
+            var frag = document.createDocumentFragment();
+            var seed = mi * 997 + ni * 113;
+            for (var i = 0; i < txt.length; i++) {
+                var ch = txt[i];
+                if (/[a-zA-Z\u00e4\u00f6\u00fc\u00c4\u00d6\u00dc\u00df]/.test(ch) && sr(seed+i) < 0.14) {
+                    var sp = document.createElement('span');
+                    sp.className = 'cl-pulse ' + (sr(seed+i+0.5) < 0.45 ? 'cl-full' : 'cl-half');
+                    sp.style.setProperty('--cl-dur',   (3.0 + sr(seed+i+0.3)*2.8).toFixed(2)+'s');
+                    sp.style.setProperty('--cl-delay', (sr(seed+i+0.7)*7.0).toFixed(2)+'s');
+                    sp.textContent = ch;
+                    sp.dataset.clPulse = '1';
+                    frag.appendChild(sp);
+                } else {
+                    frag.appendChild(document.createTextNode(ch));
+                }
+            }
+            node.parentNode.replaceChild(frag, node);
+        });
     });
 }
 </script>

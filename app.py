@@ -325,11 +325,6 @@ def _highlight_dialog(text: str) -> str:
     recognises the word boundaries correctly.
     CSS styles .chat-msg.assistant em strong."""
     import re
-    # Straight ASCII double quotes: "..." — must run FIRST so curly-quote
-    # patterns below don't see bare " chars from already-wrapped content.
-    text = re.sub(
-        r'"([^"\n]{2,600}?)"',
-        lambda m: f'***"{m.group(1)}"***', text)
     # DE standard: „..." — öffnet U+201E, schließt U+201D, U+201C oder gerades "
     text = re.sub(
         r'(\u201E)([^\u201E\u201C\u201D"\n]{1,600}?)([\u201C\u201D"])',
@@ -971,8 +966,9 @@ def render_sidebar_status(game: GameState, session=None) -> None:
     _chaos_aria = t("aria.chaos_bar", lang, n=chaos, level=_chaos_level)
     ui.html(f'<div class="text-sm font-semibold">{E["tornado"]} {t("sidebar.chaos", lang)}: {chaos}/9</div>').classes("w-full")
     ui.html(f'<div class="track-bar" role="progressbar" aria-valuenow="{int(pct)}" aria-valuemin="0" aria-valuemax="100" aria-label="{_chaos_aria}"><div class="track-fill chaos" style="width:{pct:.0f}%"></div></div>').classes("w-full")
-    # Chaos ambient glow (highlight mode)
+    # Chaos ambient glow + letter pulse (highlight mode)
     _chaos_js = "document.body.setAttribute('data-chaos-high','')" if chaos >= 7 else "document.body.removeAttribute('data-chaos-high')"
+    _chaos_js += "; _etLetterPulse(" + ("true" if chaos >= 8 else "false") + ");"
     ui.run_javascript(_chaos_js)
     # Health vignette: opacity steigt wenn Gesundheit <= 3 sinkt (highlight mode)
     _health = int(game.health)
