@@ -954,21 +954,31 @@ def render_sidebar_status(game: GameState, session=None) -> None:
         ui.label(f"{E['skull']} {t('sidebar.finale', lang)}").classes("text-sm text-red-400 font-bold mt-2")
     ui.separator()
     # Stats (5 core stats; momentum rendered separately below)
-    ui.html(f'''<div class="stat-grid">
-    <div class="stat-item"><span class="sr-only">{t('aria.stat_item', lang, label=sl['edge'], value=int(game.get_stat('edge')))}</span><div aria-hidden="true"><div class="stat-label">{sl['edge']}</div><div class="stat-value">{game.get_stat('edge')}</div></div></div>
-    <div class="stat-item"><span class="sr-only">{t('aria.stat_item', lang, label=sl['shadow'], value=int(game.get_stat('shadow')))}</span><div aria-hidden="true"><div class="stat-label">{sl['shadow']}</div><div class="stat-value">{game.get_stat('shadow')}</div></div></div>
-    <div class="stat-item"><span class="sr-only">{t('aria.stat_item', lang, label=sl['heart'], value=int(game.get_stat('heart')))}</span><div aria-hidden="true"><div class="stat-label">{sl['heart']}</div><div class="stat-value">{game.get_stat('heart')}</div></div></div>
-    <div class="stat-item"><span class="sr-only">{t('aria.stat_item', lang, label=sl['wits'], value=int(game.get_stat('wits')))}</span><div aria-hidden="true"><div class="stat-label">{sl['wits']}</div><div class="stat-value">{game.get_stat('wits')}</div></div></div>
-    <div class="stat-item"><span class="sr-only">{t('aria.stat_item', lang, label=sl['iron'], value=int(game.get_stat('iron')))}</span><div aria-hidden="true"><div class="stat-label">{sl['iron']}</div><div class="stat-value">{game.get_stat('iron')}</div></div></div>
-    <div class="stat-item"><span class="sr-only">{t('aria.momentum_stat', lang, current=int(game.momentum), max=int(game.max_momentum))}</span><div aria-hidden="true"><div class="stat-label">{t('sidebar.momentum', lang)}</div><div class="stat-value">{game.momentum}/{game.max_momentum}</div></div></div>
-    </div>''').classes("w-full")
+    # Use ui.element() nesting — NiceGUI applies classes via its own mechanism,
+    # avoiding the desktop browser issue where innerHTML class attributes are stripped.
+    _stat_specs = [
+        (sl['edge'],   game.get_stat('edge'),   t('aria.stat_item', lang, label=sl['edge'],   value=int(game.get_stat('edge')))),
+        (sl['shadow'], game.get_stat('shadow'), t('aria.stat_item', lang, label=sl['shadow'], value=int(game.get_stat('shadow')))),
+        (sl['heart'],  game.get_stat('heart'),  t('aria.stat_item', lang, label=sl['heart'],  value=int(game.get_stat('heart')))),
+        (sl['wits'],   game.get_stat('wits'),   t('aria.stat_item', lang, label=sl['wits'],   value=int(game.get_stat('wits')))),
+        (sl['iron'],   game.get_stat('iron'),   t('aria.stat_item', lang, label=sl['iron'],   value=int(game.get_stat('iron')))),
+        (t('sidebar.momentum', lang), f"{game.momentum}/{game.max_momentum}",
+         t('aria.momentum_stat', lang, current=int(game.momentum), max=int(game.max_momentum))),
+    ]
+    with ui.element('div').classes('stat-grid w-full'):
+        for _lbl, _val, _aria in _stat_specs:
+            _aria_esc = _aria.replace('"', '&quot;')
+            with ui.element('div').classes('stat-item').props(f'role="text" aria-label="{_aria_esc}"'):
+                ui.html(str(_lbl)).classes('stat-label').props('aria-hidden="true"')
+                ui.html(str(_val)).classes('stat-value').props('aria-hidden="true"')
     ui.separator()
     # Tracks — label already communicates value, progressbar is visual-only
     for track, label, cls in [("health",f"{E['heart_red']} {t('sidebar.health', lang)}","health"),("spirit",f"{E['heart_blue']} {t('sidebar.spirit', lang)}","spirit"),("supply",f"{E['yellow_dot']} {t('sidebar.supply', lang)}","supply")]:
         val = int(getattr(game, track))
         pct = max(0, val / 5 * 100)
         ui.label(f"{label}: {val}/5").classes("text-sm font-semibold")
-        ui.html(f'<div class="track-bar" aria-hidden="true"><div class="track-fill {cls}" style="width:{pct:.0f}%"></div></div>').classes("w-full")
+        with ui.element('div').classes('track-bar w-full').props('aria-hidden="true"'):
+            ui.element('div').classes(f'track-fill {cls}').style(f'width:{pct:.0f}%')
     # Chaos — label only; danger level in progressbar aria-label for screen readers
     ui.separator()
     chaos = int(game.chaos_factor)
@@ -976,8 +986,10 @@ def render_sidebar_status(game: GameState, session=None) -> None:
     _chaos_level_key = "aria.chaos_low" if chaos <= 4 else ("aria.chaos_medium" if chaos <= 6 else ("aria.chaos_high" if chaos <= 8 else "aria.chaos_critical"))
     _chaos_level = t(_chaos_level_key, lang)
     _chaos_aria = t("aria.chaos_bar", lang, n=chaos, level=_chaos_level)
-    ui.html(f'<div class="text-sm font-semibold">{E["tornado"]} {t("sidebar.chaos", lang)}: {chaos}/9</div>').classes("w-full")
-    ui.html(f'<div class="track-bar" role="progressbar" aria-valuenow="{int(pct)}" aria-valuemin="0" aria-valuemax="100" aria-label="{_chaos_aria}"><div class="track-fill chaos" style="width:{pct:.0f}%"></div></div>').classes("w-full")
+    ui.label(f'{E["tornado"]} {t("sidebar.chaos", lang)}: {chaos}/9').classes("text-sm font-semibold w-full")
+    with ui.element('div').classes('track-bar w-full') \
+            .props(f'role="progressbar" aria-valuenow="{int(pct)}" aria-valuemin="0" aria-valuemax="100" aria-label="{_chaos_aria}"'):
+        ui.element('div').classes('track-fill chaos').style(f'width:{pct:.0f}%')
     # Chaos ambient glow + letter pulse (highlight mode)
     _chaos_js = "document.body.setAttribute('data-chaos-high','')" if chaos >= 7 else "document.body.removeAttribute('data-chaos-high')"
     _chaos_js += "; _etLetterPulse(" + ("true" if chaos >= 8 else "false") + ");"
@@ -997,7 +1009,8 @@ def render_sidebar_status(game: GameState, session=None) -> None:
             _c_segs = int(c["segments"])
             p = _c_filled / _c_segs * 100
             ui.label(f"{em} {c['name']}: {_c_filled}/{_c_segs}").classes("text-xs")
-            ui.html(f'<div class="track-bar" aria-hidden="true"><div class="track-fill progress" style="width:{p:.0f}%"></div></div>').classes("w-full")
+            with ui.element('div').classes('track-bar w-full').props('aria-hidden="true"'):
+                ui.element('div').classes('track-fill progress').style(f'width:{p:.0f}%')
     # Story arc
     if game.story_blueprint and game.story_blueprint.get("acts"):
         bp = game.story_blueprint
@@ -1017,7 +1030,9 @@ def render_sidebar_status(game: GameState, session=None) -> None:
                 p = max(0,min(100,(game.scene_count-sr[0])/max(1,sr[1]-sr[0])*100))
                 _act_aria = t("aria.story_progress", lang, n=an)
                 ui.label(f"{E['play']} {act_l} {an} {E['dash']} {phase}").classes("text-xs font-bold")
-                ui.html(f'<div class="track-bar" role="progressbar" aria-valuenow="{int(p)}" aria-valuemin="0" aria-valuemax="100" aria-label="{_act_aria}"><div class="track-fill progress" style="width:{p:.0f}%"></div></div>').classes("w-full")
+                with ui.element('div').classes('track-bar w-full') \
+                        .props(f'role="progressbar" aria-valuenow="{int(p)}" aria-valuemin="0" aria-valuemax="100" aria-label="{_act_aria}"'):
+                    ui.element('div').classes('track-fill progress').style(f'width:{p:.0f}%')
             else: ui.label(f"{act_l} {an}").classes("text-xs text-gray-500")
         if bp.get("story_complete"):
             ui.label(f"{E['star']} {t('sidebar.story_complete', lang)}").classes("text-xs text-amber-400 font-bold mt-1")
@@ -1043,11 +1058,12 @@ def render_sidebar_status(game: GameState, session=None) -> None:
                 with ui.expansion(f"{disp} {E['dash']} {n['name']}").classes("w-full"):
                     _da = _display_aliases(n.get("aliases", []))
                     alias_str = f"{aka_label} {', '.join(_da)}" if _da else ""
-                    ui.html(f'''<div class="npc-card">
-                        <div class="npc-meta">{bond_label}: {n["bond"]}/{bond_max}</div>
-                        {f'<div class="npc-meta" style="font-style:italic">{alias_str}</div>' if alias_str else ""}
-                        {f'<div class="npc-desc">{n["description"]}</div>' if n.get("description") else ""}
-                    </div>''')
+                    with ui.element('div').classes('npc-card'):
+                        ui.label(f'{bond_label}: {n["bond"]}/{bond_max}').classes('npc-meta')
+                        if alias_str:
+                            ui.label(alias_str).classes('npc-meta').style('font-style:italic')
+                        if n.get("description"):
+                            ui.label(n["description"]).classes('npc-desc')
         if background_npcs:
             background_npcs.sort(key=_npc_sort_key)
             with ui.expansion(f"{E['people']} {t('sidebar.known_persons', lang)} ({len(background_npcs)})").classes("w-full"):
@@ -1057,11 +1073,12 @@ def render_sidebar_status(game: GameState, session=None) -> None:
                     with ui.expansion(f"{disp} {E['dash']} {n['name']}").classes("w-full").style("opacity:0.75"):
                         _da = _display_aliases(n.get("aliases", []))
                         alias_str = f"{aka_label} {', '.join(_da)}" if _da else ""
-                        ui.html(f'''<div class="npc-card">
-                            <div class="npc-meta">{bond_label}: {n["bond"]}/{bond_max}</div>
-                            {f'<div class="npc-meta" style="font-style:italic">{alias_str}</div>' if alias_str else ""}
-                            {f'<div class="npc-desc">{n["description"]}</div>' if n.get("description") else ""}
-                        </div>''')
+                        with ui.element('div').classes('npc-card'):
+                            ui.label(f'{bond_label}: {n["bond"]}/{bond_max}').classes('npc-meta')
+                            if alias_str:
+                                ui.label(alias_str).classes('npc-meta').style('font-style:italic')
+                            if n.get("description"):
+                                ui.label(n["description"]).classes('npc-desc')
         if deceased_npcs:
             with ui.expansion(f"\u2620\ufe0f {t('sidebar.deceased_persons', lang)} ({len(deceased_npcs)})").classes("w-full"):
                 for n in deceased_npcs:
@@ -1287,9 +1304,10 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                                     if _si_bounds:
                                         _lines.append(f'<b>{t("save_info.boundaries", lang)}:</b> {html_mod.escape(_si_bounds)}')
                                     with ui.menu().props("anchor='top middle' self='bottom middle' :offset='[0,6]'"):
-                                        ui.html('<div style="max-width:280px;max-height:320px;overflow-y:auto;'
-                                                'padding:8px 12px;font-size:0.82rem;line-height:1.45">'
-                                                + '<br>'.join(_lines) + '</div>')
+                                        ui.html('<br>'.join(_lines)).style(
+                                            "max-width:280px;max-height:320px;overflow-y:auto;"
+                                            "padding:8px 12px;font-size:0.82rem;line-height:1.45"
+                                        )
 
                             # --- Delete slot (always rendered for stable layout) ---
                             if sname != "autosave":
@@ -1652,21 +1670,19 @@ def render_help() -> None:
 
         ui.markdown(t("help.probe_title", lang))
         ui.label(t("help.probe_text", lang)).classes("text-xs text-gray-400")
-        ui.html(f'''<div style="font-size:0.85em; line-height:1.8; padding:0.3em 0;">
-            {t("help.probe_detail", lang)}
-        </div>''')
+        ui.html(t("help.probe_detail", lang)).style("font-size:0.85em; line-height:1.8; padding:0.3em 0")
         ui.separator()
 
         ui.markdown(t("help.results_title", lang))
         ui.label(t("help.results_text", lang)).classes("text-xs text-gray-400")
-        ui.html(f'''<div style="font-size:0.85em; line-height:2;">
-            {E['check']} {t("help.result_strong", lang)}<br>
-            <span style="color:var(--text-secondary)">{t("help.result_strong_desc", lang)}</span><br><br>
-            {E['warn']} {t("help.result_weak", lang)}<br>
-            <span style="color:var(--text-secondary)">{t("help.result_weak_desc", lang)}</span><br><br>
-            {E['x_mark']} {t("help.result_miss", lang)}<br>
-            <span style="color:var(--text-secondary)">{t("help.result_miss_desc", lang)}</span>
-        </div>''')
+        with ui.element('div').style("font-size:0.85em; line-height:1.6; padding:0.2em 0"):
+            for _ico, _lbl_key, _desc_key in [
+                (E['check'],  "help.result_strong", "help.result_strong_desc"),
+                (E['warn'],   "help.result_weak",   "help.result_weak_desc"),
+                (E['x_mark'], "help.result_miss",   "help.result_miss_desc"),
+            ]:
+                ui.html(f"{_ico} {t(_lbl_key, lang)}")
+                ui.label(t(_desc_key, lang)).classes("text-xs text-gray-400").style("margin-bottom:0.4em")
         ui.separator()
 
         ui.markdown(f"{t('help.match_title', lang)} {E['comet']}")
@@ -1675,34 +1691,34 @@ def render_help() -> None:
 
         ui.markdown(t("help.position_title", lang))
         ui.label(t("help.position_text", lang)).classes("text-xs text-gray-400")
-        ui.html(f'''<div style="font-size:0.85em; line-height:2;">
-            {E['green_circle']} {t("help.pos_controlled", lang)}<br>
-            <span style="color:var(--text-secondary)">{t("help.pos_controlled_desc", lang)}</span><br><br>
-            {E['orange_circle']} {t("help.pos_risky", lang)}<br>
-            <span style="color:var(--text-secondary)">{t("help.pos_risky_desc", lang)}</span><br><br>
-            {E['red_circle']} {t("help.pos_desperate", lang)}<br>
-            <span style="color:var(--text-secondary)">{t("help.pos_desperate_desc", lang)}</span>
-        </div>''')
+        with ui.element('div').style("font-size:0.85em; line-height:1.6; padding:0.2em 0"):
+            for _ico, _lbl_key, _desc_key in [
+                (E['green_circle'],  "help.pos_controlled", "help.pos_controlled_desc"),
+                (E['orange_circle'], "help.pos_risky",      "help.pos_risky_desc"),
+                (E['red_circle'],    "help.pos_desperate",  "help.pos_desperate_desc"),
+            ]:
+                ui.html(f"{_ico} {t(_lbl_key, lang)}")
+                ui.label(t(_desc_key, lang)).classes("text-xs text-gray-400").style("margin-bottom:0.4em")
         ui.separator()
 
         ui.markdown(t("help.stats_title", lang))
         ui.label(t("help.stats_text", lang)).classes("text-xs text-gray-400")
-        ui.html(f'''<div style="font-size:0.85em; line-height:2;">
-            {E['lightning']} {t("help.stat_edge", lang)}<br>
-            {E['heart_red']} {t("help.stat_heart", lang)}<br>
-            {E['shield']} {t("help.stat_iron", lang)}<br>
-            {E['dark_moon']} {t("help.stat_shadow", lang)}<br>
-            {E['brain']} {t("help.stat_wits", lang)}
-        </div>''')
+        ui.html(
+            f"{E['lightning']} {t('help.stat_edge', lang)}<br>"
+            f"{E['heart_red']} {t('help.stat_heart', lang)}<br>"
+            f"{E['shield']} {t('help.stat_iron', lang)}<br>"
+            f"{E['dark_moon']} {t('help.stat_shadow', lang)}<br>"
+            f"{E['brain']} {t('help.stat_wits', lang)}"
+        ).style("font-size:0.85em; line-height:2")
         ui.separator()
 
         ui.markdown(t("help.tracks_title", lang))
         ui.label(t("help.tracks_text", lang)).classes("text-xs text-gray-400")
-        ui.html(f'''<div style="font-size:0.85em; line-height:2;">
-            {E['heart_red']} {t("help.track_health", lang)}<br>
-            {E['heart_blue']} {t("help.track_spirit", lang)}<br>
-            {E['yellow_dot']} {t("help.track_supply", lang)}
-        </div>''')
+        ui.html(
+            f"{E['heart_red']} {t('help.track_health', lang)}<br>"
+            f"{E['heart_blue']} {t('help.track_spirit', lang)}<br>"
+            f"{E['yellow_dot']} {t('help.track_supply', lang)}"
+        ).style("font-size:0.85em; line-height:2")
         ui.separator()
 
         ui.markdown(t("help.momentum_title", lang))
@@ -1746,7 +1762,7 @@ def render_chat_messages(container) -> Optional[str]:
         if msg.get("scene_marker"):
             marker_id = f"msg-{i}"
             last_scene_marker_id = marker_id
-            ui.html(f'<div id="{marker_id}" class="scene-marker">{msg["scene_marker"]}</div>').classes("w-full")
+            ui.html(msg["scene_marker"]).classes("scene-marker").props(f'id="{marker_id}"')
             continue
         role = msg.get("role","assistant")
         content = msg.get("content","")
@@ -1768,7 +1784,8 @@ def render_chat_messages(container) -> Optional[str]:
                 else:
                     _sr_prefix = f'<span class="sr-only">{t("aria.narrator_says", lang)}</span>'
             if msg.get("corrected"):
-                ui.html(f'<div class="correction-badge" aria-label="{t("aria.correction_badge", lang)}">{t("correction.badge", lang)}</div>')
+                with ui.element('div').classes('correction-badge').props(f'aria-label="{t("aria.correction_badge", lang)}"'):
+                    ui.html(t("correction.badge", lang))
             _content = _clean_narration(content)
             if role == "assistant" and s.get("narrator_font") == "highlight":
                 _content = _highlight_dialog(_content)
@@ -1803,7 +1820,7 @@ def render_dice_display(rd: dict) -> None:
         ph = f" {E['dot']} {pl.get(pos,'')}" if pos and pos!="risky" else ""
         match_txt = f" {E['dot']} {t('dice.match_short', lang)}" if is_match else ""
         chaos_txt = f" {E['dot']} {t('dice.chaos_short', lang)}" if rd.get("chaos_interrupt") else ""
-        ui.html(f'<div class="dice-simple {severity}">{result_label} {E["dot"]} {stat_label}{ph}{match_txt}{chaos_txt}</div>').classes("w-full")
+        ui.html(f'{result_label} {E["dot"]} {stat_label}{ph}{match_txt}{chaos_txt}').classes(f'dice-simple {severity} w-full')
     elif setting == 2:  # Detailed
         header = f"{E['dice']} {result_label} \u2014 {move_label} ({stat_label})"
         if is_match:
@@ -2362,9 +2379,9 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
             scroll_target_id = f"msg-{len(s['messages'])}"
             with chat_container:
                 if game.scene_count > 1:
-                    ui.html(f'<div id="{scroll_target_id}" class="scene-marker">{t("game.scene_marker", L(), n=game.scene_count, location=game.current_location)}</div>').classes("w-full")
+                    ui.html(t("game.scene_marker", L(), n=game.scene_count, location=game.current_location)).classes("scene-marker").props(f'id="{scroll_target_id}"')
                 else:
-                    ui.html(f'<div id="{scroll_target_id}"></div>')
+                    ui.element('div').props(f'id="{scroll_target_id}"')
                 _has_chaos_interrupt = bool(roll_data and roll_data.get("chaos_interrupt"))
                 msg_col = ui.column().classes("chat-msg assistant w-full et-new" + (" et-chaos" if _has_chaos_interrupt else ""))
                 if not s.get("sr_chat", True):
