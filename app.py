@@ -325,6 +325,11 @@ def _highlight_dialog(text: str) -> str:
     recognises the word boundaries correctly.
     CSS styles .chat-msg.assistant em strong."""
     import re
+    # Straight ASCII double quotes: "..." — must run FIRST so curly-quote
+    # patterns below don't see bare " chars from already-wrapped content.
+    text = re.sub(
+        r'"([^"\n]{2,600}?)"',
+        lambda m: f'***"{m.group(1)}"***', text)
     # DE standard: „..." — öffnet U+201E, schließt U+201D, U+201C oder gerades "
     text = re.sub(
         r'(\u201E)([^\u201E\u201C\u201D"\n]{1,600}?)([\u201C\u201D"])',
