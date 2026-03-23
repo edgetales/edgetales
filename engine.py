@@ -3035,14 +3035,19 @@ def _recent_events_block(game: GameState) -> str:
 def _api_create_with_retry(client: anthropic.Anthropic, max_retries: int = 2, **kwargs):
     """Wrapper around client.messages.create with retry on transient API errors.
     Handles rate limits (429), server errors (500/502/503), and overloaded (529)
-    with exponential backoff. JSON parsing retries remain in callers."""
+    with exponential backoff. JSON parsing retries remain in callers.
+    529 uses a longer base wait (10s) — standard API overload needs more headroom
+    than transient server errors (base 2s)."""
     import time as _time
     for attempt in range(max_retries + 1):
         try:
             return client.messages.create(**kwargs)
         except anthropic.APIStatusError as e:
             if attempt < max_retries and e.status_code in (429, 500, 502, 503, 529):
-                wait = 2 ** attempt
+                # 529 = API overloaded: use longer base wait (10s, 20s, 30s cap, ...)
+                # Other transient errors: standard exponential backoff (2s, 4s, 8s, ...)
+                base = 10 if e.status_code == 529 else 2
+                wait = min(base * (2 ** attempt), 30)
                 log(f"[API] Error {e.status_code}, retry {attempt + 1}/{max_retries} in {wait}s",
                     level="warning")
                 _time.sleep(wait)
@@ -3050,7 +3055,7 @@ def _api_create_with_retry(client: anthropic.Anthropic, max_retries: int = 2, **
             raise
         except anthropic.APIConnectionError as e:
             if attempt < max_retries:
-                wait = 2 ** attempt
+                wait = 2 * (2 ** attempt)
                 log(f"[API] Connection error, retry {attempt + 1}/{max_retries} in {wait}s: {e}",
                     level="warning")
                 _time.sleep(wait)
@@ -3831,7 +3836,7 @@ def call_narrator(client: anthropic.Anthropic, prompt: str,
     messages.append({"role": "user", "content": prompt})
 
     response = _api_create_with_retry(
-        client, max_retries=3,
+        client, max_retries=5,
         model=NARRATOR_MODEL, max_tokens=NARRATOR_MAX_TOKENS,
         system=get_narrator_system(config or EngineConfig(), game),
         messages=messages,

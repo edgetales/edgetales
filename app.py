@@ -1127,9 +1127,9 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                         recap_el = ui.column().classes("chat-msg recap w-full")
                         if not s.get("sr_chat", True):
                             recap_el.props('aria-hidden="true"')
+                        elif s.get("sr_chat", True):
+                            recap_el.props(f'aria-label="{t("aria.recap_says", lang)}"')
                         with recap_el:
-                            if s.get("sr_chat", True):
-                                ui.html(f'<span class="sr-only">{t("aria.recap_says", lang)}</span>')
                             ui.markdown(f"{prefix}{_clean_narration(recap)}")
                     s["_recap_element"] = recap_el
                     await _scroll_chat_bottom()
@@ -1778,22 +1778,19 @@ def render_chat_messages(container) -> Optional[str]:
         _msg_col = ui.column().classes(f"chat-msg {css} w-full")
         if not _sr_chat:
             _msg_col.props('aria-hidden="true"')
+        elif _sr_chat:
+            # Screen-reader role attribution via aria-label on the container —
+            # avoids injecting sr-only spans that leak visibly through DOMPurify / ui.html wrappers
+            if msg.get("recap"):
+                _msg_col.props(f'aria-label="{t("aria.recap_says", lang)}"')
+            elif role == "user":
+                _msg_col.props(f'aria-label="{t("aria.player_says", lang)}"')
+            else:
+                _msg_col.props(f'aria-label="{t("aria.narrator_says", lang)}"')
         with _msg_col:
-            _sr_prefix = ""
-            if _sr_chat:
-                # Screen-reader role attribution — rendered as ui.html() so the
-                # <span class="sr-only"> survives (ui.markdown sanitize=True strips spans)
-                if msg.get("recap"):
-                    _sr_prefix = f'<span class="sr-only">{t("aria.recap_says", lang)}</span>'
-                elif role == "user":
-                    _sr_prefix = f'<span class="sr-only">{t("aria.player_says", lang)}</span>'
-                else:
-                    _sr_prefix = f'<span class="sr-only">{t("aria.narrator_says", lang)}</span>'
             if msg.get("corrected"):
                 with ui.element('div').classes('correction-badge').props(f'aria-label="{t("aria.correction_badge", lang)}"'):
                     ui.html(t("correction.badge", lang))
-            if _sr_prefix:
-                ui.html(_sr_prefix)
             _content = _clean_narration(content)
             if role == "assistant" and s.get("narrator_font") == "highlight":
                 _content = _highlight_dialog(_content)
@@ -2288,9 +2285,9 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
             _user_col = ui.column().classes(f"chat-msg user{css_corr} w-full")
             if not s.get("sr_chat", True):
                 _user_col.props('aria-hidden="true"')
+            elif s.get("sr_chat", True):
+                _user_col.props(f'aria-label="{t("aria.player_says", L())}"')
             with _user_col:
-                if s.get("sr_chat", True):
-                    ui.html(f'<span class="sr-only">{t("aria.player_says", L())}</span>')
                 ui.markdown(display_text)
     try:
         with chat_container:
@@ -2402,9 +2399,9 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
                 msg_col = ui.column().classes("chat-msg assistant w-full et-new" + (" et-chaos" if _has_chaos_interrupt else ""))
                 if not s.get("sr_chat", True):
                     msg_col.props('aria-hidden="true"')
+                elif s.get("sr_chat", True):
+                    msg_col.props(f'aria-label="{t("aria.narrator_says", L())}"')
                 with msg_col:
-                    if s.get("sr_chat", True):
-                        ui.html(f'<span class="sr-only">{t("aria.narrator_says", L())}</span>')
                     _narr = _clean_narration(narration)
                     if s.get("narrator_font") == "highlight":
                         _narr = _highlight_dialog(_narr)
