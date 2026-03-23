@@ -5,6 +5,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.63]
+
+### Fixed
+- **Skip-to-content-Link entfernt.** Der Accessibility-Skip-Link („Zum Spielverlauf springen" / „Skip to game log") war auf allen Screens sichtbar, weil `position: absolute; top: -100%` relativ zum NiceGUI-Wrapper-Div berechnet wird (dessen Höhe 0 ist), nicht relativ zum Viewport. Da EdgeTales keine ausgedehnte Navigation hat (Header enthält nur einen Button), bringt der Skip-Link keinen Mehrwert. Link-Rendering (`ui.html`) aus `_show_main_phase()` und `.skip-link`-CSS-Regel aus `custom_head.html` vollständig entfernt. i18n-Keys `aria.skip_to_content` bleiben erhalten.
+- **Szenenmarker-Überschrift übertrieben groß auf Desktop.** Scene-Marker wurden als `<h2>` gerendert — der Browser-Default-Stylesheet setzt `h2` auf ~1.5rem, was `.scene-marker { font-size: 0.8em }` relativ dazu berechnete. Fix: `<h2>` → `<div>` in beiden Render-Stellen (`render_chat_messages()` und `process_player_input()`). `font-size: 0.85rem` in `.scene-marker` greift jetzt direkt gegen die Root-Schriftgröße. Redundante Mobile-Override-Zeile (`.scene-marker { font-size: 0.8em }` im `@media`-Block) entfernt.
+
+---
+
 ## [0.9.62]
 
 ### Changed
