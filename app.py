@@ -341,6 +341,18 @@ def _highlight_dialog(text: str) -> str:
     text = re.sub(
         r'(\u00BB)([^\u00AB\u00BB\n]{1,600}?)(\u00AB)',
         lambda m: f'***{m.group(1)}{m.group(2)}{m.group(3)}***', text)
+    # Straight ASCII double quotes: "..." — Narrator uses these for embedded/murmured dialog
+    text = re.sub(
+        r'"([^"\n]{1,600}?)"',
+        lambda m: f'***"{m.group(1)}"***', text)
+    # EN single curly: '...' — UK style primary quotes, nested quotes inside double
+    text = re.sub(
+        r'(\u2018)([^\u2018\u2019\n]{1,600}?)(\u2019)',
+        lambda m: f'***{m.group(1)}{m.group(2)}{m.group(3)}***', text)
+    # French single guillemets: ‹...› — nested quotes inside «»
+    text = re.sub(
+        r'(\u2039)([^\u2039\u203A\n]{1,600}?)(\u203A)',
+        lambda m: f'***{m.group(1)}{m.group(2)}{m.group(3)}***', text)
     return text
 
 
@@ -1734,7 +1746,7 @@ def render_chat_messages(container) -> Optional[str]:
         if msg.get("scene_marker"):
             marker_id = f"msg-{i}"
             last_scene_marker_id = marker_id
-            ui.html(f'<div id="{marker_id}" class="scene-marker">{msg["scene_marker"]}</div>').classes("w-full")
+            ui.html(f'<h2 id="{marker_id}" class="scene-marker">{msg["scene_marker"]}</h2>').classes("w-full")
             continue
         role = msg.get("role","assistant")
         content = msg.get("content","")
@@ -2350,7 +2362,7 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
             scroll_target_id = f"msg-{len(s['messages'])}"
             with chat_container:
                 if game.scene_count > 1:
-                    ui.html(f'<div id="{scroll_target_id}" class="scene-marker">{t("game.scene_marker", L(), n=game.scene_count, location=game.current_location)}</div>').classes("w-full")
+                    ui.html(f'<h2 id="{scroll_target_id}" class="scene-marker">{t("game.scene_marker", L(), n=game.scene_count, location=game.current_location)}</h2>').classes("w-full")
                 else:
                     ui.html(f'<div id="{scroll_target_id}"></div>')
                 _has_chaos_interrupt = bool(roll_data and roll_data.get("chaos_interrupt"))
@@ -2827,6 +2839,10 @@ async def main_page(client: Client):
     # ==================================================================
     # PAGE SKELETON — created once at page build, shown/hidden per phase
     # ==================================================================
+
+    # Skip-to-content link (accessibility: lets keyboard/screen-reader users jump to chat)
+    _skip_label = t("aria.skip_to_content", L())
+    ui.html(f'<a href="#chat-log" class="skip-link">{_skip_label}</a>')
 
     # Slim header with hamburger menu (hidden until main app phase)
     with ui.header(fixed=True).classes("rpg-slim-header items-center").style("padding: 0 0.5rem") as header:
