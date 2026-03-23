@@ -316,6 +316,10 @@ def _clean_narration(text: str) -> str:
     text = re.sub(r'```\w*\s*$', '', text)
     # Bold-bracket metadata blocks: **[char: state | location | threat | ...]**
     text = re.sub(r'\*{0,2}\[(?:[^\]]*\|){2,}[^\]]*\]\*{0,2}\s*$', '', text)
+    # Bold-bracket game mechanic annotations: **[THREAT CLOCK CREATED: X - 0/4]**
+    text = re.sub(r'\*{1,3}\[[^\]]+\]\*{1,3}', '', text)
+    # Bare ALL-CAPS bracketed annotations that survived bold-stripping: [CLOCK ADVANCE: +1]
+    text = re.sub(r'\[[A-Z][A-Z0-9 _\-]*:?[^\]]*\]', '', text)
     return text.strip()
 
 
@@ -1124,8 +1128,9 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                         if not s.get("sr_chat", True):
                             recap_el.props('aria-hidden="true"')
                         with recap_el:
-                            _sr_prefix = f'<span class="sr-only">{t("aria.recap_says", lang)}</span>' if s.get("sr_chat", True) else ""
-                            ui.markdown(f"{_sr_prefix}{prefix}{_clean_narration(recap)}")
+                            if s.get("sr_chat", True):
+                                ui.html(f'<span class="sr-only">{t("aria.recap_says", lang)}</span>')
+                            ui.markdown(f"{prefix}{_clean_narration(recap)}")
                     s["_recap_element"] = recap_el
                     await _scroll_chat_bottom()
                     await do_tts(recap, recap_el)
@@ -1776,7 +1781,8 @@ def render_chat_messages(container) -> Optional[str]:
         with _msg_col:
             _sr_prefix = ""
             if _sr_chat:
-                # Screen-reader role attribution (embedded in content, not a separate element)
+                # Screen-reader role attribution — rendered as ui.html() so the
+                # <span class="sr-only"> survives (ui.markdown sanitize=True strips spans)
                 if msg.get("recap"):
                     _sr_prefix = f'<span class="sr-only">{t("aria.recap_says", lang)}</span>'
                 elif role == "user":
@@ -1786,10 +1792,12 @@ def render_chat_messages(container) -> Optional[str]:
             if msg.get("corrected"):
                 with ui.element('div').classes('correction-badge').props(f'aria-label="{t("aria.correction_badge", lang)}"'):
                     ui.html(t("correction.badge", lang))
+            if _sr_prefix:
+                ui.html(_sr_prefix)
             _content = _clean_narration(content)
             if role == "assistant" and s.get("narrator_font") == "highlight":
                 _content = _highlight_dialog(_content)
-            ui.markdown(f"{_sr_prefix}{prefix}{_content}")
+            ui.markdown(f"{prefix}{_content}")
             rd = msg.get("roll_data")
             if rd: render_dice_display(rd)
     # Entity highlights (Design mode): inject JS after all messages are rendered
@@ -2281,8 +2289,9 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
             if not s.get("sr_chat", True):
                 _user_col.props('aria-hidden="true"')
             with _user_col:
-                _sr_prefix = f'<span class="sr-only">{t("aria.player_says", L())}</span>' if s.get("sr_chat", True) else ""
-                ui.markdown(f"{_sr_prefix}{display_text}")
+                if s.get("sr_chat", True):
+                    ui.html(f'<span class="sr-only">{t("aria.player_says", L())}</span>')
+                ui.markdown(display_text)
     try:
         with chat_container:
             spinner=ui.spinner("dots", size="lg")
@@ -2343,6 +2352,13 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
                 brain={"position":ll.get("position","risky"),"effect":ll.get("effect","standard")},
                 chaos_interrupt=ll.get("chaos_interrupt",""))
         if _is_correction:
+            # If the correction changed current_location, update the stored scene marker
+            # string for the current scene so render_chat_messages() shows the new name.
+            _new_marker = t("game.scene_marker", L(), n=game.scene_count, location=game.current_location)
+            for i in range(len(s["messages"]) - 1, -1, -1):
+                if s["messages"][i].get("scene_marker"):
+                    s["messages"][i]["scene_marker"] = _new_marker
+                    break
             # Replace last assistant message in history with the corrected narration
             for i in range(len(s["messages"])-1, -1, -1):
                 if s["messages"][i].get("role") == "assistant":
@@ -2387,11 +2403,12 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
                 if not s.get("sr_chat", True):
                     msg_col.props('aria-hidden="true"')
                 with msg_col:
-                    _sr_prefix = f'<span class="sr-only">{t("aria.narrator_says", L())}</span>' if s.get("sr_chat", True) else ""
+                    if s.get("sr_chat", True):
+                        ui.html(f'<span class="sr-only">{t("aria.narrator_says", L())}</span>')
                     _narr = _clean_narration(narration)
                     if s.get("narrator_font") == "highlight":
                         _narr = _highlight_dialog(_narr)
-                    ui.markdown(f"{_sr_prefix}{_narr}")
+                    ui.markdown(_narr)
                     if roll_data: render_dice_display(roll_data)
         # Entity highlights (Design mode) — process newly rendered message
         # For corrections: render_chat_messages() already called _inject_entity_highlights

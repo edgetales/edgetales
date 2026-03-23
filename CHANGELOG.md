@@ -5,6 +5,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.64]
+
+### Fixed
+- **"Narrator:" / "Player:" role labels visible in chat (English UI/narration).** Two separate but related root causes:
+  - *Narrator prefix in AI output:* Sonnet occasionally prefixes English narration with `"Narrator:"` — the role name from the system prompt. Does not occur in German. Two-part fix: (1) `PURE PROSE ONLY` rule in `get_narrator_system()` extended with explicit instruction not to start with role labels; (2) `parse_narrator_response()` strips any leading `Narrator:` prefix as a case-insensitive regex safety net (Step 0).
+  - *sr-only labels leaking as visible text:* Screen-reader attribution spans (`<span class="sr-only">Player:</span>`, `<span class="sr-only">Narrator:</span>`) were prepended to `ui.markdown()` content strings. NiceGUI's `sanitize=True` (DOMPurify) strips the `<span>` tags but leaves the text content visible. Affects all four render sites: `render_chat_messages()`, `process_player_input()` user bubble, narrator response, and `do_recap()`. Fix: sr-only spans are now rendered via a separate `ui.html()` call (which bypasses DOMPurify) before the `ui.markdown()` call. This is consistent with the existing pattern used for correction badges and scene markers.
+- **Scene marker not updated after `##` correction changes location name.** When a `state_error` correction renamed a location (e.g. "Siggis Kebab" → "Simons Kebab"), `_apply_correction_ops()` updated `game.current_location` and the narration was rewritten — but the scene marker above the scene still showed the old name. Root cause: scene markers are stored as pre-formatted strings in `s["messages"]` at render time and are not touched by the correction flow. Fix: the `_is_correction` branch in `process_player_input()` now finds the most recent `scene_marker` entry in `s["messages"]` and regenerates it from the updated `game.current_location` before the full chat re-render.
+
+---
+
 ## [0.9.63]
 
 ### Fixed

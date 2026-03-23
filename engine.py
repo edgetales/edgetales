@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.63"
+VERSION = "0.9.62"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-5-20250929"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -3794,7 +3794,7 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
 - If <dramatic_question> is present, the scene should address this question (resolve or deepen it)
 - If story_arc structure="kishotenketsu" and phase="ten_twist": focus on perspective SHIFT, not conflict escalation. Something seemingly unrelated recontextualizes everything.
 - If <recent_events> is present, treat it as ESTABLISHED FACTS. These events already happened in previous scenes. NEVER contradict them {E['dash']} if an NPC was seen alive, they are alive; if a box was empty, it was empty; if a character said something, they said it. You may add new revelations or reinterpretations, but the physical facts of past scenes are canon.
-- PURE PROSE ONLY: Output ONLY narrative text. No JSON, no XML tags, no metadata, no code blocks, no markdown formatting (no *italics*, no **bold**, no # headings). Use typographic emphasis through word choice, sentence rhythm, and punctuation instead. Your entire response is visible to the player.
+- PURE PROSE ONLY: Output ONLY narrative text. No JSON, no XML tags, no metadata, no code blocks, no markdown formatting (no *italics*, no **bold**, no # headings). Do NOT prefix your response with role labels like "Narrator:" or any heading. Do NOT append game mechanic annotations like [CLOCK CREATED: ...], [THREAT: ...], [SCENE CONTEXT: ...], or any bracketed labels — these are handled internally. Begin immediately with narrative text. Your entire response is visible to the player.
 </rules>
 <player_authorship>
 - The PLAYER IS the character. If <player_words> is provided, these are CANONICAL.
@@ -5117,6 +5117,10 @@ def parse_narrator_response(game: GameState, raw: str) -> str:
     metadata from the prose to keep it player-facing clean."""
     narration = raw
 
+    # --- 0) Strip accidental role-label prefix (e.g. "Narrator:" in English) ---
+    # Sonnet occasionally prefixes responses with the role name from the system prompt.
+    narration = re.sub(r'^\s*Narrator:\s*', '', narration, flags=re.IGNORECASE)
+
     # --- 1) Tagged game_data (opening scene / new chapter) ---
     gd = re.search(r'<game_data>([\s\S]*?)</game_data>', narration)
     if gd:
@@ -5198,6 +5202,18 @@ def parse_narrator_response(game: GameState, raw: str) -> str:
             continue
         break
     narration = '\n'.join(lines).rstrip()
+
+    # --- 7.5) Strip bold-bracket game mechanic annotations ---
+    # Sonnet (especially in English) emits annotations like:
+    #   **[THREAT CLOCK CREATED: Corporate Trace - 0/4]**
+    #   **[CLOCK ADVANCE: +1]**  *[Scene context: ...]*
+    # These must be removed BEFORE step 8 strips the ** markers — otherwise the
+    # bracket content would survive and appear as plain text in the output.
+    narration = re.sub(r'\*{1,3}\[[^\]]+\]\*{1,3}', '', narration).strip()
+    # Also catch unbolded bare [ANNOTATION: ...] lines (e.g. after ** stripping in history)
+    narration = re.sub(
+        r'^\s*\[[A-Z][A-Z0-9 _\-]*:?[^\]]*\]\s*$',
+        '', narration, flags=re.MULTILINE).strip()
 
     # --- 8) Strip markdown artifacts ---
     narration = re.sub(r'^\s*[-*_]{3,}\s*$', '', narration, flags=re.MULTILINE).strip()
