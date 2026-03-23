@@ -139,37 +139,37 @@ The narrative tone reference: *Studio Ghibli, Avatar: The Last Airbender, Harry 
 
 **Character creation** — choose genre, tone, archetype, set wishes & boundaries:
 
-<table style="border: none; border-collapse: collapse;"><tr>
-  <td style="border: none; padding: 4px;"><img src="docs/genre.png" width="200" alt="Choose Genre"></td>
-  <td style="border: none; padding: 4px;"><img src="docs/tone.png" width="200" alt="Choose Tone"></td>
-  <td style="border: none; padding: 4px;"><img src="docs/archetype.png" width="200" alt="Choose Archetype"></td>
-  <td style="border: none; padding: 4px;"><img src="docs/wishes.png" width="200" alt="Wishes"></td>
+<table border="0" cellpadding="4" cellspacing="0"><tr>
+  <td align="center" valign="top"><img src="docs/genre.png" width="200" alt="Choose Genre"></td>
+  <td align="center" valign="top"><img src="docs/tone.png" width="200" alt="Choose Tone"></td>
+  <td align="center" valign="top"><img src="docs/archetype.png" width="200" alt="Choose Archetype"></td>
+  <td align="center" valign="top"><img src="docs/wishes.png" width="200" alt="Wishes"></td>
 </tr></table>
 
 **Describe your character, then review the AI-generated draft:**
 
-<table style="border: none; border-collapse: collapse;"><tr>
-  <td style="border: none; padding: 4px;"><img src="docs/character.png" width="280" alt="Character"></td>
-  <td style="border: none; padding: 4px;"><img src="docs/draft.png" width="280" alt="Character Draft"></td>
+<table border="0" cellpadding="4" cellspacing="0"><tr>
+  <td align="center" valign="top"><img src="docs/character.png" width="280" alt="Character"></td>
+  <td align="center" valign="top"><img src="docs/draft.png" width="280" alt="Character Draft"></td>
 </tr></table>
 
-**The first scene**
+**The first scene:**
 
 <img src="docs/firstscene.png" width="420" alt="First scene">
 
 **Sidebar** — character stats, clocks, chaos meter, story arc, NPCs, save slots:
 
-<table style="border: none; border-collapse: collapse;"><tr>
-  <td style="border: none; padding: 4px;"><img src="docs/sidebar1.png" width="280" alt="Sidebar 1"></td>
-  <td style="border: none; padding: 4px;"><img src="docs/sidebar2.png" width="280" alt="Sidebar 2"></td>
+<table border="0" cellpadding="4" cellspacing="0"><tr>
+  <td align="center" valign="top"><img src="docs/sidebar1.png" width="280" alt="Sidebar 1"></td>
+  <td align="center" valign="top"><img src="docs/sidebar2.png" width="280" alt="Sidebar 2"></td>
 </tr></table>
 
 **Save menu, Settings, Help:**
 
-<table style="border: none; border-collapse: collapse;"><tr>
-  <td style="border: none; padding: 4px;"><img src="docs/save_menu.png" width="280" alt="Save menu"></td>
-  <td style="border: none; padding: 4px;"><img src="docs/settings.png" width="280" alt="Settings menu"></td>
-  <td style="border: none; padding: 4px;"><img src="docs/help.png" width="280" alt="Help menu"></td>
+<table border="0" cellpadding="4" cellspacing="0"><tr>
+  <td align="center" valign="top"><img src="docs/save_menu.png" width="280" alt="Save menu"></td>
+  <td align="center" valign="top"><img src="docs/settings.png" width="280" alt="Settings menu"></td>
+  <td align="center" valign="top"><img src="docs/help.png" width="280" alt="Help menu"></td>
 </tr></table>
 
 **Visual mode** — highlights direct speech, color-codes names by bond, visual effects on certain events:
