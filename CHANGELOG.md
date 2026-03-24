@@ -5,6 +5,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.65]
+
+### Fixed
+- **"STORY COMPLETE" badge persists in sidebar after choosing "Keep Playing".** When the epilogue offer was dismissed via "Keep Playing", `epilogue_dismissed` was set to `True` but the `render_sidebar_status()` function still showed the `sidebar.story_complete` label unconditionally whenever `bp["story_complete"]` was set. Fix: condition now additionally checks `not game.epilogue_dismissed` — the badge is hidden while the player is in aftermath mode, consistent with the "Wrap Up Story" button being the intended end-trigger.
+
+---
+
 ## [0.9.64]
 
 ### Fixed

@@ -1038,7 +1038,7 @@ def render_sidebar_status(game: GameState, session=None) -> None:
                         .props(f'role="progressbar" aria-valuenow="{int(p)}" aria-valuemin="0" aria-valuemax="100" aria-label="{_act_aria}"'):
                     ui.element('div').classes('track-fill progress').style(f'width:{p:.0f}%')
             else: ui.label(f"{act_l} {an}").classes("text-xs text-gray-500")
-        if bp.get("story_complete"):
+        if bp.get("story_complete") and not getattr(game, "epilogue_dismissed", False):
             ui.label(f"{E['star']} {t('sidebar.story_complete', lang)}").classes("text-xs text-amber-400 font-bold mt-1")
     # NPCs
     active_npcs = [n for n in game.npcs if n.get("status")=="active" and n.get("introduced",True)]
