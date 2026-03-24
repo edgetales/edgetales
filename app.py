@@ -346,7 +346,7 @@ def _highlight_dialog(text: str) -> str:
         inner = content.strip()
         if not inner:
             return open_q + content + close_q
-        return f'{open_q}***{inner}***{close_q}'
+        return f'{open_q}***{inner}{close_q}***'
 
     # DE standard: „..." — öffnet U+201E, schließt U+201D, U+201C oder gerades "
     text = re.sub(
