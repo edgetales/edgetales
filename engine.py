@@ -2842,6 +2842,7 @@ def apply_consequences(game: GameState, roll: RollResult, brain: dict) -> tuple[
                 clock["filled"] = min(clock["segments"], clock["filled"] + ticks)
                 if clock["filled"] >= clock["segments"]:
                     clock["fired"] = True
+                    clock["fired_at_scene"] = game.scene_count
                     clock_events.append({"clock": clock["name"], "trigger": clock["trigger_description"]})
                 break
 
@@ -2927,6 +2928,7 @@ def _tick_autonomous_clocks(game: GameState) -> list:
             triggered = clock["filled"] >= clock["segments"]
             if triggered:
                 clock["fired"] = True
+                clock["fired_at_scene"] = game.scene_count
             event = {
                 "clock": clock["name"],
                 "trigger": clock["trigger_description"],
@@ -2940,7 +2942,24 @@ def _tick_autonomous_clocks(game: GameState) -> list:
     return ticked
 
 
-def can_burn_momentum(game: GameState, roll: RollResult) -> Optional[str]:
+def _purge_old_fired_clocks(game: GameState, keep_scenes: int = 3) -> None:
+    """Remove fired clocks that triggered more than keep_scenes scenes ago.
+    Fired clocks are kept briefly so the narrator and metadata extractor have
+    short-term context (e.g. 'Spurensicherung arrived').  After keep_scenes
+    they are pure noise and waste prompt tokens.
+    Clocks without fired_at_scene (legacy saves) are purged immediately."""
+    before = len(game.clocks)
+    game.clocks = [
+        c for c in game.clocks
+        if not c.get("fired")
+        or (game.scene_count - c.get("fired_at_scene", 0)) <= keep_scenes
+    ]
+    purged = before - len(game.clocks)
+    if purged:
+        log(f"[Clock] Purged {purged} expired fired clock(s) at scene {game.scene_count}")
+
+
+
     """Check if momentum burn can upgrade the result. Returns new result or None.
     Does NOT mutate game state — actual burn happens in process_momentum_burn."""
     if game.momentum <= 0:
@@ -2968,6 +2987,7 @@ def check_npc_agency(game: GameState) -> list[str]:
                     clock["filled"] += 1
                     if clock["filled"] >= clock["segments"]:
                         clock["fired"] = True
+                        clock["fired_at_scene"] = game.scene_count
                         actions.append(f'CLOCK FILLED "{clock["name"]}": {clock["trigger_description"]}')
     return actions
 
@@ -3770,10 +3790,20 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
     cb = _content_boundaries_block(game)
     bs = _backstory_block(game)
     sc = _status_context_block(game)
+    _quote_rule = (
+        "- DIALOG QUOTES: Use German quotation marks exclusively. "
+        "Opening quote: \u201e (lower-9, U+201E). Closing quote: \u201c (upper-6, U+201C). "
+        "Pattern: \u201eText.\u201c \u2014 NEVER use guillemets (\u00bb\u00ab), straight ASCII quotes (\"), or any other style."
+        if lang == "German" else
+        "- DIALOG QUOTES: Use English curly double quotes exclusively. "
+        "Opening: \u201c (U+201C). Closing: \u201d (U+201D). "
+        "Pattern: \u201cText.\u201d \u2014 NEVER use guillemets, straight ASCII quotes (\"), or any other style."
+    )
     return f"""<role>Narrator of an immersive RPG. All output in {lang}, second person singular.</role>
 {kf}{cb}{bs}{sc}
 <rules>
 - NEVER mention dice, stats, numbers, or game mechanics
+{_quote_rule}
 - MISS: concrete failure, situation worsens, NO silver linings
 - WEAK_HIT: success at tangible cost
 - STRONG_HIT: clean success
@@ -3961,7 +3991,7 @@ memory_updates: for EACH NPC who participated in or witnessed this scene. Use th
 NPC DISAMBIGUATION: The known_npcs list shows each NPC's last known location [at:...] and a short description. When the narration uses a name or descriptor that could match multiple NPCs, prefer the NPC whose location matches <current_location> or who is described as being physically present. An NPC [at:FarAwayPlace] is unlikely to appear at <current_location> without the narration explicitly describing their arrival.
 about_npc (in memory_updates): If the memory is primarily ABOUT ANOTHER NPC (not the player), set about_npc to that other NPC's npc_id. Examples: NPC A is told something about NPC B → memory on A with about_npc=B's id. NPC A witnesses NPC B doing something → memory on A with about_npc=B's id. If the memory is about the player or a general event, set about_npc to null.
 IMPORTANT: If the player directly tells an NPC something about another NPC (gossip, warning, lie, compliment, romantic suggestion), this MUST be captured as its own memory_update with about_npc set — even if other events also happened to that NPC in the same scene. An NPC can have multiple memories per scene if distinctly different events occurred.
-deceased_npcs: list NPCs (by npc_id) whose death is DEPICTED BY THE NARRATOR as it happens — they collapse, are killed, stop breathing, etc. in the narrative prose.
+deceased_npcs: list NPCs (by npc_id) whose death is DEPICTED BY THE NARRATOR as it happens — they collapse, are killed, stop breathing, are consumed by fire, are pulled under water/earth with no return described, are destroyed by supernatural forces, etc. The death must be shown as FINAL AND IRREVERSIBLE in the prose — the narrator describes them as gone, taken, destroyed, or dead.
 CRITICAL: Do NOT mark an NPC as deceased if their death is only CLAIMED, REPORTED, or ALLEGED by another character in dialog (e.g. someone says "Leo ist tot"). Dialog claims about death are unreliable information — characters lie, bluff, or may be wrong. Only narrator-described, physically-witnessed deaths count. Never include NPCs already marked [DECEASED]."""
 
     prompt = f"""<narration>{narration}</narration>
@@ -5546,6 +5576,10 @@ def load_game(username: str, name: str = "autosave") -> tuple[Optional[GameState
     for clock in game.clocks:
         if clock.get("filled", 0) >= clock.get("segments", 1) and "fired" not in clock:
             clock["fired"] = True
+        # fired_at_scene=0 means "fire scene unknown" — _purge_old_fired_clocks
+        # will remove it on the next turn (0 is always > keep_scenes scenes ago)
+        if clock.get("fired") and "fired_at_scene" not in clock:
+            clock["fired_at_scene"] = 0
     chat_messages = data.get("chat_messages", [])
     log(f"[Load] Game loaded: {username}/{name} ({game.player_name}, Scene {game.scene_count}, {len(chat_messages)} chat msgs)")
     return game, chat_messages
@@ -6347,6 +6381,10 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
                  config: Optional[EngineConfig] = None) -> tuple[GameState, str, Optional[RollResult], Optional[dict], Optional[dict]]:
     log(f"[Turn] Scene {game.scene_count + 1} | Player: {player_message[:100]}")
 
+    # Housekeeping: remove fired clocks that are old enough to no longer
+    # provide useful narrator context (keeps prompt lean across long chapters)
+    _purge_old_fired_clocks(game)
+
     # Snapshot BEFORE any mutation — used by ## correction flow and burn
     game.last_turn_snapshot = _build_turn_snapshot(game)
     game.last_turn_snapshot["player_input"] = player_message
@@ -6640,9 +6678,11 @@ CORRECTION_OUTPUT_SCHEMA = {
                                 "items": {"type": "string"},
                             },
                             "bond": {"type": ["integer", "null"]},
+                            "status": {"type": ["string", "null"]},
                         },
                         "required": ["name", "description", "disposition",
-                                     "agenda", "instinct", "aliases", "bond"],
+                                     "agenda", "instinct", "aliases", "bond",
+                                     "status"],
                         "additionalProperties": False,
                     },
                     # op=location_edit / scene_context / time_edit / backstory_append
@@ -6702,6 +6742,9 @@ def call_correction_brain(client: anthropic.Anthropic, game: GameState,
 - All text fields in {lang}.
 - If correction_source=input_misread and no state changes are needed, return state_ops=[].
 - If correction_source=state_error, corrected_input="" and reroll_needed=false.
+- NPC DEATH: If the player states an NPC is dead/deceased, use op="npc_edit" with fields.status="deceased".
+  Do NOT write death annotations like "VERSTORBEN" or "DECEASED" into fields.description — the status
+  field is the correct and only mechanism. Set fields.description=null to leave it unchanged.
 </rules>"""
 
     user_msg = f"""## correction from player: {correction_text}
@@ -6758,13 +6801,28 @@ def _apply_correction_ops(game: GameState, ops: list) -> None:
             npc = _find_npc(game, op_dict.get("npc_id", ""))
             if npc and op_dict.get("fields"):
                 allowed = {"name", "description", "disposition", "agenda",
-                           "instinct", "aliases", "bond"}
+                           "instinct", "aliases", "bond", "status"}
                 # Filter out null values (schema requires all keys, null = unchanged)
                 edits = {k: v for k, v in op_dict["fields"].items()
                          if k in allowed and v is not None}
+                # Validate status values to prevent garbage
+                if "status" in edits:
+                    valid_statuses = {"active", "background", "inactive", "deceased"}
+                    if edits["status"] not in valid_statuses:
+                        log(f"[Correction] npc_edit: ignoring invalid status "
+                            f"'{edits['status']}' for {npc.get('name','?')}", level="warning")
+                        del edits["status"]
                 for k, v in edits.items():
                     npc[k] = v
-                if edits:
+                # If marked deceased, scrub common death annotations from description
+                if edits.get("status") == "deceased":
+                    npc["description"] = re.sub(
+                        r'[\.\s]*(?:VERSTORBEN|DECEASED|TOT|DEAD)\s*[\.\,]?',
+                        '', npc.get("description", ""), flags=re.IGNORECASE
+                    ).strip().rstrip('.,').strip()
+                    log(f"[Correction] npc_edit: {npc['name']} marked deceased "
+                        f"(description cleaned)")
+                elif edits:
                     log(f"[Correction] npc_edit: {npc['name']} fields={list(edits.keys())}")
 
         elif op == "npc_split":

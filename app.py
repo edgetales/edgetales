@@ -324,39 +324,59 @@ def _clean_narration(text: str) -> str:
 
 
 def _highlight_dialog(text: str) -> str:
-    """Wrap quoted speech in ***bold-italic*** for Dialog-Highlight mode.
-    Quote characters are placed OUTSIDE the *** markers so markdown2
-    recognises the word boundaries correctly.
+    """Wrap quoted speech content in ***bold-italic*** for Dialog-Highlight mode.
+
+    Quote characters are placed OUTSIDE the *** markers.  This is critical:
+    guillemets (»«), curly quotes and similar are Unicode punctuation (Ps/Pe).
+    CommonMark/markdown2 only recognises *** as a left-flanking delimiter when
+    it is NOT immediately followed by punctuation (or is preceded by it under
+    rule-b).  Placing *** *inside* the quotes — i.e. ***»content«*** — therefore
+    causes the parser to leave the *** as literal text in many contexts, which
+    shows up as visible *** and causes adjacent quotes to bleed into each other
+    (double-highlight artefact).
+
+    Correct pattern:  »***content***«
+    Content is stripped of leading/trailing whitespace so *** never borders a
+    space (right-flanking rule: delimiter must not be preceded by whitespace).
+
     CSS styles .chat-msg.assistant em strong."""
     import re
+
+    def _wrap(open_q: str, content: str, close_q: str) -> str:
+        inner = content.strip()
+        if not inner:
+            return open_q + content + close_q
+        return f'{open_q}***{inner}***{close_q}'
+
     # DE standard: „..." — öffnet U+201E, schließt U+201D, U+201C oder gerades "
     text = re.sub(
         r'(\u201E)([^\u201E\u201C\u201D"\n]{1,600}?)([\u201C\u201D"])',
-        lambda m: f'***{m.group(1)}{m.group(2)}{m.group(3)}***', text)
+        lambda m: _wrap(m.group(1), m.group(2), m.group(3)), text)
     # EN curly: "..."
     text = re.sub(
         r'(\u201C)([^\u201C\u201D\n]{1,600}?)(\u201D)',
-        lambda m: f'***{m.group(1)}{m.group(2)}{m.group(3)}***', text)
-    # Guillemets: «...»
+        lambda m: _wrap(m.group(1), m.group(2), m.group(3)), text)
+    # Guillemets — both directions in a single pass to prevent cross-matching.
+    # After replacing »content« → »***content***«, a sequential «»-pass would
+    # pick up the resulting «...» as a new opening.  One alternating pass avoids this.
     text = re.sub(
-        r'(\u00AB)([^\u00AB\u00BB\n]{1,600}?)(\u00BB)',
-        lambda m: f'***{m.group(1)}{m.group(2)}{m.group(3)}***', text)
-    # Reversed guillemets: »...«
-    text = re.sub(
-        r'(\u00BB)([^\u00AB\u00BB\n]{1,600}?)(\u00AB)',
-        lambda m: f'***{m.group(1)}{m.group(2)}{m.group(3)}***', text)
+        r'(\u00BB)([^\u00AB\u00BB\n]{1,600}?)(\u00AB)'   # »...«  reversed (DE/typographic)
+        r'|(\u00AB)([^\u00AB\u00BB\n]{1,600}?)(\u00BB)',  # «...»  normal
+        lambda m: (_wrap(m.group(1), m.group(2), m.group(3)) if m.group(1)
+                   else _wrap(m.group(4), m.group(5), m.group(6))),
+        text)
     # Straight ASCII double quotes: "..." — Narrator uses these for embedded/murmured dialog
     text = re.sub(
         r'"([^"\n]{1,600}?)"',
-        lambda m: f'***"{m.group(1)}"***', text)
+        lambda m: _wrap('"', m.group(1), '"'), text)
     # EN single curly: '...' — UK style primary quotes, nested quotes inside double
     text = re.sub(
         r'(\u2018)([^\u2018\u2019\n]{1,600}?)(\u2019)',
-        lambda m: f'***{m.group(1)}{m.group(2)}{m.group(3)}***', text)
+        lambda m: _wrap(m.group(1), m.group(2), m.group(3)), text)
     # French single guillemets: ‹...› — nested quotes inside «»
     text = re.sub(
         r'(\u2039)([^\u2039\u203A\n]{1,600}?)(\u203A)',
-        lambda m: f'***{m.group(1)}{m.group(2)}{m.group(3)}***', text)
+        lambda m: _wrap(m.group(1), m.group(2), m.group(3)), text)
     return text
 
 
@@ -1003,7 +1023,7 @@ def render_sidebar_status(game: GameState, session=None) -> None:
     _vignette_op = {5: 0.0, 4: 0.0, 3: 0.18, 2: 0.40, 1: 0.62, 0: 0.82}.get(_health, 0.0)
     ui.run_javascript(f"document.body.style.setProperty('--health-vignette', '{_vignette_op}')")
     # Clocks — label already communicates value, progressbar is visual-only
-    active = [c for c in game.clocks if c["filled"] < c["segments"]]
+    active = [c for c in game.clocks if not c.get("fired")]
     if active:
         ui.separator()
         ui.label(f"{E['clock']} {t('sidebar.clocks', lang)}").classes("text-sm font-semibold")
