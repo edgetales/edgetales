@@ -63,7 +63,7 @@ except ImportError:
 
 VERSION = "0.9.65"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
-NARRATOR_MODEL = "claude-sonnet-4-5-20250929"
+NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
 USERS_DIR = _SCRIPT_DIR / "users"
 USERS_DIR.mkdir(exist_ok=True)
@@ -2960,6 +2960,7 @@ def _purge_old_fired_clocks(game: GameState, keep_scenes: int = 3) -> None:
 
 
 
+def can_burn_momentum(game: "GameState", roll: "RollResult") -> str | None:
     """Check if momentum burn can upgrade the result. Returns new result or None.
     Does NOT mutate game state — actual burn happens in process_momentum_burn."""
     if game.momentum <= 0:
