@@ -8,7 +8,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ## [0.9.65]
 
 ### Changed
-- **Narrator model upgraded to `claude-sonnet-4-6`** (was `claude-sonnet-4-5-20250929`). Sonnet 4.6 is the latest Sonnet generation, preferred over Sonnet 4.5 by ~70% of developers in coding evaluations, at identical pricing ($3/$15 per million input/output tokens). Drop-in replacement — no prompt or schema changes required.
+- **Dialog highlight: CSS fix for closing quote coverage.** `_highlight_dialog()` retains the proven `»***content***«` pattern (quotes outside `***` delimiters, required by CommonMark flanking rules). The visual issue of the closing quote sitting slightly outside the highlight box is fixed purely in CSS: `padding-right` on `em strong` increased from `0.50em` to `0.75em` so the marker background extends to cover the closing quote character. `margin-left: -0.5em` already covered the opening quote. No server-side HTML injection, no JS DOM manipulation — the original `***Markdown***` approach is the correct one.
+
+### Fixed
+- **Dialog highlight bleeds into surrounding narration text.** The DE quote pass wraps `„content"` → `„***content***"`, leaving the trailing ASCII `"` as a free character in the text. The subsequent ASCII double-quote pass then treated this `"` as an *opening* quote and matched all text up to the next `"` — causing entire paragraphs to be highlighted. Fix: negative lookbehind `(?<!\*\*\*)` added to the ASCII double-quote pattern so any `"` immediately following `***` (i.e. a DE-wrap closing quote) is never used as an ASCII opening quote. The `"` fallback in the DE closing character class is retained because the narrator occasionally produces ASCII `"` as closing despite the prompt rule.
 
 ### Fixed
 - **Missing `def` line for `can_burn_momentum()`.** The function signature (`def can_burn_momentum(game, roll)`) was accidentally deleted in a prior edit, leaving only the docstring and body at module scope. Pylance reported 9 `"roll" is not defined` warnings (Ln 2967–2971) and 1 `"can_burn_momentum" is not defined` warning (Ln 6491). Restored the correct signature with type hints.

@@ -323,30 +323,33 @@ def _clean_narration(text: str) -> str:
     return text.strip()
 
 
+# ---------------------------------------------------------------
+# Dialog Highlighting (EdgeTales Design mode)
+# Server-side Python marks quoted speech with ***bold-italic*** Markdown.
+# Quote characters are placed OUTSIDE the *** delimiters because guillemets
+# and curly quotes are Unicode punctuation (Ps/Pe) — placing *** inside them
+# breaks CommonMark left-flanking detection and leaves *** as visible text.
+# The opening quote is visually pulled into the highlight box via a negative
+# margin-left on em strong; the closing quote is covered by the extended
+# padding-right.  CSS selector: .chat-msg.assistant em strong.
+# ---------------------------------------------------------------
+
 def _highlight_dialog(text: str) -> str:
-    """Wrap quoted speech content in ***bold-italic*** for Dialog-Highlight mode.
+    """Wrap quoted speech in ***bold-italic*** Markdown for Dialog-Highlight mode.
 
-    Quote characters are placed OUTSIDE the *** markers.  This is critical:
-    guillemets (»«), curly quotes and similar are Unicode punctuation (Ps/Pe).
-    CommonMark/markdown2 only recognises *** as a left-flanking delimiter when
-    it is NOT immediately followed by punctuation (or is preceded by it under
-    rule-b).  Placing *** *inside* the quotes — i.e. ***»content«*** — therefore
-    causes the parser to leave the *** as literal text in many contexts, which
-    shows up as visible *** and causes adjacent quotes to bleed into each other
-    (double-highlight artefact).
+    Quote characters are placed OUTSIDE the *** markers so the CommonMark
+    left/right-flanking rules are satisfied for all Unicode quote styles.
+    The CSS margin-left / padding-right on em strong visually encompasses
+    both the opening and closing quote characters.
 
-    Correct pattern:  »***content***«
-    Content is stripped of leading/trailing whitespace so *** never borders a
-    space (right-flanking rule: delimiter must not be preceded by whitespace).
-
-    CSS styles .chat-msg.assistant em strong."""
+    CSS styles .chat-msg.assistant em strong (custom_head.html)."""
     import re
 
     def _wrap(open_q: str, content: str, close_q: str) -> str:
         inner = content.strip()
         if not inner:
             return open_q + content + close_q
-        return f'{open_q}***{inner}{close_q}***'
+        return f'{open_q}***{inner}***{close_q}'
 
     # DE standard: „..." — öffnet U+201E, schließt U+201D, U+201C oder gerades "
     text = re.sub(
@@ -357,19 +360,20 @@ def _highlight_dialog(text: str) -> str:
         r'(\u201C)([^\u201C\u201D\n]{1,600}?)(\u201D)',
         lambda m: _wrap(m.group(1), m.group(2), m.group(3)), text)
     # Guillemets — both directions in a single pass to prevent cross-matching.
-    # After replacing »content« → »***content***«, a sequential «»-pass would
-    # pick up the resulting «...» as a new opening.  One alternating pass avoids this.
     text = re.sub(
         r'(\u00BB)([^\u00AB\u00BB\n]{1,600}?)(\u00AB)'   # »...«  reversed (DE/typographic)
         r'|(\u00AB)([^\u00AB\u00BB\n]{1,600}?)(\u00BB)',  # «...»  normal
         lambda m: (_wrap(m.group(1), m.group(2), m.group(3)) if m.group(1)
                    else _wrap(m.group(4), m.group(5), m.group(6))),
         text)
-    # Straight ASCII double quotes: "..." — Narrator uses these for embedded/murmured dialog
+    # Straight ASCII double quotes: "..." — embedded/murmured dialog.
+    # Negative lookbehind (?<!\*\*\*) prevents matching the trailing ASCII "
+    # that the DE pass leaves after „***content***" — without it that " would
+    # be treated as an opening quote and match all text up to the next ".
     text = re.sub(
-        r'"([^"\n]{1,600}?)"',
+        r'(?<!\*\*\*)"([^"\n]{1,600}?)"',
         lambda m: _wrap('"', m.group(1), '"'), text)
-    # EN single curly: '...' — UK style primary quotes, nested quotes inside double
+    # EN single curly: '...' — UK style primary quotes, nested inside double
     text = re.sub(
         r'(\u2018)([^\u2018\u2019\n]{1,600}?)(\u2019)',
         lambda m: _wrap(m.group(1), m.group(2), m.group(3)), text)
@@ -378,7 +382,6 @@ def _highlight_dialog(text: str) -> str:
         r'(\u2039)([^\u2039\u203A\n]{1,600}?)(\u203A)',
         lambda m: _wrap(m.group(1), m.group(2), m.group(3)), text)
     return text
-
 
 # ---------------------------------------------------------------
 # Entity Highlighting (EdgeTales Design mode)

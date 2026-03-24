@@ -105,10 +105,11 @@ body[data-narrator-font="highlight"] .chat-msg.assistant { font-family: system-u
 
 /* ==========================================
    DIALOG-HIGHLIGHT MODUS
-   .dh-quote Spans werden server-seitig von
-   _highlight_dialog() in Python generiert.
-   sanitize=False bei ui.markdown() erlaubt
-   das Durchreichen der Spans zu Vue/v-html.
+   _highlight_dialog() in Python wraps quoted speech in ***bold-italic***
+   Markdown. Quote characters sit OUTSIDE the *** delimiters (CommonMark
+   flanking rules). The CSS margin-left pulls the highlight box leftward to
+   cover the opening quote; the extended padding-right covers the closing quote.
+   CSS selector: .chat-msg.assistant em strong (rendered by markdown2).
    ========================================== */
 
 /*
@@ -139,8 +140,12 @@ body[data-narrator-font="highlight"] .chat-msg.assistant strong em {
         );
     /* Asymmetrischer Radius: links rund (Marker-Ansatz), rechts spitzer (Auslauf) */
     border-radius: 0.7em 0.3em;
-    padding: 0.00em 0.50em 0.0em;
-    margin-left: -0.5em;
+    /* margin-left deckt das öffnende Anführungszeichen ab (liegt links außerhalb von em strong).
+       padding-right: minimale Luft am rechten Rand des Markers.
+       margin-right: negativ — zieht das schließende Anführungszeichen an den Marker heran. */
+    padding: 0.00em 0.62em 0.0em;
+    margin-left: -0.47em;
+    margin-right: -0.40em;
     color: hsl(0, 32%, 86%);
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
@@ -227,7 +232,7 @@ body[data-narrator-font="highlight"] .chat-msg.assistant .et-npc-warm    { color
 body[data-narrator-font="highlight"] .chat-msg.assistant .et-npc-hostile  { color: hsl(0, 38%, 66%); }
 body[data-narrator-font="highlight"] .chat-msg.assistant .et-npc-wary    { color: hsl(36, 45%, 64%); }
 body[data-narrator-font="highlight"] .chat-msg.assistant .et-player      { color: var(--accent-light); }
-/* Inside dialog highlight: slightly brighter to stand out against teal background */
+/* Inside dialog highlight: slightly brighter to stand out against dark-red background */
 body[data-narrator-font="highlight"] .chat-msg.assistant em strong .et-npc-warm,
 body[data-narrator-font="highlight"] .chat-msg.assistant strong em .et-npc-warm    { color: hsl(152, 38%, 72%); }
 body[data-narrator-font="highlight"] .chat-msg.assistant em strong .et-npc-hostile,
