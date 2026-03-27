@@ -6,7 +6,7 @@
 [![NiceGUI](https://img.shields.io/badge/UI-NiceGUI-4CAF50?logo=vuedotjs&logoColor=white)](https://nicegui.io)
 [![Claude AI](https://img.shields.io/badge/AI-Claude%20Haiku%20%2B%20Sonnet-orange?logo=anthropic&logoColor=white)](https://anthropic.com)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-lightgrey)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-0.9.65-blueviolet)]()
+[![Version](https://img.shields.io/badge/Version-0.9.66-blueviolet)]()
 [![Mobile Ready](https://img.shields.io/badge/Mobile-PWA%20Ready-success?logo=pwa&logoColor=white)]()
 
 ---
@@ -111,7 +111,7 @@ Stories in EdgeTales have a narrative arc. The engine tracks pacing, tension, an
 - **Generate an Epilogue** - the AI writes a closing sequence that reflects on your character's journey, the relationships you built, and how the central conflict resolved. Pure narrative prose, no more dice rolls. Then you can start a **new chapter** (campaign mode) or begin something entirely new.
 - **Keep playing** - ignore the suggestion and continue the adventure. The offer won't bother you again.
 
-**Campaign mode** carries your character, stats, NPCs, and world into a new chapter. The AI summarises the previous chapter — including how NPCs may have evolved during the time skip and what emotional questions remain open — and your NPC relationships and their memories carry over. Unresolved story threads and the previous chapter's character growth feed into the new story blueprint, creating emotional continuity across chapters. Mechanics reset (health, spirit, supply are restored), but your character's identity and history remain intact. It's the same person, a new adventure.
+**Campaign mode** carries your character, stats, NPCs, and world into a new chapter. The AI summarises the previous chapter — including how NPCs may have evolved during the time skip and what emotional questions remain open — and your NPC relationships and their memories carry over. Unresolved story threads and the previous chapter's character growth feed into the new story blueprint, creating emotional continuity across chapters. Mechanics reset (health, spirit, supply are restored), but your character's identity and history remain intact. NPCs who mattered retain their bonds, memories, and dispositions — they remember you. It's the same person, a new adventure.
 
 **Safety Tools - Wishes & Boundaries**
 
@@ -252,7 +252,7 @@ Player types action
 
 The Director also generates enriched scene summaries that replace the Brain's bare-bones log entries, giving the narrator richer context about *why* things matter, not just *what* happened. And it evaluates act transition triggers, signalling when the story should advance to the next act based on what actually happened — not a fixed scene count.
 
-A fifth agent — the **Story Architect** — runs once at game start and once per chapter start, using Sonnet to generate a story blueprint (3-act or Kishōtenketsu structure) with act goals, transition triggers, revelations, a thematic thread, and possible endings. The thematic thread carries the story's emotional core question across every scene, connecting individual moments to a larger narrative arc.
+A fifth agent — the **Story Architect** — runs once at game start and once per chapter start, using Sonnet to generate a story blueprint (3-act or Kishōtenketsu structure) with act goals, transition triggers, revelations, a thematic thread, and possible endings. The thematic thread carries the story's emotional core question across every scene, connecting individual moments to a larger narrative arc. Revelations are story secrets planted in the blueprint — hidden truths about NPCs, the world, or the situation that the narrator weaves in naturally when the scene is ready for them. A dedicated confirmation step (a fast Haiku check after each scene) verifies whether the narrator actually delivered the revelation before marking it as used, so twists are never silently skipped.
 
 ### Core Design Principle: AI Narrates, It Does Not Decide
 

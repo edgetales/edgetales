@@ -133,7 +133,8 @@ METADATA_MAX_TOKENS    = _MAX_TOKENS_HAIKU    # call_narrator_metadata (was 3500
 DIRECTOR_MAX_TOKENS    = _MAX_TOKENS_HAIKU    # call_director (was 6000)
 CHAPTER_SUM_MAX_TOKENS = _MAX_TOKENS_HAIKU    # call_chapter_summary (was 1500)
 CORRECTION_MAX_TOKENS  = _MAX_TOKENS_HAIKU    # call_correction_brain (was 1500)
-OPENING_MAX_TOKENS     = _MAX_TOKENS_HAIKU    # call_opening_metadata (new)
+OPENING_MAX_TOKENS          = _MAX_TOKENS_HAIKU    # call_opening_metadata (new)
+REVELATION_CHECK_MAX_TOKENS = _MAX_TOKENS_HAIKU    # call_revelation_check (new)
 NARRATOR_MAX_TOKENS    = _MAX_TOKENS_SONNET   # call_narrator (was 3500)
 STORY_ARCH_MAX_TOKENS  = _MAX_TOKENS_SONNET   # call_story_architect (was 4000)
 
@@ -433,6 +434,29 @@ NARRATOR_METADATA_SCHEMA = {
     "required": ["scene_context", "location_update", "time_update",
                   "memory_updates", "new_npcs", "npc_renames", "npc_details",
                   "deceased_npcs"],
+    "additionalProperties": False,
+}
+
+# Schema for revelation confirmation check.
+# Used by call_revelation_check() — determines whether the narrator actually wove
+# the pending revelation into the narration before marking it as used.
+REVELATION_CHECK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "revelation_confirmed": {
+            "type": "boolean",
+            "description": (
+                "True if the narration clearly contains, implies, or meaningfully "
+                "foreshadows the revelation content. False if the revelation is absent "
+                "or only incidentally touched on."
+            ),
+        },
+        "reasoning": {
+            "type": "string",
+            "description": "One sentence explaining why revelation_confirmed is True or False.",
+        },
+    },
+    "required": ["revelation_confirmed", "reasoning"],
     "additionalProperties": False,
 }
 
@@ -3003,10 +3027,6 @@ def _story_context_block(game: GameState) -> str:
         return ""
     act = get_current_act(game)
     bp = game.story_blueprint
-    pending = get_pending_revelations(game)
-    rev_hint = ""
-    if pending:
-        rev_hint = f' revelation_ready="{pending[0]["content"][:80]}"'
 
     ending_hint = ""
     if bp.get("story_complete") and getattr(game, "epilogue_dismissed", False):
@@ -3026,10 +3046,27 @@ def _story_context_block(game: GameState) -> str:
     structure = bp.get("structure_type", "3act")
     thematic = bp.get("thematic_thread", "")
     thematic_attr = f' thematic_thread="{thematic}"' if thematic else ""
-    return f"""<story_arc structure="{structure}" act="{act['act_number']}/{act['total_acts']}" phase="{act['phase']}" progress="{act['progress']}" mood="{act.get('mood','')}"
- conflict="{bp.get('central_conflict','')}" act_goal="{act.get('goal','')}"{rev_hint}{thematic_attr}/>
-{ending_hint}
-"""
+
+    # Revelation hint: separate element so the full content reaches the narrator
+    # untruncated. Only the first pending revelation is surfaced per scene.
+    pending = get_pending_revelations(game)
+    rev_block = ""
+    if pending:
+        rev = pending[0]
+        rev_block = (
+            f'\n<revelation_ready weight="{rev["dramatic_weight"]}">'
+            f'{rev["content"]}'
+            f'</revelation_ready>'
+        )
+
+    return (
+        f'<story_arc structure="{structure}" act="{act["act_number"]}/{act["total_acts"]}"'
+        f' phase="{act["phase"]}" progress="{act["progress"]}" mood="{act.get("mood","")}"'
+        f' conflict="{bp.get("central_conflict","")}" act_goal="{act.get("goal","")}"'
+        f'{thematic_attr}/>'
+        f'{rev_block}'
+        f'{ending_hint}\n'
+    )
 
 
 
@@ -4024,6 +4061,67 @@ Extract all metadata from the narration above. Remember: {game.player_name} is t
         return {"scene_context": "", "location_update": None, "time_update": None,
                 "memory_updates": [], "new_npcs": [], "npc_renames": [], "npc_details": [],
                 "deceased_npcs": []}
+
+
+def call_revelation_check(client: anthropic.Anthropic, narration: str,
+                          revelation: dict,
+                          config: Optional[EngineConfig] = None) -> bool:
+    """Check whether the narrator actually wove a pending revelation into the narration.
+
+    Called after call_narrator_metadata() when pending_revs was non-empty.
+    Returns True if the revelation was meaningfully present (and should be marked used),
+    False if the narrator skipped or barely touched it (stays pending for next scene).
+
+    Uses Haiku + Structured Outputs — fast, cheap, single boolean output.
+    On any failure, returns True (safe default: avoid infinite pending loops).
+    """
+    lang = get_narration_lang(config or EngineConfig())
+    rev_content = revelation.get("content", "")
+    rev_weight = revelation.get("dramatic_weight", "medium")
+
+    system = (
+        f"You are a story-consistency checker for an RPG engine. "
+        f"Your task is to determine whether a specific revelation was meaningfully "
+        f"present in a narrator's prose passage.\n\n"
+        f"A revelation is considered CONFIRMED (revelation_confirmed=true) when:\n"
+        f"- The core insight or twist is clearly present in the narration, OR\n"
+        f"- It is strongly and unambiguously foreshadowed (not just vaguely hinted), OR\n"
+        f"- A character explicitly reveals information that matches the revelation content.\n\n"
+        f"A revelation is NOT confirmed (revelation_confirmed=false) when:\n"
+        f"- The narration does not touch on the revelation at all, OR\n"
+        f"- Only a very superficial or incidental reference appears that a reader "
+        f"would not recognise as the revelation.\n\n"
+        f"The narration is in {lang}. Reason in {lang} if helpful, but the JSON fields "
+        f"must always be populated."
+    )
+
+    prompt = (
+        f"<revelation weight=\"{rev_weight}\">{rev_content}</revelation>\n\n"
+        f"<narration>{narration}</narration>\n\n"
+        f"Was this revelation meaningfully present in the narration above?"
+    )
+
+    try:
+        response = _api_create_with_retry(
+            client, max_retries=2,
+            model=BRAIN_MODEL, max_tokens=REVELATION_CHECK_MAX_TOKENS,
+            system=system,
+            messages=[{"role": "user", "content": prompt}],
+            output_config={"format": {
+                "type": "json_schema",
+                "schema": REVELATION_CHECK_SCHEMA,
+            }},
+        )
+        result = json.loads(response.content[0].text)
+        confirmed = result.get("revelation_confirmed", True)
+        reasoning = result.get("reasoning", "")
+        log(f"[Revelation] Check for '{revelation.get('id', '?')}': "
+            f"confirmed={confirmed} — {reasoning}")
+        return confirmed
+    except Exception as e:
+        log(f"[Revelation] Check failed ({type(e).__name__}: {e}), "
+            f"defaulting to confirmed=True to avoid pending loop", level="warning")
+        return True
 
 
 def call_opening_metadata(client: anthropic.Anthropic, narration: str,
@@ -5134,6 +5232,10 @@ def _process_game_data(game: GameState, data: dict, force_npcs: bool = True):
             if not c.get("id"):
                 max_clock_num += 1
                 c["id"] = f"clock_{max_clock_num}"
+            # Normalize fired: extractor omits the field; None serializes to JSON null
+            # which confuses the "fired" not in clock backfill check in load_game.
+            if c.get("fired") is None:
+                c["fired"] = False
         new_clocks = [c for c in data["clocks"] if c.get("id") not in existing_ids]
         if new_clocks:
             game.clocks.extend(new_clocks)
@@ -5196,7 +5298,7 @@ def parse_narrator_response(game: GameState, raw: str) -> str:
     # Strip prompt-echo tags (narrator sometimes echoes input XML)
     narration = re.sub(r'</?(?:task|scene|world|character|situation|conflict|possible_endings|'
                        r'session_log|npc|returning_npc|campaign_history|chapter|story_arc|'
-                       r'story_ending|momentum_burn)[^>]*>', '', narration).strip()
+                       r'story_ending|momentum_burn|revelation_ready)[^>]*>', '', narration).strip()
 
     # --- 3) Strip code fences ---
     narration = re.sub(r'```(?:\w+)?\s*[\s\S]*?```', '', narration).strip()
@@ -5577,6 +5679,9 @@ def load_game(username: str, name: str = "autosave") -> tuple[Optional[GameState
     for clock in game.clocks:
         if clock.get("filled", 0) >= clock.get("segments", 1) and "fired" not in clock:
             clock["fired"] = True
+        # Normalize fired=None (written by older extractor code) to fired=False
+        if clock.get("fired") is None:
+            clock["fired"] = False
         # fired_at_scene=0 means "fire scene unknown" — _purge_old_fired_clocks
         # will remove it on the next turn (0 is always > keep_scenes scenes ago)
         if clock.get("fired") and "fired_at_scene" not in clock:
@@ -6342,16 +6447,36 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
     _process_game_data(game, opening_data)
 
     # Merge: re-add returning NPCs that weren't re-introduced by the extractor.
-    new_npc_ids = {n["id"] for n in game.npcs}
+    # NOTE: Do NOT check by old ID here. _process_game_data() just reassigned IDs
+    # starting from npc_1 into the now-empty game.npcs, so old IDs from previous
+    # chapter will collide with freshly assigned ones (e.g. old Birte = npc_1 vs
+    # new "stranger" = npc_1). Name-based dedup is the only correct check.
     new_npc_names = {n["name"].lower().strip() for n in game.npcs}
+    id_remap = {}  # old_id → new_id; needed to fix about_npc references below
     for old_npc in returning_npcs:
-        # Skip if extractor already created this NPC (by name match)
-        if old_npc["id"] in new_npc_ids:
-            continue
+        # Skip if extractor already created an NPC with this name
         if old_npc["name"].lower().strip() in new_npc_names:
             continue
+        # Assign a fresh ID to avoid collisions with extractor-assigned IDs
+        old_id = old_npc["id"]
+        fresh_id, _ = _next_npc_id(game)
+        id_remap[old_id] = fresh_id
+        old_npc["id"] = fresh_id
         old_npc["introduced"] = True  # Player knows them from previous chapter
         game.npcs.append(old_npc)
+        new_npc_names.add(old_npc["name"].lower().strip())
+
+    # Fix stale about_npc references across all NPC memories.
+    # Returning NPCs carry memories from the previous chapter whose about_npc values
+    # reference old IDs. After the ID reassignment above those IDs no longer exist
+    # (or worse, point to different NPCs), breaking the NPC-to-NPC memory relevance
+    # boost in retrieve_memories(). Rewrite every stale reference in one pass.
+    if id_remap:
+        for npc in game.npcs:
+            for mem in npc.get("memory", []):
+                old_about = mem.get("about_npc")
+                if old_about and old_about in id_remap:
+                    mem["about_npc"] = id_remap[old_about]
 
     # Seed location_history with the new chapter's starting location
     if game.current_location and not game.location_history:
@@ -6430,9 +6555,14 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
             game.last_turn_snapshot["narration"] = narration
         metadata = call_narrator_metadata(client, narration, game, config)
         _apply_narrator_metadata(game, metadata, scene_present_ids=_scene_present_ids)
-        # Mark first pending revelation as used (narrator was instructed to weave it in)
+        # Mark first pending revelation as used only if the narrator actually wove it in.
+        # Capture the result so the Director knows whether a real revelation occurred.
+        revelation_confirmed = False
         if pending_revs:
-            mark_revelation_used(game, pending_revs[0]["id"])
+            revelation_confirmed = call_revelation_check(
+                client, narration, pending_revs[0], config)
+            if revelation_confirmed:
+                mark_revelation_used(game, pending_revs[0]["id"])
         # Record pacing
         scene_type = "interrupt" if chaos_interrupt else "breather"
         record_scene_intensity(game, scene_type)
@@ -6463,7 +6593,7 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
         director_reason = _should_call_director(game, roll_result="dialog",
                                   chaos_used=bool(chaos_interrupt),
                                   new_npcs_found=bool(metadata.get("new_npcs")),
-                                  revelation_used=bool(pending_revs))
+                                  revelation_used=revelation_confirmed)
         if director_reason:
             director_ctx = {"narration": narration, "config": config}
             if game.session_log:
@@ -6520,9 +6650,14 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
     # Record pacing
     scene_type = "interrupt" if chaos_interrupt else "action"
     record_scene_intensity(game, scene_type)
-    # Mark first pending revelation as used
+    # Mark first pending revelation as used only if the narrator actually wove it in.
+    # Capture the result so the Director knows whether a real revelation occurred.
+    revelation_confirmed = False
     if pending_revs:
-        mark_revelation_used(game, pending_revs[0]["id"])
+        revelation_confirmed = call_revelation_check(
+            client, narration, pending_revs[0], config)
+        if revelation_confirmed:
+            mark_revelation_used(game, pending_revs[0]["id"])
     game.narration_history.append({
         "prompt_summary": f"Action ({roll.result}): {brain.get('player_intent', player_message)[:80]}",
         "narration": narration,
@@ -6553,7 +6688,7 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
     director_reason = _should_call_director(game, roll_result=roll.result,
                               chaos_used=bool(chaos_interrupt),
                               new_npcs_found=bool(metadata.get("new_npcs")),
-                              revelation_used=bool(pending_revs))
+                              revelation_used=revelation_confirmed)
     if director_reason:
         director_ctx = {"narration": narration, "config": config}
         # Store trigger reason in session_log for diagnostics

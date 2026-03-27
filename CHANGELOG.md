@@ -5,6 +5,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.66]
+
+### Fixed
+- **Chapter transition loses NPCs from previous chapter (ID collision bug).** `start_new_chapter()` clears `game.npcs = []` then calls `_process_game_data()`, which reassigns IDs from `npc_1` to the new opening-scene NPCs. The subsequent merge loop then skipped returning chapter-1 NPCs by checking `old_npc["id"] in new_npc_ids` — but `npc_1` now referred to a different NPC (the new stranger), so returning NPCs like Birte Alsen (old `npc_1`) and Kasimir Rogg (old `npc_2`) were silently dropped. Fix: (1) removed the ID-based skip entirely — name-based deduplication is the only correct check after an ID reassignment; (2) reassign a fresh ID via `_next_npc_id()` when re-inserting returning NPCs, preventing any future collision; (3) `new_npc_names` set updated after each insertion to prevent hypothetical duplicates within the returning list.
+- **Stale `about_npc` references after chapter transition.** As a follow-on to the ID-collision fix: returning NPCs get fresh IDs, but their memories carry `about_npc` values referencing the old IDs from the previous chapter. These no longer map to any NPC (or worse, point to the wrong one), silently breaking the NPC-to-NPC memory relevance boost in `retrieve_memories()`. Fix: after the merge loop, a single pass rewrites every `about_npc` value in all NPC memories using the `id_remap` dict built during re-insertion.
+- **Clock `fired` field serialized as JSON `null` instead of `false`.** New clocks created by the Metadata Extractor did not include a `fired` field; the engine stored it as `None` which serializes to `null`. The `load_game()` backward-compat backfill check uses `"fired" not in clock` — this is `False` when `fired=null` is present as a key, causing the guard to be skipped. Fix: `_process_game_data()` now normalizes any `fired=None` to `fired=False` when adding new clocks. `load_game()` also normalizes `fired=None` → `False` for existing saves.
+- **Revelation content truncated to 80 chars in narrator prompt.** `_story_context_block()` injected the pending revelation as an XML attribute with `[:80]` truncation. For revelations of 200–285 chars (typical), more than half the content was silently dropped — the narrator received an incomplete sentence and could not meaningfully act on the twist. Fix: revelation delivered as a dedicated `<revelation_ready weight="...">full content</revelation_ready>` element, no truncation.
+- **Revelations marked as used regardless of narrator uptake.** `mark_revelation_used()` was called unconditionally after every scene in which a revelation was pending — even if the narrator ignored it entirely. Fix: new `call_revelation_check()` (Haiku, Structured Outputs, `REVELATION_CHECK_SCHEMA`) runs after `call_narrator_metadata()` and returns a boolean. `mark_revelation_used()` is now gated on a confirmed `True`. On extractor failure, defaults to `True` to prevent infinite pending loops. The `revelation_used` flag passed to `_should_call_director()` is also updated to use the actual confirmation result, so the Director is not falsely triggered for skipped revelations.
+- **`<revelation_ready>` tag not stripped from narrator output.** The new `<revelation_ready>` XML element injected by `_story_context_block()` was missing from the prompt-echo strip list in `parse_narrator_response()` (Step 2). If the narrator echoed it back as part of the prose, it would survive all cleanup passes and appear verbatim in the player-facing text. Fix: `revelation_ready` added to the prompt-echo tag regex.
+
+---
+
 ## [0.9.65]
 
 ### Changed
