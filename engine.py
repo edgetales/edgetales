@@ -3790,7 +3790,7 @@ def _status_context_block(game: Optional[GameState] = None) -> str:
         "injured — clearly hurting, moving with effort" if h == 3 else
         "seriously wounded — every motion costs something" if h == 2 else
         "critically injured — barely holding together, on the edge of collapse" if h == 1 else
-        "WOUNDED — at the limit, physical collapse imminent (flag already set)"
+        "at the physical limit — collapse is imminent (see <flags>)"
     )
     spirit_desc = (
         "steady and composed" if sp >= 5 else
@@ -3798,7 +3798,7 @@ def _status_context_block(game: Optional[GameState] = None) -> str:
         "shaken — stress is showing, focus is harder to maintain" if sp == 3 else
         "deeply troubled — holding on by a thread, doubt and fear are present" if sp == 2 else
         "near breaking — barely functioning, the weight is crushing" if sp == 1 else
-        "BROKEN — at the limit, mental collapse imminent (flag already set)"
+        "at the mental limit — breakdown is imminent (see <flags>)"
     )
     supply_desc = (
         "well-equipped" if su >= 5 else
@@ -3806,7 +3806,7 @@ def _status_context_block(game: Optional[GameState] = None) -> str:
         "running low — rationing has begun, choices are being made" if su == 3 else
         "critically short — scarcity is a real pressure" if su == 2 else
         "nearly nothing — desperation is setting in" if su == 1 else
-        "DEPLETED — out of resources (flag already set)"
+        "out of resources entirely (see <flags>)"
     )
 
     return (
@@ -3842,9 +3842,9 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
 <rules>
 - NEVER mention dice, stats, numbers, or game mechanics
 {_quote_rule}
-- MISS: concrete failure, situation worsens, NO silver linings
-- WEAK_HIT: success at tangible cost
-- STRONG_HIT: clean success
+- When <result type="MISS">: concrete failure, situation worsens, NO silver linings
+- When <result type="WEAK_HIT">: success at tangible cost
+- When <result type="STRONG_HIT">: clean success
 - NPCs act per their disposition and memories
 - Introduce new NAMED characters through action and dialog {E['dash']} give them distinct voices and traits
 - BACKSTORY CANON: If <backstory> is present, treat it as ESTABLISHED HISTORY. People mentioned there (family, friends, rivals) are ALREADY KNOWN to the player character {E['dash']} if they appear, they recognize the player and vice versa. NEVER introduce a backstory character as a stranger or reinterpret established relationships. Backstory events ALREADY HAPPENED {E['dash']} reference them as shared memory, not new plot.
@@ -3854,7 +3854,7 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
 - TEMPORAL CONSISTENCY: If <time> is provided, maintain that time period. Time only moves FORWARD (never backward). If you mention specific times, they must be later than any previously mentioned time. Do NOT invent specific clock times unless narratively important {E['dash']} prefer atmospheric time cues (moonlight, sunset glow, morning mist). CRITICAL: Each scene transition represents minutes to hours of in-world time, NOT days or years. Events from recent scenes just happened {E['dash']} signs don't weather, wounds are fresh, sent NPCs are still en route or just arrived. Never describe recent events or objects as aged, decayed, or long-past unless the player explicitly time-skips.
 - SPATIAL CONSISTENCY: The <location> tag shows where the player currently IS. If <prev_locations> is provided, the player has LEFT those places. NEVER place the player back at a previous location unless they explicitly travel there. If an NPC has a last_seen attribute showing a DIFFERENT location than the player's current <location>, that NPC is NOT physically present {E['dash']} they cannot be heard through walls, seen, or interact directly. They can only appear if they plausibly traveled to the player's location (and the narration should describe their arrival). NPCs without last_seen or with last_seen matching <location> ARE present and can interact normally.
 - If <story_arc> is present, steer scenes toward the act goal and mood
-- If revelation_ready is set, weave it into the scene naturally (through NPC dialog, discovered evidence, or environmental storytelling) {E['dash']} NEVER dump exposition
+- If <revelation_ready> is present, weave its content into the scene naturally (through NPC dialog, discovered evidence, or environmental storytelling) {E['dash']} NEVER dump exposition
 - If <story_ending> is present, build toward a satisfying conclusion
 - If <director_guidance> is present, follow its narrative direction. It provides strategic story guidance — use it to inform the scene's direction, NPC behavior, and pacing, while maintaining your creative voice and atmospheric style.
 - If <npc_note> is present for an NPC, use it to guide that NPC's behavior and emotional state in this scene.
@@ -5125,9 +5125,9 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
     if game.spirit <= 0: status_flags.append("BROKEN")
     if game.supply <= 0: status_flags.append("DEPLETED")
     if game.game_over:
-        status_flags.append("FINAL_SCENE:dramatic ending,character falls,make it meaningful")
+        status_flags.append("final_scene:dramatic ending, character falls, make it meaningful")
     elif game.crisis_mode:
-        status_flags.append("CRISIS:desperate,world closing in")
+        status_flags.append("crisis:desperate, world closing in")
 
     flags = f'\n<flags>{",".join(status_flags)}</flags>' if status_flags else ""
     agency = f'\n<npc_agency>{"| ".join(npc_agency)}</npc_agency>' if npc_agency else ""
