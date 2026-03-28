@@ -1065,7 +1065,7 @@ def render_sidebar_status(game: GameState, session=None) -> None:
             ui.label(f"{E['star']} {t('sidebar.story_complete', lang)}").classes("text-xs text-amber-400 font-bold mt-1")
     # NPCs
     active_npcs = [n for n in game.npcs if n.get("status")=="active" and n.get("introduced",True)]
-    background_npcs = [n for n in game.npcs if n.get("status")=="background" and n.get("introduced",True)]
+    background_npcs = [n for n in game.npcs if n.get("status") in ("background", "lore") and n.get("introduced",True)]
     deceased_npcs = [n for n in game.npcs if n.get("status")=="deceased"]
     if active_npcs or background_npcs or deceased_npcs:
         # Sort by bond (desc), then by most recent memory scene (desc)

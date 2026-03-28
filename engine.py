@@ -430,10 +430,22 @@ NARRATOR_METADATA_SCHEMA = {
                 "additionalProperties": False,
             },
         },
+        "lore_npcs": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name":        {"type": "string"},
+                    "description": {"type": "string"},
+                },
+                "required": ["name", "description"],
+                "additionalProperties": False,
+            },
+        },
     },
     "required": ["scene_context", "location_update", "time_update",
                   "memory_updates", "new_npcs", "npc_renames", "npc_details",
-                  "deceased_npcs"],
+                  "deceased_npcs", "lore_npcs"],
     "additionalProperties": False,
 }
 
@@ -1340,8 +1352,8 @@ def _merge_npc_identity(existing: dict, new_name: str, new_desc: str = ""):
             existing["aliases"].append(alias)
     if new_desc and not existing.get("description"):
         existing["description"] = new_desc
-    # Ensure active status
-    if existing.get("status") == "background":
+    # Ensure active status (lore figures become active when their identity is revealed)
+    if existing.get("status") in ("background", "lore"):
         _reactivate_npc(existing, reason=f"identity revealed as {new_name}")
     log(f"[NPC] Identity merged: '{old_name}' → '{new_name}' (aliases: {existing['aliases']})")
 
@@ -1370,7 +1382,7 @@ def _description_match_existing_npc(game, new_desc: str, new_name_norm: str) -> 
     best_score = 0
 
     for n in game.npcs:
-        if n.get("status") not in ("active", "background"):
+        if n.get("status") not in ("active", "background", "lore"):
             continue
         # Don't match against the NPC being created (same name)
         if _normalize_for_match(n.get("name", "")) == new_name_norm:
@@ -1673,10 +1685,10 @@ def _process_new_npcs(game, json_text: str):
 
             # Check if this NPC already exists (normalized name match, possibly background)
             if name_norm in existing_names:
-                # Reactivate background/deceased NPCs that reappear in narration
+                # Reactivate background/lore/deceased NPCs that reappear in narration
                 existing = next((n for n in game.npcs
                                  if _normalize_for_match(n["name"]) == name_norm), None)
-                if existing and existing.get("status") == "background":
+                if existing and existing.get("status") in ("background", "lore"):
                     _reactivate_npc(existing, reason="reappeared in new_npcs")
                 elif existing and existing.get("status") == "deceased":
                     _reactivate_npc(existing, reason="resurrected — exact name in new_npcs",
@@ -1702,7 +1714,7 @@ def _process_new_npcs(game, json_text: str):
                         if _normalize_for_match(variant) not in {_normalize_for_match(a) for a in fuzzy_hit["aliases"]}:
                             fuzzy_hit["aliases"].append(variant)
                             log(f"[NPC] Added STT variant as alias: '{variant}' → '{fuzzy_hit['name']}'")
-                        if fuzzy_hit.get("status") == "background":
+                        if fuzzy_hit.get("status") in ("background", "lore"):
                             _reactivate_npc(fuzzy_hit, reason="STT variant reappeared")
                     else:
                         _merge_npc_identity(fuzzy_hit, nd["name"], nd.get("description", ""))
@@ -1788,6 +1800,63 @@ def _process_new_npcs(game, json_text: str):
         log(f"[NPC] Failed to process new NPCs: {e}", level="warning")
 
 
+def _process_lore_npcs(game, lore_list: list):
+    """Register historically/narratively significant figures that are never physically
+    present in any scene. Lore NPCs collect memories and appear in a slim narrator
+    context block, but are never activated as scene participants.
+
+    Status 'lore' behaves like 'background' in all UI paths (sidebar, entity
+    highlighting) so the transition lore → active (e.g. time-travel, resurrection)
+    requires no UI changes — just _reactivate_npc().
+    """
+    player_norm = _normalize_for_match(game.player_name)
+
+    for entry in lore_list:
+        if not isinstance(entry, dict) or not entry.get("name"):
+            continue
+        name_norm = _normalize_for_match(entry["name"])
+
+        # Never register the player character
+        if name_norm == player_norm or (set(name_norm.split()) & set(player_norm.split())):
+            log(f"[NPC] Lore: skipping player character '{entry['name']}'")
+            continue
+
+        # Already known under any status? Update description if richer, done.
+        existing = _find_npc(game, entry["name"])
+        if existing:
+            if not existing.get("description") and entry.get("description"):
+                existing["description"] = entry["description"].strip()
+                log(f"[NPC] Lore: enriched description for existing NPC '{existing['name']}'")
+            else:
+                log(f"[NPC] Lore: '{entry['name']}' already known as '{existing['name']}' "
+                    f"({existing.get('status')}) — skipped")
+            continue
+
+        npc_id, _ = _next_npc_id(game)
+        clean_name, paren_aliases = _sanitize_npc_name(entry["name"].strip())
+        npc = {
+            "id": npc_id,
+            "name": clean_name,
+            "description": entry.get("description", "").strip(),
+            "agenda": "",
+            "instinct": "",
+            "secrets": [],
+            "disposition": "neutral",
+            "bond": 0,
+            "bond_max": 4,
+            "status": "lore",
+            "memory": [],
+            "introduced": True,
+            "aliases": paren_aliases,
+            "keywords": [],
+            "importance_accumulator": 0,
+            "last_reflection_scene": 0,
+            "last_location": "",
+        }
+        game.npcs.append(npc)
+        log(f"[NPC] Lore figure registered: {clean_name} ({npc_id})")
+
+
 def _retire_distant_npcs(game, max_active: int = MAX_ACTIVE_NPCS):
     """Demote NPCs to 'background' if the active list exceeds the threshold.
     Background NPCs remain visible in the sidebar but are excluded from
@@ -1828,7 +1897,7 @@ def _reactivate_npc(npc: dict, reason: str = "", force: bool = False):
         else:
             log(f"[NPC] Refused reactivation of deceased NPC: {npc.get('name', '?')}")
         return
-    if npc.get("status") == "background":
+    if npc.get("status") in ("background", "lore"):
         npc["status"] = "active"
         log(f"[NPC] Reactivated: {npc['name']} (reason: {reason})")
 
@@ -3154,6 +3223,15 @@ def call_brain(client: anthropic.Anthropic, game: GameState, player_message: str
     )
     if bg_summary:
         npc_summary += f"\n(background, not currently present but known):\n{bg_summary}"
+    # Lore figures: named but never physically present — for reference/memory only
+    lore_npcs = [n for n in game.npcs if n.get("status") == "lore"]
+    lore_summary = "\n".join(
+        f'- {n["name"]} (id:{n["id"]}): lore figure'
+        + (f' aliases:{",".join(n["aliases"])}' if n.get("aliases") else '')
+        for n in lore_npcs
+    )
+    if lore_summary:
+        npc_summary += f"\n(lore, historically significant but never physically present):\n{lore_summary}"
     clock_summary = "\n".join(
         f'- {c["name"]} ({c["clock_type"]}): {c["filled"]}/{c["segments"]}'
         for c in game.clocks if c["filled"] < c["segments"]
@@ -4005,13 +4083,15 @@ def call_narrator_metadata(client: anthropic.Anthropic, narration: str,
     # Include location + short description to help disambiguate similar names
     npc_refs = []
     for n in game.npcs:
-        if n.get("status") not in ("active", "background", "deceased"):
+        if n.get("status") not in ("active", "background", "deceased", "lore"):
             continue
         entry = f'{n["id"]}={n["name"]}'
         if n.get("aliases"):
             entry += f' (aka {", ".join(n["aliases"])})'
         if n.get("status") == "deceased":
             entry += ' [DECEASED]'
+        elif n.get("status") == "lore":
+            entry += ' [LORE]'
         # Location hint for spatial disambiguation
         npc_loc = n.get("last_location", "")
         if npc_loc:
@@ -4042,7 +4122,8 @@ NPC DISAMBIGUATION: The known_npcs list shows each NPC's last known location [at
 about_npc (in memory_updates): If the memory is primarily ABOUT ANOTHER NPC (not the player), set about_npc to that other NPC's npc_id. Examples: NPC A is told something about NPC B → memory on A with about_npc=B's id. NPC A witnesses NPC B doing something → memory on A with about_npc=B's id. If the memory is about the player or a general event, set about_npc to null.
 IMPORTANT: If the player directly tells an NPC something about another NPC (gossip, warning, lie, compliment, romantic suggestion), this MUST be captured as its own memory_update with about_npc set — even if other events also happened to that NPC in the same scene. An NPC can have multiple memories per scene if distinctly different events occurred.
 deceased_npcs: list NPCs (by npc_id) whose death is DEPICTED BY THE NARRATOR as it happens — they collapse, are killed, stop breathing, are consumed by fire, are pulled under water/earth with no return described, are destroyed by supernatural forces, etc. The death must be shown as FINAL AND IRREVERSIBLE in the prose — the narrator describes them as gone, taken, destroyed, or dead.
-CRITICAL: Do NOT mark an NPC as deceased if their death is only CLAIMED, REPORTED, or ALLEGED by another character in dialog (e.g. someone says "Leo ist tot"). Dialog claims about death are unreliable information — characters lie, bluff, or may be wrong. Only narrator-described, physically-witnessed deaths count. Never include NPCs already marked [DECEASED]."""
+CRITICAL: Do NOT mark an NPC as deceased if their death is only CLAIMED, REPORTED, or ALLEGED by another character in dialog (e.g. someone says "Leo ist tot"). Dialog claims about death are unreliable information — characters lie, bluff, or may be wrong. Only narrator-described, physically-witnessed deaths count. Never include NPCs already marked [DECEASED].
+lore_npcs: ONLY for named persons established in this scene as historically or narratively significant, but who have NEVER been and are NOT NOW physically present. Use this for dead mentors whose legacy drives the story, missing persons whose fate is central, historical figures whose past actions echo into the present. Rules: (1) They must be NAMED and clearly significant — not just mentioned in passing. (2) Do NOT use for corpses or physically present characters — use new_npcs for those, even if dead. (3) Do NOT include NPCs already marked [LORE] or any other marker in the known_npcs list — they are already tracked. (4) Only add when the narration establishes them as relevant to the ongoing story. NPCs marked [LORE] in known_npcs can receive memory_updates using their npc_id."""
 
     prompt = f"""<narration>{narration}</narration>
 <player_character>{game.player_name}</player_character>
@@ -4065,6 +4146,7 @@ Extract all metadata from the narration above. Remember: {game.player_name} is t
         metadata = json.loads(response.content[0].text)
         log(f"[Metadata] Extracted: {len(metadata.get('memory_updates', []))} memories, "
             f"{len(metadata.get('new_npcs', []))} new NPCs, "
+            f"{len(metadata.get('lore_npcs', []))} lore figures, "
             f"{len(metadata.get('deceased_npcs', []))} deceased, "
             f"loc={metadata.get('location_update')}, time={metadata.get('time_update')}")
         return metadata
@@ -4072,7 +4154,7 @@ Extract all metadata from the narration above. Remember: {game.player_name} is t
         log(f"[Metadata] Extraction failed: {e}", level="warning")
         return {"scene_context": "", "location_update": None, "time_update": None,
                 "memory_updates": [], "new_npcs": [], "npc_renames": [], "npc_details": [],
-                "deceased_npcs": []}
+                "deceased_npcs": [], "lore_npcs": []}
 
 
 def call_revelation_check(client: anthropic.Anthropic, narration: str,
@@ -4297,6 +4379,14 @@ def _apply_narrator_metadata(game: GameState, metadata: dict,
     pre_npc_ids = {n["id"] for n in game.npcs}
     if new_npcs:
         _process_new_npcs(game, json.dumps(new_npcs, ensure_ascii=False))
+    # Snapshot after new_npcs but before lore so slug resolution only matches
+    # freshly-created physical NPCs, not lore figures added afterward.
+    post_new_npc_ids = {n["id"] for n in game.npcs}
+
+    # Lore figures (historically significant, never physically present)
+    lore_npcs = metadata.get("lore_npcs", [])
+    if lore_npcs:
+        _process_lore_npcs(game, lore_npcs)
 
     # Resolve memory_update references that use invented snake_case slugs
     # for NPCs that were just created in this same metadata cycle.
@@ -4304,7 +4394,8 @@ def _apply_narrator_metadata(game: GameState, metadata: dict,
     # invents slugs like "frau_seidlitz" or "moderator_headset" instead.
     mem_updates = metadata.get("memory_updates", [])
     if mem_updates and new_npcs:
-        freshly_created = [n for n in game.npcs if n["id"] not in pre_npc_ids]
+        freshly_created = [n for n in game.npcs if n["id"] not in pre_npc_ids
+                           and n["id"] in post_new_npc_ids]
         if freshly_created:
             _resolve_slug_refs(game, mem_updates, freshly_created)
 
@@ -4540,7 +4631,7 @@ def build_director_prompt(game: GameState, latest_narration: str,
     npc_overview = "\n".join(
         _director_npc_line(n)
         for n in game.npcs
-        if n.get("status") in ("active", "background")
+        if n.get("status") in ("active", "background", "lore")
     ) or "(none)"
 
     # Clocks overview — active clocks with fill bar; fired clocks compact
@@ -4952,8 +5043,25 @@ def _known_npcs_string(mentioned: list[dict], game: GameState,
         if n.get("status") not in ("active", "background"):
             continue
         parts.append(_npc_entry(n))
-
     return ", ".join(parts) or "none"
+
+
+def _lore_figures_block(game: GameState) -> str:
+    """Build a slim context block for lore figures — named persons who are narratively
+    significant but never physically present. Gives the Narrator just enough context
+    to handle references without cluttering the scene NPC slots."""
+    lore = [n for n in game.npcs if n.get("status") == "lore"]
+    if not lore:
+        return ""
+    parts = []
+    for n in lore:
+        entry = n["name"]
+        if n.get("description"):
+            entry += f": {n['description'][:80]}"
+        if n.get("aliases"):
+            entry += f" (aka {', '.join(n['aliases'][:2])})"
+        parts.append(entry)
+    return f"\n<lore_figures>{'; '.join(parts)}</lore_figures>"
 
 
 def _pacing_block(game: GameState, chaos_interrupt: Optional[str] = None,
@@ -5036,10 +5144,12 @@ def build_dialog_prompt(game: GameState, brain: dict, player_words: str = "",
         if activated_block:
             npcs_section += f"\n{activated_block}"
         npcs_section += f"\n<known_npcs>{known_str}</known_npcs>"
+        npcs_section += _lore_figures_block(game)
     else:
         # Fallback: old behavior
         all_npcs = _npcs_present_string(game)
         npcs_section = f"\n<npcs_present>{all_npcs}</npcs_present>"
+        npcs_section += _lore_figures_block(game)
 
     wa = brain.get("world_addition", "")
     wl = f'\n<world_add>{wa}</world_add>' if wa else ""
@@ -5106,9 +5216,11 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
         if activated_block:
             npcs_section += f"\n{activated_block}"
         npcs_section += f"\n<known_npcs>{known_str}</known_npcs>"
+        npcs_section += _lore_figures_block(game)
     else:
         all_npcs = _npcs_present_string(game)
         npcs_section = f"\n<npcs_present>{all_npcs}</npcs_present>"
+        npcs_section += _lore_figures_block(game)
 
     wa = brain.get("world_addition", "")
     wl = f'\n<world_add>{wa}</world_add>' if wa else ""
@@ -5408,9 +5520,10 @@ def parse_narrator_response(game: GameState, raw: str) -> str:
     # Summary log
     active = [n for n in game.npcs if n.get("status") == "active"]
     background = [n for n in game.npcs if n.get("status") == "background"]
+    lore = [n for n in game.npcs if n.get("status") == "lore"]
     introduced = [n for n in active if n.get("introduced", False)]
     log(f"[Parser] Done. NPCs total={len(game.npcs)} active={len(active)} background={len(background)} "
-        f"introduced={len(introduced)}: {[n['name'] for n in introduced]}")
+        f"lore={len(lore)} introduced={len(introduced)}: {[n['name'] for n in introduced]}")
 
     # Safety: if parser stripped everything, return a minimal fallback
     if not narration.strip():
@@ -5483,6 +5596,8 @@ def _apply_memory_updates(game: GameState, json_text: str):
                 existing_by_name = _find_npc(game, npc_name)
                 if existing_by_name:
                     npc = existing_by_name
+                    # Reactivate background NPCs but NOT lore — lore accumulates memories
+                    # without becoming active (only new_npcs triggers lore → active)
                     if npc.get("status") == "background":
                         _reactivate_npc(npc, reason="memory_update matched by name/alias — reactivated instead of stub")
                     log(f"[NPC] Auto-stub suppressed: '{npc_name}' matched existing "
@@ -5515,7 +5630,9 @@ def _apply_memory_updates(game: GameState, json_text: str):
                 if npc.get("status") == "deceased":
                     _reactivate_npc(npc, reason="memory_update for deceased NPC — "
                                     "resurrection detected", force=True)
-                # Reactivate background NPCs that appear in current scene
+                # Reactivate background NPCs that appear in current scene.
+                # Lore NPCs are intentionally NOT reactivated here — they accumulate
+                # memories without becoming active (only new_npcs triggers lore → active).
                 elif npc.get("status") == "background":
                     _reactivate_npc(npc, reason="memory_update in current scene")
                 # Ensure memory system fields exist
@@ -6317,6 +6434,15 @@ def build_new_chapter_prompt(game: GameState) -> str:
             bg_parts.append(entry)
         bg_names = ", ".join(bg_parts)
         npc_block += f'\n<background_npcs>Known but not recently active: {bg_names}</background_npcs>'
+    lore_npcs_ch = [n for n in game.npcs if n.get("status") == "lore"]
+    if lore_npcs_ch:
+        lore_parts = []
+        for n in lore_npcs_ch:
+            entry = n["name"]
+            if n.get("description"):
+                entry += f': {n["description"][:60]}'
+            lore_parts.append(entry)
+        npc_block += f'\n<lore_figures>{"; ".join(lore_parts)}</lore_figures>'
 
     # NPC evolutions from the most recent chapter summary (time skip hints)
     evolutions_block = ""
@@ -6430,7 +6556,7 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
 
     # Save returning NPCs before extraction replaces them (active + background + deceased)
     returning_npcs = [dict(n) for n in game.npcs
-                      if n.get("status") in ("active", "background", "deceased")]
+                      if n.get("status") in ("active", "background", "deceased", "lore")]
 
     # Choose story structure for new chapter (needed before parallel calls)
     structure = choose_story_structure(game.setting_tone)
@@ -6972,7 +7098,7 @@ def _apply_correction_ops(game: GameState, ops: list) -> None:
                          if k in allowed and v is not None}
                 # Validate status values to prevent garbage
                 if "status" in edits:
-                    valid_statuses = {"active", "background", "inactive", "deceased"}
+                    valid_statuses = {"active", "background", "inactive", "deceased", "lore"}
                     if edits["status"] not in valid_statuses:
                         log(f"[Correction] npc_edit: ignoring invalid status "
                             f"'{edits['status']}' for {npc.get('name','?')}", level="warning")
