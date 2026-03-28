@@ -2240,6 +2240,7 @@ def _render_confirm():
                     client=anthropic.Anthropic(api_key=s["api_key"]);config=get_engine_config();username=s["current_user"]
                     game,narration=await asyncio.to_thread(start_new_game,client,creation,config,username)
                     s["game"]=game;s["creation"]=None;s["active_save"]="autosave"
+                    s["messages"]=[]
                     s["messages"].append({"scene_marker":t("game.scene_marker", lang, n=1, location=game.current_location)})
                     s["messages"].append({"role":"assistant","content":narration})
                     save_game(game,username,s["messages"],s["active_save"])
