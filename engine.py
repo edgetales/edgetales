@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.65"
+VERSION = "0.9.67"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -1029,9 +1029,19 @@ def _apply_name_sanitization(npc: dict) -> None:
     log(f"[NPC] Sanitized name: '{raw}' → '{clean}' (aliases: {npc['aliases']})")
 
 
+def _normalize_for_match(s: str) -> str:
+    """Normalize a name string for comparison only — stored names are never modified.
+    Collapses hyphens, underscores, and whitespace variants to a single space,
+    then lowercases and strips. This makes 'Wacholder-im-Schnee', 'Wacholder im Schnee',
+    and 'wacholder_im_schnee' all compare equal, catching common AI spelling drift."""
+    return re.sub(r'[\s\-_]+', ' ', s).lower().strip()
+
+
 def _find_npc(game, npc_ref: str) -> Optional[dict]:
     """Find an NPC by ID, name, alias, or substring match.
-    Search order: exact ID → exact name → exact alias → substring name → substring alias.
+    Search order: exact ID → normalized name → normalized alias → substring name → substring alias.
+    Normalization via _normalize_for_match() collapses hyphens/underscores/whitespace so
+    'Wacholder-im-Schnee', 'Wacholder im Schnee', and 'wacholder_im_schnee' all match.
     Brain sometimes returns a name string instead of an ID like 'npc_1'."""
     if not npc_ref:
         return None
@@ -1039,50 +1049,40 @@ def _find_npc(game, npc_ref: str) -> Optional[dict]:
     for n in game.npcs:
         if n.get("id") == npc_ref:
             return n
-    # 2. Try exact name match (case-insensitive)
-    ref_lower = npc_ref.lower().strip()
+    # 2. Normalized name match — collapses hyphens, underscores, whitespace variants
+    ref_norm = _normalize_for_match(npc_ref)
     for n in game.npcs:
-        if n.get("name", "").lower().strip() == ref_lower:
+        if _normalize_for_match(n.get("name", "")) == ref_norm:
             return n
-    # 2b. Underscore normalization: "frau_seidlitz" → "frau seidlitz" matches "Frau Seidlitz"
-    #     Catches AI-generated snake_case references to human-readable NPC names.
-    if "_" in ref_lower:
-        ref_normalized = ref_lower.replace("_", " ")
-        for n in game.npcs:
-            if n.get("name", "").lower().strip() == ref_normalized:
-                return n
-            for alias in n.get("aliases", []):
-                if alias.lower().strip() == ref_normalized:
-                    return n
-    # 3. Try exact alias match (case-insensitive)
+    # 3. Normalized alias match
     for n in game.npcs:
         for alias in n.get("aliases", []):
-            if alias.lower().strip() == ref_lower:
+            if _normalize_for_match(alias) == ref_norm:
                 return n
     # 4. Substring fallback — ref is part of name or name is part of ref
     #    (handles "Krahe" matching "Hauptmann Krahe" and vice versa)
     #    v0.9.29: raised from 4→5 chars, title-only references rejected
-    if len(ref_lower) >= 5:
+    if len(ref_norm) >= 5:
         # Reject if the ref is ONLY titles/honorifics (e.g. "Mrs." alone)
-        ref_words = set(ref_lower.split())
+        ref_words = set(ref_norm.split())
         if ref_words and ref_words <= _NAME_TITLES:
             return None
 
         best_match = None
         best_score = 0
         for n in game.npcs:
-            name_lower = n.get("name", "").lower().strip()
-            if ref_lower in name_lower or name_lower in ref_lower:
-                score = min(len(ref_lower), len(name_lower))
+            name_norm = _normalize_for_match(n.get("name", ""))
+            if ref_norm in name_norm or name_norm in ref_norm:
+                score = min(len(ref_norm), len(name_norm))
                 if score >= 5 and score > best_score:
                     best_score = score
                     best_match = n
                 continue
             # Also check aliases for substring
             for alias in n.get("aliases", []):
-                alias_lower = alias.lower().strip()
-                if ref_lower in alias_lower or alias_lower in ref_lower:
-                    score = min(len(ref_lower), len(alias_lower))
+                alias_norm = _normalize_for_match(alias)
+                if ref_norm in alias_norm or alias_norm in ref_norm:
+                    score = min(len(ref_norm), len(alias_norm))
                     if score >= 5 and score > best_score:
                         best_score = score
                         best_match = n
@@ -1158,9 +1158,9 @@ def _fuzzy_match_existing_npc(game, new_name: str) -> tuple:
     """
     if not new_name or len(new_name.strip()) < 3:
         return None, None
-    new_lower = new_name.lower().strip()
+    new_norm = _normalize_for_match(new_name)
     # Extract words, filtering out titles/honorifics
-    new_words_raw = set(new_lower.split())
+    new_words_raw = set(new_norm.split())
     new_words = {w for w in new_words_raw if w.rstrip(".") not in _NAME_TITLES}
 
     best_match = None
@@ -1168,15 +1168,15 @@ def _fuzzy_match_existing_npc(game, new_name: str) -> tuple:
     best_type = "identity"  # default match type
 
     for n in game.npcs:
-        name_lower = n.get("name", "").lower().strip()
+        name_norm = _normalize_for_match(n.get("name", ""))
         # Skip exact matches (handled elsewhere)
-        if name_lower == new_lower:
+        if name_norm == new_norm:
             continue
 
         # 1. Substring check: "Krahe" ⊂ "Hauptmann Krahe" or vice versa
         #    Require the SHORTER string to be ≥5 chars to avoid title-only matches
-        if new_lower in name_lower or name_lower in new_lower:
-            shorter_len = min(len(new_lower), len(name_lower))
+        if new_norm in name_norm or name_norm in new_norm:
+            shorter_len = min(len(new_norm), len(name_norm))
             if shorter_len >= 5 and shorter_len > best_score:
                 best_score = shorter_len
                 best_match = n
@@ -1185,11 +1185,11 @@ def _fuzzy_match_existing_npc(game, new_name: str) -> tuple:
 
         # 2. Check aliases for substring match (same ≥5 rule)
         for alias in n.get("aliases", []):
-            alias_lower = alias.lower().strip()
-            if alias_lower == new_lower:
+            alias_norm = _normalize_for_match(alias)
+            if alias_norm == new_norm:
                 return n, "identity"  # Exact alias match — always definite
-            if new_lower in alias_lower or alias_lower in new_lower:
-                shorter_len = min(len(new_lower), len(alias_lower))
+            if new_norm in alias_norm or alias_norm in new_norm:
+                shorter_len = min(len(new_norm), len(alias_norm))
                 if shorter_len >= 5 and shorter_len > best_score:
                     best_score = shorter_len
                     best_match = n
@@ -1197,11 +1197,11 @@ def _fuzzy_match_existing_npc(game, new_name: str) -> tuple:
 
         # 3. Significant word overlap (e.g. "Krahe" appears in "Hauptmann Krahe")
         #    Filter titles from BOTH sides before comparing
-        name_words = {w for w in name_lower.split() if w.rstrip(".") not in _NAME_TITLES}
+        name_words = {w for w in name_norm.split() if w.rstrip(".") not in _NAME_TITLES}
         alias_words = set()
         for alias in n.get("aliases", []):
             alias_words.update(
-                w for w in alias.lower().strip().split()
+                w for w in _normalize_for_match(alias).split()
                 if w.rstrip(".") not in _NAME_TITLES
             )
         all_words = name_words | alias_words
@@ -1214,8 +1214,8 @@ def _fuzzy_match_existing_npc(game, new_name: str) -> tuple:
             # If only 1 word overlaps, verify it's substantial relative to names
             if len(significant_overlap) == 1:
                 word = significant_overlap[0]
-                name_ratio = len(word) / max(len(name_lower), 1)
-                new_ratio = len(word) / max(len(new_lower), 1)
+                name_ratio = len(word) / max(len(name_norm), 1)
+                new_ratio = len(word) / max(len(new_norm), 1)
                 if max(name_ratio, new_ratio) < 0.4:
                     # Single short word in two long names — too risky
                     log(f"[NPC] Fuzzy match REJECTED: '{new_name}' ~ '{n['name']}' "
@@ -1234,10 +1234,10 @@ def _fuzzy_match_existing_npc(game, new_name: str) -> tuple:
         #    - Each name-part word must be ≥ 3 chars
         #    - Single untitled word requires ≥ 5 chars (avoids "Ross" ↔ "Moss")
         #    - Number of name words must match
-        ext_titles = {w.rstrip(".") for w in name_lower.split() if w.rstrip(".") in _NAME_TITLES}
-        ext_name_words = sorted(w for w in name_lower.split() if w.rstrip(".") not in _NAME_TITLES)
-        new_title_set = {w.rstrip(".") for w in new_lower.split() if w.rstrip(".") in _NAME_TITLES}
-        new_name_words = sorted(w for w in new_lower.split() if w.rstrip(".") not in _NAME_TITLES)
+        ext_titles = {w.rstrip(".") for w in name_norm.split() if w.rstrip(".") in _NAME_TITLES}
+        ext_name_words = sorted(w for w in name_norm.split() if w.rstrip(".") not in _NAME_TITLES)
+        new_title_set = {w.rstrip(".") for w in new_norm.split() if w.rstrip(".") in _NAME_TITLES}
+        new_name_words = sorted(w for w in new_norm.split() if w.rstrip(".") not in _NAME_TITLES)
 
         if ext_name_words and new_name_words and len(ext_name_words) == len(new_name_words):
             # Titles must be compatible: if both have titles, they must match
@@ -1278,9 +1278,9 @@ def _fuzzy_match_existing_npc(game, new_name: str) -> tuple:
 
         # Also check aliases for STT variants
         for alias in n.get("aliases", []):
-            alias_lower = alias.lower().strip()
-            a_titles = {w.rstrip(".") for w in alias_lower.split() if w.rstrip(".") in _NAME_TITLES}
-            a_name_words = sorted(w for w in alias_lower.split() if w.rstrip(".") not in _NAME_TITLES)
+            alias_norm = _normalize_for_match(alias)
+            a_titles = {w.rstrip(".") for w in alias_norm.split() if w.rstrip(".") in _NAME_TITLES}
+            a_name_words = sorted(w for w in alias_norm.split() if w.rstrip(".") not in _NAME_TITLES)
             if a_name_words and new_name_words and len(a_name_words) == len(new_name_words):
                 a_titles_ok = True
                 if new_title_set and a_titles and new_title_set != a_titles:
@@ -1321,19 +1321,22 @@ def _merge_npc_identity(existing: dict, new_name: str, new_desc: str = ""):
     # Strip parenthetical annotations from new name (e.g. "Cremin (auch bekannt als Cremon)")
     clean_name, extra_aliases = _sanitize_npc_name(new_name)
     new_name = clean_name
-    # Guard: don't merge if names are identical (case-insensitive)
-    if old_name.lower().strip() == new_name.lower():
+    # Guard: don't merge if names are identical after normalization
+    if _normalize_for_match(old_name) == _normalize_for_match(new_name):
         log(f"[NPC] Identity merge skipped: '{old_name}' → '{new_name}' (same name)")
         return
     existing.setdefault("aliases", [])
-    if old_name and old_name not in existing["aliases"]:
+    old_norm = _normalize_for_match(old_name)
+    if old_name and old_norm not in {_normalize_for_match(a) for a in existing["aliases"]}:
         existing["aliases"].append(old_name)
     existing["name"] = new_name
     # Clean up: remove current name from aliases if present (prevents self-alias)
-    existing["aliases"] = [a for a in existing["aliases"] if a.lower() != new_name.lower()]
+    new_norm = _normalize_for_match(new_name)
+    existing["aliases"] = [a for a in existing["aliases"] if _normalize_for_match(a) != new_norm]
     # Add any aliases extracted from parenthetical
     for alias in extra_aliases:
-        if alias.lower() not in {a.lower() for a in existing["aliases"]} and alias.lower() != new_name.lower():
+        if (_normalize_for_match(alias) not in {_normalize_for_match(a) for a in existing["aliases"]}
+                and _normalize_for_match(alias) != new_norm):
             existing["aliases"].append(alias)
     if new_desc and not existing.get("description"):
         existing["description"] = new_desc
@@ -1343,7 +1346,7 @@ def _merge_npc_identity(existing: dict, new_name: str, new_desc: str = ""):
     log(f"[NPC] Identity merged: '{old_name}' → '{new_name}' (aliases: {existing['aliases']})")
 
 
-def _description_match_existing_npc(game, new_desc: str, new_name_lower: str) -> Optional[dict]:
+def _description_match_existing_npc(game, new_desc: str, new_name_norm: str) -> Optional[dict]:
     """Check if a new NPC's description closely matches an existing NPC's description.
     This catches identity reveals where names share zero words but the character
     is clearly the same (e.g. "Sächsischer NVA-Kommandant" → "Hauptmann Rolf Ziegler"
@@ -1370,7 +1373,7 @@ def _description_match_existing_npc(game, new_desc: str, new_name_lower: str) ->
         if n.get("status") not in ("active", "background"):
             continue
         # Don't match against the NPC being created (same name)
-        if n.get("name", "").lower().strip() == new_name_lower:
+        if _normalize_for_match(n.get("name", "")) == new_name_norm:
             continue
         # Spatial guard: if existing NPC has a known location that differs from
         # the player's current location, they can't be the same person appearing here
@@ -1487,6 +1490,10 @@ def _process_npc_renames(game, json_text: str):
                 log(f"[NPC] Rename rejected: '{new_name}' matches player character")
                 continue
             _merge_npc_identity(npc, new_name, r.get("description", ""))
+            # Absorb any NPC whose name or alias matches the renamed-to name.
+            # Alias matching is intentional: if another NPC already carries this name
+            # as an alias, they are narratively the same person and should be merged.
+            _absorb_duplicate_npc(game, npc, new_name)
     except (json.JSONDecodeError, KeyError, TypeError) as e:
         log(f"[NPC] Failed to process NPC renames: {e}", level="warning")
 
@@ -1508,10 +1515,13 @@ def _absorb_duplicate_npc(game, original: dict, merged_name: str):
     npc_details=[{"npc_id":"npc_7","full_name":"Finn"}]. _process_new_npcs
     creates npc_8 "Finn", then _process_npc_details renames npc_7→"Finn".
     This function merges npc_8 back into npc_7 to prevent duplication."""
-    merged_lower = merged_name.lower().strip()
+    merged_norm = _normalize_for_match(merged_name)
     for dup in game.npcs:
+        dup_name_norm = _normalize_for_match(dup.get("name", ""))
+        dup_alias_norms = {_normalize_for_match(a) for a in dup.get("aliases", [])}
+        dup_matches = (dup_name_norm == merged_norm or merged_norm in dup_alias_norms)
         if (dup is original
-                or dup.get("name", "").lower().strip() != merged_lower
+                or not dup_matches
                 or dup.get("id") == original.get("id")):
             continue
         dup_id = dup.get("id", "?")
@@ -1533,10 +1543,10 @@ def _absorb_duplicate_npc(game, original: dict, merged_name: str):
             original["instinct"] = dup["instinct"]
         # Merge aliases (add dup's aliases, avoid self-aliases)
         original.setdefault("aliases", [])
-        existing_lower = {a.lower() for a in original["aliases"]}
+        existing_norms = {_normalize_for_match(a) for a in original["aliases"]}
         for alias in dup.get("aliases", []):
-            if (alias.lower() not in existing_lower
-                    and alias.lower() != merged_lower):
+            if (_normalize_for_match(alias) not in existing_norms
+                    and _normalize_for_match(alias) != merged_norm):
                 original["aliases"].append(alias)
         # Prefer most recent last_location
         if dup.get("last_location") and not original.get("last_location"):
@@ -1582,21 +1592,22 @@ def _process_npc_details(game, json_text: str):
                 new_name, paren_aliases = _sanitize_npc_name(new_name)
             else:
                 paren_aliases = []
-            if new_name and new_name != npc["name"]:
+            if new_name and _normalize_for_match(new_name) != _normalize_for_match(npc["name"]):
                 old_name = npc["name"]
                 # Only update if the new name is an EXTENSION of the old name
                 # (e.g. "Randy" → "Randy Cho"), not a completely different name
-                old_lower = old_name.lower().strip()
-                new_lower = new_name.lower().strip()
-                if old_lower in new_lower or new_lower in old_lower:
+                old_norm = _normalize_for_match(old_name)
+                new_norm = _normalize_for_match(new_name)
+                if old_norm in new_norm or new_norm in old_norm:
                     npc.setdefault("aliases", [])
-                    if old_name and old_name not in npc["aliases"]:
+                    if old_name and _normalize_for_match(old_name) not in {_normalize_for_match(a) for a in npc["aliases"]}:
                         npc["aliases"].append(old_name)
                     npc["name"] = new_name
                     # Add any aliases extracted from parenthetical
-                    existing_lower = {a.lower() for a in npc["aliases"]}
+                    existing_norms = {_normalize_for_match(a) for a in npc["aliases"]}
                     for alias in paren_aliases:
-                        if alias.lower() not in existing_lower and alias.lower() != new_name.lower():
+                        if (_normalize_for_match(alias) not in existing_norms
+                                and _normalize_for_match(alias) != new_norm):
                             npc["aliases"].append(alias)
                     log(f"[NPC] Details update: '{old_name}' → '{new_name}' "
                         f"(surname established)")
@@ -1644,26 +1655,27 @@ def _process_new_npcs(game, json_text: str):
         if not isinstance(new_npcs, list):
             return
 
-        player_lower = game.player_name.lower().strip()
-        player_parts = set(player_lower.split())
-        existing_names = {n["name"].lower().strip() for n in game.npcs}
+        existing_names = {_normalize_for_match(n["name"]) for n in game.npcs}
+
+        player_norm = _normalize_for_match(game.player_name)
+        player_parts = set(player_norm.split())
 
         for nd in new_npcs:
             if not isinstance(nd, dict) or not nd.get("name"):
                 continue
-            name_lower = nd["name"].lower().strip()
+            name_norm = _normalize_for_match(nd["name"])
 
             # Skip player character (exact match OR any name part overlap)
-            name_parts = set(name_lower.split())
-            if name_lower == player_lower or (name_parts & player_parts):
+            name_parts = set(name_norm.split())
+            if name_norm == player_norm or (name_parts & player_parts):
                 log(f"[NPC] Skipping player character from new_npcs: '{nd['name']}'")
                 continue
 
-            # Check if this NPC already exists (exact name match, possibly background)
-            if name_lower in existing_names:
+            # Check if this NPC already exists (normalized name match, possibly background)
+            if name_norm in existing_names:
                 # Reactivate background/deceased NPCs that reappear in narration
                 existing = next((n for n in game.npcs
-                                 if n["name"].lower().strip() == name_lower), None)
+                                 if _normalize_for_match(n["name"]) == name_norm), None)
                 if existing and existing.get("status") == "background":
                     _reactivate_npc(existing, reason="reappeared in new_npcs")
                 elif existing and existing.get("status") == "deceased":
@@ -1687,14 +1699,14 @@ def _process_new_npcs(game, json_text: str):
                         # Add the variant as alias so future exact-matches catch it.
                         fuzzy_hit.setdefault("aliases", [])
                         variant = nd["name"].strip()
-                        if variant.lower() not in {a.lower() for a in fuzzy_hit["aliases"]}:
+                        if _normalize_for_match(variant) not in {_normalize_for_match(a) for a in fuzzy_hit["aliases"]}:
                             fuzzy_hit["aliases"].append(variant)
                             log(f"[NPC] Added STT variant as alias: '{variant}' → '{fuzzy_hit['name']}'")
                         if fuzzy_hit.get("status") == "background":
                             _reactivate_npc(fuzzy_hit, reason="STT variant reappeared")
                     else:
                         _merge_npc_identity(fuzzy_hit, nd["name"], nd.get("description", ""))
-                    existing_names.add(name_lower)
+                    existing_names.add(name_norm)
                     continue
 
             # Description-based dedup: if fuzzy name match failed, check if the
@@ -1703,7 +1715,7 @@ def _process_new_npcs(game, json_text: str):
             # where names share zero words but descriptions overlap heavily.
             new_desc = nd.get("description", "")
             if new_desc and len(new_desc) >= 10:
-                desc_hit = _description_match_existing_npc(game, new_desc, name_lower)
+                desc_hit = _description_match_existing_npc(game, new_desc, name_norm)
                 if desc_hit:
                     # Never merge into deceased NPCs
                     if desc_hit.get("status") == "deceased":
@@ -1713,7 +1725,7 @@ def _process_new_npcs(game, json_text: str):
                         log(f"[NPC] Description-based dedup: '{nd['name']}' matches "
                             f"'{desc_hit['name']}' — treating as identity reveal")
                         _merge_npc_identity(desc_hit, nd["name"], new_desc)
-                        existing_names.add(name_lower)
+                        existing_names.add(name_norm)
                         continue
 
             # Assign ID
@@ -1744,7 +1756,7 @@ def _process_new_npcs(game, json_text: str):
             }
 
             game.npcs.append(npc)
-            existing_names.add(name_lower)
+            existing_names.add(name_norm)
             log(f"[NPC] New mid-game NPC: {npc['name']} ({npc_id}, {npc['disposition']})")
 
             # Safety net: create seed memory so NPC is never hollow
@@ -3790,7 +3802,7 @@ def _status_context_block(game: Optional[GameState] = None) -> str:
         "injured — clearly hurting, moving with effort" if h == 3 else
         "seriously wounded — every motion costs something" if h == 2 else
         "critically injured — barely holding together, on the edge of collapse" if h == 1 else
-        "at the physical limit — collapse is imminent (see <flags>)"
+        "WOUNDED — at the limit, physical collapse imminent (flag already set)"
     )
     spirit_desc = (
         "steady and composed" if sp >= 5 else
@@ -3798,7 +3810,7 @@ def _status_context_block(game: Optional[GameState] = None) -> str:
         "shaken — stress is showing, focus is harder to maintain" if sp == 3 else
         "deeply troubled — holding on by a thread, doubt and fear are present" if sp == 2 else
         "near breaking — barely functioning, the weight is crushing" if sp == 1 else
-        "at the mental limit — breakdown is imminent (see <flags>)"
+        "BROKEN — at the limit, mental collapse imminent (flag already set)"
     )
     supply_desc = (
         "well-equipped" if su >= 5 else
@@ -3806,7 +3818,7 @@ def _status_context_block(game: Optional[GameState] = None) -> str:
         "running low — rationing has begun, choices are being made" if su == 3 else
         "critically short — scarcity is a real pressure" if su == 2 else
         "nearly nothing — desperation is setting in" if su == 1 else
-        "out of resources entirely (see <flags>)"
+        "DEPLETED — out of resources (flag already set)"
     )
 
     return (
@@ -3842,9 +3854,9 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
 <rules>
 - NEVER mention dice, stats, numbers, or game mechanics
 {_quote_rule}
-- When <result type="MISS">: concrete failure, situation worsens, NO silver linings
-- When <result type="WEAK_HIT">: success at tangible cost
-- When <result type="STRONG_HIT">: clean success
+- MISS: concrete failure, situation worsens, NO silver linings
+- WEAK_HIT: success at tangible cost
+- STRONG_HIT: clean success
 - NPCs act per their disposition and memories
 - Introduce new NAMED characters through action and dialog {E['dash']} give them distinct voices and traits
 - BACKSTORY CANON: If <backstory> is present, treat it as ESTABLISHED HISTORY. People mentioned there (family, friends, rivals) are ALREADY KNOWN to the player character {E['dash']} if they appear, they recognize the player and vice versa. NEVER introduce a backstory character as a stranger or reinterpret established relationships. Backstory events ALREADY HAPPENED {E['dash']} reference them as shared memory, not new plot.
@@ -3854,7 +3866,7 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
 - TEMPORAL CONSISTENCY: If <time> is provided, maintain that time period. Time only moves FORWARD (never backward). If you mention specific times, they must be later than any previously mentioned time. Do NOT invent specific clock times unless narratively important {E['dash']} prefer atmospheric time cues (moonlight, sunset glow, morning mist). CRITICAL: Each scene transition represents minutes to hours of in-world time, NOT days or years. Events from recent scenes just happened {E['dash']} signs don't weather, wounds are fresh, sent NPCs are still en route or just arrived. Never describe recent events or objects as aged, decayed, or long-past unless the player explicitly time-skips.
 - SPATIAL CONSISTENCY: The <location> tag shows where the player currently IS. If <prev_locations> is provided, the player has LEFT those places. NEVER place the player back at a previous location unless they explicitly travel there. If an NPC has a last_seen attribute showing a DIFFERENT location than the player's current <location>, that NPC is NOT physically present {E['dash']} they cannot be heard through walls, seen, or interact directly. They can only appear if they plausibly traveled to the player's location (and the narration should describe their arrival). NPCs without last_seen or with last_seen matching <location> ARE present and can interact normally.
 - If <story_arc> is present, steer scenes toward the act goal and mood
-- If <revelation_ready> is present, weave its content into the scene naturally (through NPC dialog, discovered evidence, or environmental storytelling) {E['dash']} NEVER dump exposition
+- If revelation_ready is set, weave it into the scene naturally (through NPC dialog, discovered evidence, or environmental storytelling) {E['dash']} NEVER dump exposition
 - If <story_ending> is present, build toward a satisfying conclusion
 - If <director_guidance> is present, follow its narrative direction. It provides strategic story guidance — use it to inform the scene's direction, NPC behavior, and pacing, while maintaining your creative voice and atmospheric style.
 - If <npc_note> is present for an NPC, use it to guide that NPC's behavior and emotional state in this scene.
@@ -4567,6 +4579,7 @@ def build_director_prompt(game: GameState, latest_narration: str,
 
 <task>
 Analyze the latest scene and provide strategic guidance in {lang}.
+LANGUAGE RULE: Every text field you write MUST be in {lang}. This is an absolute requirement — do not use English for any field value, not even partially or for a single sentence. If the narration language is German, write all guidance, reflections, descriptions, and summaries in German.
 Reflections and narrator_guidance MUST be in {lang}.
 
 Field instructions:
@@ -5125,9 +5138,9 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
     if game.spirit <= 0: status_flags.append("BROKEN")
     if game.supply <= 0: status_flags.append("DEPLETED")
     if game.game_over:
-        status_flags.append("final_scene:dramatic ending, character falls, make it meaningful")
+        status_flags.append("FINAL_SCENE:dramatic ending,character falls,make it meaningful")
     elif game.crisis_mode:
-        status_flags.append("crisis:desperate, world closing in")
+        status_flags.append("CRISIS:desperate,world closing in")
 
     flags = f'\n<flags>{",".join(status_flags)}</flags>' if status_flags else ""
     agency = f'\n<npc_agency>{"| ".join(npc_agency)}</npc_agency>' if npc_agency else ""
@@ -5463,7 +5476,18 @@ def _apply_memory_updates(game: GameState, json_text: str):
                 # at least the stub gets a readable display name.
                 if "_" in npc_name and " " not in npc_name:
                     npc_name = npc_name.replace("_", " ").title()
-                if npc_name.lower().strip() != game.player_name.lower().strip() \
+                # Guard: if an NPC with this name or alias already exists, route
+                # the memory update to them instead of creating a duplicate stub.
+                # _find_npc covers exact name, aliases, and substring — so this
+                # also handles cases where the name is only an alias of an NPC.
+                existing_by_name = _find_npc(game, npc_name)
+                if existing_by_name:
+                    npc = existing_by_name
+                    if npc.get("status") == "background":
+                        _reactivate_npc(npc, reason="memory_update matched by name/alias — reactivated instead of stub")
+                    log(f"[NPC] Auto-stub suppressed: '{npc_name}' matched existing "
+                        f"'{npc['name']}' ({npc.get('id', '?')}) by name/alias")
+                elif npc_name.lower().strip() != game.player_name.lower().strip() \
                         and not (set(npc_name.lower().split()) & set(game.player_name.lower().split())):
                     npc_id, _ = _next_npc_id(game)
                     npc = {
@@ -5564,9 +5588,14 @@ def save_game(game: GameState, username: str, chat_messages: list = None,
     save_dir = _get_save_dir(username)
     save_dir.mkdir(parents=True, exist_ok=True)
     # --- Version history: read existing save to carry forward ---
+    # New games (scene_count ≤ 1 AND chapter 1) always start a fresh version history —
+    # they must not inherit the history of a previous game stored in the same slot.
+    # Chapter transitions also reset scene_count to 1 but chapter_number > 1 — excluded.
     version_history = []
     path = save_dir / f"{name}.json"
-    if path.exists():
+    is_new_game = (getattr(game, "scene_count", 0) <= 1
+                   and getattr(game, "chapter_number", 1) <= 1)
+    if path.exists() and not is_new_game:
         try:
             existing = json.loads(path.read_text(encoding="utf-8"))
             version_history = existing.get("version_history", [])
@@ -5626,8 +5655,8 @@ def load_game(username: str, name: str = "autosave") -> tuple[Optional[GameState
         npc.setdefault("aliases", [])
     # Clean up self-aliases (bug in older versions: current name ended up in aliases list)
     for npc in game.npcs:
-        name_lower = npc.get("name", "").lower()
-        npc["aliases"] = [a for a in npc.get("aliases", []) if a.lower() != name_lower]
+        name_norm = _normalize_for_match(npc.get("name", ""))
+        npc["aliases"] = [a for a in npc.get("aliases", []) if _normalize_for_match(a) != name_norm]
     # Backward compatibility: migrate old "inactive" status to "background" (three-tier NPC system v0.9.14)
     for npc in game.npcs:
         if npc.get("status") == "inactive":
@@ -6451,11 +6480,11 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
     # starting from npc_1 into the now-empty game.npcs, so old IDs from previous
     # chapter will collide with freshly assigned ones (e.g. old Birte = npc_1 vs
     # new "stranger" = npc_1). Name-based dedup is the only correct check.
-    new_npc_names = {n["name"].lower().strip() for n in game.npcs}
+    new_npc_names = {_normalize_for_match(n["name"]) for n in game.npcs}
     id_remap = {}  # old_id → new_id; needed to fix about_npc references below
     for old_npc in returning_npcs:
         # Skip if extractor already created an NPC with this name
-        if old_npc["name"].lower().strip() in new_npc_names:
+        if _normalize_for_match(old_npc["name"]) in new_npc_names:
             continue
         # Assign a fresh ID to avoid collisions with extractor-assigned IDs
         old_id = old_npc["id"]
@@ -6464,7 +6493,7 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
         old_npc["id"] = fresh_id
         old_npc["introduced"] = True  # Player knows them from previous chapter
         game.npcs.append(old_npc)
-        new_npc_names.add(old_npc["name"].lower().strip())
+        new_npc_names.add(_normalize_for_match(old_npc["name"]))
 
     # Fix stale about_npc references across all NPC memories.
     # Returning NPCs carry memories from the previous chapter whose about_npc values
@@ -7004,10 +7033,12 @@ def _apply_correction_ops(game: GameState, ops: list) -> None:
                     target, source = source, target
                 # Absorb memories and aliases, then remove source
                 target["memory"].extend(source.get("memory", []))
+                target_alias_norms = {_normalize_for_match(a) for a in target.get("aliases", [])}
                 for alias in source.get("aliases", []):
-                    if alias not in target.get("aliases", []):
+                    if _normalize_for_match(alias) not in target_alias_norms:
                         target.setdefault("aliases", []).append(alias)
-                if source["name"] not in target.get("aliases", []):
+                        target_alias_norms.add(_normalize_for_match(alias))
+                if _normalize_for_match(source["name"]) not in target_alias_norms:
                     target.setdefault("aliases", []).append(source["name"])
                 # Inherit description/agenda/instinct if target lacks them
                 if not target.get("description") and source.get("description"):
