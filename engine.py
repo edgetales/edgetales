@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.67"
+VERSION = "0.9.68"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -355,9 +355,10 @@ CHAPTER_SUMMARY_OUTPUT_SCHEMA = {
             },
         },
         "thematic_question":  {"type": "string"},
+        "post_story_location": {"type": "string"},
     },
     "required": ["title", "summary", "unresolved_threads", "character_growth",
-                  "npc_evolutions", "thematic_question"],
+                  "npc_evolutions", "thematic_question", "post_story_location"],
     "additionalProperties": False,
 }
 
@@ -2607,6 +2608,7 @@ class GameState:
     # v5.9: Epilogue system
     epilogue_shown: bool = False      # True after epilogue has been generated
     epilogue_dismissed: bool = False   # True if player chose "continue playing" instead of epilogue
+    epilogue_text: str = ""           # Persisted: epilogue prose kept on disk so it survives ui.navigate.reload() between epilogue generation and new-chapter start; cleared by start_new_chapter() after use
     # v5.10: Backstory (canon past, preserved raw player input)
     backstory: str = ""        # Raw player-authored backstory — canon facts, NOT plot seeds
     # v5.11: Director guidance (stored between turns)
@@ -2823,9 +2825,9 @@ def _build_turn_snapshot(game: GameState) -> dict:
         "director_guidance": copy.deepcopy(game.director_guidance),
         "scene_intensity_history": list(game.scene_intensity_history),
         # Blueprint sub-fields that mutate during a turn
-        "bp_revealed": list(bp.get("revealed", [])),
-        "bp_triggered_transitions": list(bp.get("triggered_transitions", [])),
-        "bp_story_complete": bp.get("story_complete", False),
+        "bp_revealed": list(bp.get("revealed") or []),
+        "bp_triggered_transitions": list(bp.get("triggered_transitions") or []),
+        "bp_story_complete": bp.get("story_complete") or False,
         # Log tails — only last entry needed for restore/replace
         "session_log_tail": copy.deepcopy(game.session_log[-1]) if game.session_log else None,
         "narration_history_tail": copy.deepcopy(game.narration_history[-1]) if game.narration_history else None,
@@ -3707,7 +3709,7 @@ def get_current_act(game: GameState) -> dict:
 
     acts = bp["acts"]
     scene = game.scene_count
-    triggered = set(bp.get("triggered_transitions", []))
+    triggered = set(bp.get("triggered_transitions") or [])
 
     # Determine current act: walk through acts, advancing past those whose
     # transition_trigger has been fulfilled OR whose scene_range has been exceeded
@@ -3759,7 +3761,7 @@ def get_pending_revelations(game: GameState) -> list:
     bp = game.story_blueprint
     if not bp or not bp.get("revelations"):
         return []
-    revealed = set(bp.get("revealed", []))
+    revealed = set(bp.get("revealed") or [])
     pending = []
     for rev in bp["revelations"]:
         if rev["id"] not in revealed and game.scene_count >= rev.get("earliest_scene", 999):
@@ -4756,6 +4758,10 @@ def _apply_director_guidance(game: GameState, guidance: dict):
     # transition_trigger has been fulfilled → mark in blueprint
     if guidance.get("act_transition") and game.story_blueprint:
         bp = game.story_blueprint
+        # Normalize None → [] before setdefault, since setdefault only fires when
+        # the key is absent — a null value from the Architect would slip through.
+        if bp.get("triggered_transitions") is None:
+            bp["triggered_transitions"] = []
         bp.setdefault("triggered_transitions", [])
         acts = bp.get("acts", [])
         act = get_current_act(game)
@@ -5692,6 +5698,7 @@ SAVE_FIELDS = [
     # v5.9: Epilogue system
     "epilogue_shown",
     "epilogue_dismissed",
+    "epilogue_text",           # Persisted to survive reload between epilogue generation and new-chapter start; cleared by start_new_chapter() after use
     # v5.10: Backstory
     "backstory",
     # v5.11: Director guidance
@@ -5833,6 +5840,17 @@ def load_game(username: str, name: str = "autosave") -> tuple[Optional[GameState
         # will remove it on the next turn (0 is always > keep_scenes scenes ago)
         if clock.get("fired") and "fired_at_scene" not in clock:
             clock["fired_at_scene"] = 0
+    # Normalize story_blueprint null fields: Story Architect occasionally returns
+    # triggered_transitions/story_complete/revealed as JSON null instead of omitting them,
+    # causing set(None) → TypeError in get_current_act, _check_story_completion,
+    # get_pending_revelations, and _build_turn_snapshot.
+    if game.story_blueprint:
+        if game.story_blueprint.get("triggered_transitions") is None:
+            game.story_blueprint.pop("triggered_transitions", None)
+        if game.story_blueprint.get("story_complete") is None:
+            game.story_blueprint.pop("story_complete", None)
+        if game.story_blueprint.get("revealed") is None:
+            game.story_blueprint.pop("revealed", None)
     chat_messages = data.get("chat_messages", [])
     log(f"[Load] Game loaded: {username}/{name} ({game.player_name}, Scene {game.scene_count}, {len(chat_messages)} chat msgs)")
     return game, chat_messages
@@ -6261,6 +6279,7 @@ def start_new_game(client: anthropic.Anthropic, creation_data: dict,
 
     # Store in narration history for context continuity
     game.narration_history.append({
+        "scene": game.scene_count,
         "prompt_summary": f"Opening scene: {game.player_name} in {game.current_location}",
         "narration": narration,
     })
@@ -6284,7 +6303,8 @@ def _campaign_history_block(game: GameState) -> str:
 
 
 def call_chapter_summary(client: anthropic.Anthropic, game: GameState,
-                          config: Optional[EngineConfig] = None) -> dict:
+                          config: Optional[EngineConfig] = None,
+                          epilogue_text: str = "") -> dict:
     """Generate a summary of the completed chapter for campaign history."""
     _cfg = config or EngineConfig()
     lang = get_narration_lang(_cfg)
@@ -6300,6 +6320,22 @@ def call_chapter_summary(client: anthropic.Anthropic, game: GameState,
     bp = game.story_blueprint or {}
     conflict = bp.get("central_conflict", "")
 
+    # If an epilogue was generated, include it as the definitive story ending.
+    # This ensures the chapter summary reflects what actually happened (post-mission,
+    # post-resolution) rather than the mid-action state captured in session_log/context.
+    epilogue_block = (f"\n<epilogue>This is how the story ended — treat it as the "
+                      f"authoritative final state when summarizing:\n{epilogue_text}\n</epilogue>"
+                      if epilogue_text.strip() else "")
+
+    epilogue_location_hint = (
+        "- \"post_story_location\": Where the protagonist physically is at the END of the epilogue "
+        "(e.g. their home city in 2026, a tavern, a ship at sea). Extract this from the epilogue text. "
+        "If no epilogue is provided, infer the most plausible location after the story's conclusion."
+        if epilogue_text.strip() else
+        "- \"post_story_location\": Where the protagonist most plausibly ends up after the story's conclusion. "
+        "Infer from the session log and situation."
+    )
+
     try:
         response = _api_create_with_retry(
             client, max_retries=1,
@@ -6307,11 +6343,12 @@ def call_chapter_summary(client: anthropic.Anthropic, game: GameState,
             system=f"""Summarize an RPG chapter for campaign continuity.
 - Write in {lang}
 - "title": A short evocative title for this chapter (3-6 words)
-- "summary": 3-4 sentences capturing key events, character growth, and how the chapter ended
-- "unresolved_threads": List of 1-3 open plot threads or tensions that could carry into the next chapter
+- "summary": 3-4 sentences capturing key events, character growth, and how the chapter ended. If an <epilogue> is provided, make sure the summary reflects the story's actual conclusion, not the mid-action state.
+- "unresolved_threads": List of 1-3 open plot threads or tensions that could carry into the next chapter. If an <epilogue> is provided, base these on what was left unresolved AFTER the epilogue — not on in-progress mission steps.
 - "character_growth": 1 sentence on how the protagonist changed
 - "npc_evolutions": For each important NPC, project how they might have changed after the chapter's events. This is a PROJECTION for the time skip between chapters — not what happened, but what COULD plausibly have happened in the weeks/months after. Focus on relationship shifts, attitude changes, new circumstances. Only include NPCs who were meaningfully involved in the chapter.
 - "thematic_question": The core emotional/philosophical question this chapter raised but did not fully answer. This carries the vertical (emotional) narrative across chapters. Example: "Can you fix the damage caused by good intentions?" or "Is loyalty earned through competence or compassion?"
+{epilogue_location_hint}
 """ + _kid_friendly_block(_cfg) + _content_boundaries_block(game),
             messages=[{"role": "user", "content":
                        f"character:{game.player_name} {E['dash']} {game.character_concept}\n"
@@ -6320,7 +6357,8 @@ def call_chapter_summary(client: anthropic.Anthropic, game: GameState,
                        f"conflict:{conflict}\n"
                        f"log:{log_text}\nnpcs:{npc_text}\n"
                        f"location:{game.current_location}\n"
-                       f"situation:{game.current_scene_context}"}],
+                       f"situation:{game.current_scene_context}"
+                       f"{epilogue_block}"}],
             output_config={"format": {"type": "json_schema", "schema": CHAPTER_SUMMARY_OUTPUT_SCHEMA}},
         )
         data = json.loads(response.content[0].text)
@@ -6338,6 +6376,7 @@ def call_chapter_summary(client: anthropic.Anthropic, game: GameState,
             "character_growth": "",
             "npc_evolutions": [],
             "thematic_question": "",
+            "post_story_location": game.current_location,
             "scenes": game.scene_count,
         }
 
@@ -6377,6 +6416,7 @@ def build_epilogue_prompt(game: GameState) -> str:
 </scene>
 <task>
 Write a beautiful EPILOGUE for this story (4-6 paragraphs). This is NOT a new scene — no dice, no mechanics.
+- PERSPECTIVE: Second person singular ("you") throughout — the player remains the protagonist. Do NOT shift to third person.
 - Reflect on the character's journey and growth
 - Give closure to the most important NPC relationships (reference them by name)
 - Resolve or acknowledge the central conflict based on what actually happened
@@ -6418,6 +6458,7 @@ def generate_epilogue(client: anthropic.Anthropic, game: GameState,
         narration = "(The narrator pauses, then offers a quiet reflection on the journey...)"
 
     game.epilogue_shown = True
+    game.epilogue_text = narration  # Persisted in SAVE_FIELDS — consumed and cleared by start_new_chapter()
     log(f"[Epilogue] Generated ({len(narration)} chars)")
     return game, narration
 
@@ -6498,9 +6539,15 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
     """Start a new chapter: keep character/world/NPCs, reset mechanics, new story arc."""
     log(f"[Campaign] Starting chapter {game.chapter_number + 1} for {game.player_name}")
 
-    # Generate chapter summary before resetting
-    chapter_summary = call_chapter_summary(client, game, config)
+    # Generate chapter summary before resetting.
+    # Pass the epilogue text (if generated) so the summary reflects the story's
+    # actual conclusion — not the mid-action state in session_log/current_scene_context.
+    epilogue_text = getattr(game, "epilogue_text", "")
+    chapter_summary = call_chapter_summary(client, game, config, epilogue_text=epilogue_text)
     game.campaign_history.append(chapter_summary)
+    # Clear epilogue_text now that it has been consumed — prevents it from
+    # bleeding into the chapter-3 summary if the player starts yet another chapter.
+    game.epilogue_text = ""
 
     # Advance chapter
     game.chapter_number += 1
@@ -6561,6 +6608,13 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
         game.current_scene_context = f"New chapter. Open threads: {'; '.join(threads[:3])}"
     else:
         game.current_scene_context = "A new chapter begins."
+
+    # Update location to where the protagonist actually ended up (from epilogue or inference).
+    # This prevents the new chapter opening from anchoring to a mid-action location.
+    post_location = chapter_summary.get("post_story_location", "").strip()
+    if post_location:
+        log(f"[Campaign] Location updated to post-story position: {post_location!r}")
+        game.current_location = post_location
 
     # Save returning NPCs before extraction replaces them (active + background + deceased)
     returning_npcs = [dict(n) for n in game.npcs
@@ -6652,6 +6706,7 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
     # Record opening
     record_scene_intensity(game, "action")
     game.narration_history.append({
+        "scene": game.scene_count,
         "prompt_summary": f"Chapter {game.chapter_number} opening: {game.player_name} in {game.current_location}",
         "narration": narration,
     })
@@ -6734,6 +6789,7 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
         scene_type = "interrupt" if chaos_interrupt else "breather"
         record_scene_intensity(game, scene_type)
         game.narration_history.append({
+            "scene": game.scene_count,
             "prompt_summary": f"Dialog: {brain.get('player_intent', player_message)[:80]}",
             "narration": narration,
         })
@@ -6826,6 +6882,7 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
         if revelation_confirmed:
             mark_revelation_used(game, pending_revs[0]["id"])
     game.narration_history.append({
+        "scene": game.scene_count,
         "prompt_summary": f"Action ({roll.result}): {brain.get('player_intent', player_message)[:80]}",
         "narration": narration,
     })
@@ -6907,15 +6964,54 @@ def _try_call_director(client: anthropic.Anthropic, game: GameState,
 
 
 def _check_story_completion(game: GameState):
-    """Check if the story has reached its natural end point."""
+    """Check if the story has reached its natural end point.
+
+    Two-stage trigger to avoid premature epilogue offers mid-mission:
+
+    PRIMARY: The penultimate act must have a recorded transition in
+    triggered_transitions — meaning the Director confirmed the final act was
+    narratively entered — AND scene_count has reached the final act's
+    scene_range end. Final acts have no transition_trigger by design, so
+    the penultimate act's transition is the only reliable signal that the
+    resolution phase is genuinely underway.
+
+    FALLBACK: If no Director-confirmed transition exists (e.g. the game ran
+    very long without a clean phase trigger), story_complete fires at
+    final_end + 5 as a safety net. The +5 buffer is intentionally generous
+    because Kishōtenketsu structures naturally run longer than 3-act ones.
+
+    Once set, story_complete is never unset here (Director or ## correction
+    may still clear it via snapshot restore).
+    """
     if not game.story_blueprint or not game.story_blueprint.get("acts"):
         return
+    # Already set — nothing to do
+    if game.story_blueprint.get("story_complete"):
+        return
     acts = game.story_blueprint["acts"]
+    if not acts:
+        return
     final_act = acts[-1]
     final_end = final_act.get("scene_range", [14, 20])[1]
-    # If past the final scene range, signal story complete
-    if game.scene_count >= final_end:
+
+    # Primary: penultimate act was Director-confirmed → final act narratively entered
+    # Use `or []` to guard against triggered_transitions=None (can occur when the
+    # Story Architect returns the field as null instead of omitting it entirely)
+    triggered = set(game.story_blueprint.get("triggered_transitions") or [])
+    penultimate_id = f"act_{len(acts) - 2}"
+    final_act_entered = len(acts) >= 2 and penultimate_id in triggered
+
+    if final_act_entered and game.scene_count >= final_end:
         game.story_blueprint["story_complete"] = True
+        log(f"[Story] Complete: final act entered ('{penultimate_id}' triggered) "
+            f"+ scene {game.scene_count} >= range end {final_end}")
+        return
+
+    # Fallback: significantly past the final range with no Director confirmation
+    if game.scene_count >= final_end + 5:
+        game.story_blueprint["story_complete"] = True
+        log(f"[Story] Complete (fallback): scene {game.scene_count} >= "
+            f"final_end+5 ({final_end + 5}), no Director confirmation")
 
 
 
@@ -7362,6 +7458,7 @@ def process_correction(client: anthropic.Anthropic, game: GameState,
     # Step 5: Update session_log / narration_history
     intent = brain.get("player_intent", snap.get("player_input", ""))[:80]
     narration_entry = {
+        "scene": game.scene_count,
         "prompt_summary": f"[corrected] {intent}",
         "narration": narration,
     }
