@@ -1922,7 +1922,6 @@ def score_importance(emotional_weight: str, event_text: str = "",
         debug_info = f"direct:{raw}={base}"
     else:
         # Split compound phrases into individual tokens
-        import re
         tokens = re.split(r'[_/,;:\s]+|(?:\s+und\s+)|(?:\s+and\s+)|'
                           r'(?:\s+gemischt\s+mit\s+)|(?:\s+vermischt\s+mit\s+)|'
                           r'(?:\s+mixed\s+with\s+)', raw)
@@ -4411,13 +4410,15 @@ def _apply_narrator_metadata(game: GameState, metadata: dict,
                 d["description"] = ""
         _process_npc_details(game, json.dumps(details, ensure_ascii=False))
 
-    # Deceased NPCs (process BEFORE memory updates so dead NPCs are skipped)
+    # Deceased NPCs — processed before memory updates so status is set first.
+    # Note: _apply_memory_updates() intentionally resurrects deceased NPCs when
+    # the extractor reports memories for them (= narrator depicted them alive).
     deceased = metadata.get("deceased_npcs", [])
     if deceased:
         _process_deceased_npcs(game, deceased, scene_present_ids=scene_present_ids)
 
-    # Memory updates
-    mem_updates = metadata.get("memory_updates", [])
+    # Memory updates (mem_updates was already read above for slug resolution;
+    # same list reference — _resolve_slug_refs may have patched npc_ids in-place)
     if mem_updates:
         _apply_memory_updates(game, json.dumps(mem_updates, ensure_ascii=False))
 
@@ -6939,29 +6940,6 @@ def run_deferred_director(client: anthropic.Anthropic, game: GameState,
         log(f"[Director] Deferred call failed gracefully: {e}", level="warning")
 
 
-def _try_call_director(client: anthropic.Anthropic, game: GameState,
-                       narration: str, config: Optional[EngineConfig],
-                       roll_result: str = "", chaos_used: bool = False,
-                       new_npcs_found: bool = False,
-                       revelation_used: bool = False):
-    """Attempt to call Director agent if conditions are met.
-    Runs synchronously for now, but designed for future async execution.
-    Fails gracefully — game works fine without Director."""
-    try:
-        director_reason = _should_call_director(game, roll_result=roll_result,
-                                 chaos_used=chaos_used,
-                                 new_npcs_found=new_npcs_found,
-                                 revelation_used=revelation_used)
-        if director_reason:
-            if game.session_log:
-                game.session_log[-1]["director_trigger"] = director_reason
-            guidance = call_director(client, game, narration, config)
-            _apply_director_guidance(game, guidance)
-        else:
-            log(f"[Director] Skipped (no trigger at scene {game.scene_count})")
-    except Exception as e:
-        log(f"[Director] Failed gracefully: {e}", level="warning")
-
 
 def _check_story_completion(game: GameState):
     """Check if the story has reached its natural end point.
@@ -7534,11 +7512,7 @@ def process_momentum_burn(client: anthropic.Anthropic, game: GameState,
                           pre_snapshot: Optional[dict] = None,
                           chaos_interrupt: Optional[str] = None) -> tuple[GameState, str]:
     """Re-narrate a scene after momentum burn upgrades the result.
-    If pre_snapshot is provided (v0.9.11+), fully restores game state before
-    applying new consequences. Otherwise falls back to partial restoration."""
-    # Reset momentum (burn always costs all momentum)
-    game.momentum = 0
-
+    Fully restores game state from pre_snapshot before applying new consequences."""
     # Remove NPC memories from THIS scene (they came from the pre-burn narration
     # and will be replaced by the new narration's memory updates)
     current_scene = game.scene_count
@@ -7550,84 +7524,36 @@ def process_momentum_burn(client: anthropic.Anthropic, game: GameState,
             ]
 
     # --- Restore state from pre-consequence snapshot ---
-    if pre_snapshot:
-        # Full restoration using last_turn_snapshot (authoritative, taken before any mutations)
-        game.health = pre_snapshot["health"]
-        game.spirit = pre_snapshot["spirit"]
-        game.supply = pre_snapshot["supply"]
-        game.momentum = pre_snapshot.get("momentum", game.momentum)
-        game.max_momentum = pre_snapshot.get("max_momentum", game.max_momentum)
-        game.chaos_factor = pre_snapshot.get("chaos_factor", game.chaos_factor)
-        game.crisis_mode = pre_snapshot.get("crisis_mode", False)
-        game.game_over = pre_snapshot.get("game_over", False)
-        game.epilogue_shown = pre_snapshot.get("epilogue_shown", game.epilogue_shown)
-        game.epilogue_dismissed = pre_snapshot.get("epilogue_dismissed", game.epilogue_dismissed)
-        game.current_location = pre_snapshot.get("current_location", game.current_location)
-        game.current_scene_context = pre_snapshot.get("current_scene_context", game.current_scene_context)
-        game.time_of_day = pre_snapshot.get("time_of_day", game.time_of_day)
-        game.location_history = list(pre_snapshot.get("location_history", game.location_history))
-        game.director_guidance = copy.deepcopy(pre_snapshot.get("director_guidance", game.director_guidance))
-        # Restore full NPC state (not just bonds) — removes any NPCs introduced in MISS narration
-        if "npcs" in pre_snapshot:
-            game.npcs = copy.deepcopy(pre_snapshot["npcs"])
+    # Full restoration using last_turn_snapshot (authoritative, taken before any mutations)
+    game.health = pre_snapshot["health"]
+    game.spirit = pre_snapshot["spirit"]
+    game.supply = pre_snapshot["supply"]
+    game.momentum = pre_snapshot["momentum"]
+    game.max_momentum = pre_snapshot["max_momentum"]
+    game.chaos_factor = pre_snapshot["chaos_factor"]
+    game.crisis_mode = pre_snapshot["crisis_mode"]
+    game.game_over = pre_snapshot["game_over"]
+    game.epilogue_shown = pre_snapshot["epilogue_shown"]
+    game.epilogue_dismissed = pre_snapshot["epilogue_dismissed"]
+    game.current_location = pre_snapshot["current_location"]
+    game.current_scene_context = pre_snapshot["current_scene_context"]
+    game.time_of_day = pre_snapshot["time_of_day"]
+    game.location_history = list(pre_snapshot["location_history"])
+    game.director_guidance = copy.deepcopy(pre_snapshot["director_guidance"])
+    # Restore full NPC state — removes any NPCs introduced in MISS narration
+    game.npcs = copy.deepcopy(pre_snapshot["npcs"])
+    game.clocks = copy.deepcopy(pre_snapshot["clocks"])
+    game.scene_count = pre_snapshot["scene_count"]
+    game.scene_intensity_history = list(pre_snapshot["scene_intensity_history"])
+    # Restore blueprint sub-fields (revelation marks, act transitions, story_complete)
+    if game.story_blueprint is not None:
+        game.story_blueprint["revealed"] = list(pre_snapshot["bp_revealed"])
+        game.story_blueprint["triggered_transitions"] = list(pre_snapshot["bp_triggered_transitions"])
+        if pre_snapshot["bp_story_complete"]:
+            game.story_blueprint["story_complete"] = True
         else:
-            # Legacy fallback: partial bond-only restore
-            npc_bonds = pre_snapshot.get("npc_bonds", {})
-            for npc in game.npcs:
-                if npc["id"] in npc_bonds:
-                    npc["bond"] = npc_bonds[npc["id"]]
-        # Restore clock fills
-        if "clocks" in pre_snapshot:
-            game.clocks = copy.deepcopy(pre_snapshot["clocks"])
-        else:
-            clock_fills = pre_snapshot.get("clock_fills", {})
-            for clock in game.clocks:
-                if clock["id"] in clock_fills:
-                    clock["filled"] = clock_fills[clock["id"]]
-        # Restore scene_count (was incremented before snapshot could capture post-increment state)
-        # Burn runs a full new narrator pass so scene_count will be re-incremented there
-        if "scene_count" in pre_snapshot:
-            game.scene_count = pre_snapshot["scene_count"]
-        # Fix Bug: scene_intensity_history got an entry from MISS narration — restore it
-        if "scene_intensity_history" in pre_snapshot:
-            game.scene_intensity_history = list(pre_snapshot["scene_intensity_history"])
-        # Restore blueprint sub-fields (revelation marks, act transitions, story_complete)
-        if game.story_blueprint is not None:
-            if "bp_revealed" in pre_snapshot:
-                game.story_blueprint["revealed"] = list(pre_snapshot["bp_revealed"])
-            if "bp_triggered_transitions" in pre_snapshot:
-                game.story_blueprint["triggered_transitions"] = list(pre_snapshot["bp_triggered_transitions"])
-            if "bp_story_complete" in pre_snapshot:
-                if pre_snapshot["bp_story_complete"]:
-                    game.story_blueprint["story_complete"] = True
-                else:
-                    game.story_blueprint.pop("story_complete", None)
-        log(f"[Burn] Fully restored state from snapshot: H{game.health} Sp{game.spirit} Su{game.supply} Chaos{game.chaos_factor}")
-    else:
-        # Legacy fallback (old burn_info without snapshot — backward compat)
-        old_result = old_roll.result
-        if old_result == "MISS":
-            move = old_roll.move
-            position = brain_data.get("position", "risky")
-            if move == "endure_harm" or move in COMBAT_MOVES:
-                game.health = min(5, game.health + 1)
-            elif move == "endure_stress" or move in SOCIAL_MOVES:
-                game.spirit = min(5, game.spirit + 1)
-            else:
-                game.supply = min(5, game.supply + 1)
-                if position != "controlled":
-                    game.health = min(5, game.health + 1)
-        # Reverse old chaos update before new one gets applied
-        if old_result == "MISS":
-            game.chaos_factor = max(3, game.chaos_factor - 1)
-        elif old_result == "STRONG_HIT":
-            game.chaos_factor = min(9, game.chaos_factor + 1)
-        # Re-check crisis flags after partial restoration
-        if game.health > 0 and game.spirit > 0:
-            game.crisis_mode = False
-            game.game_over = False
-        elif game.health > 0 or game.spirit > 0:
-            game.game_over = False
+            game.story_blueprint.pop("story_complete", None)
+    log(f"[Burn] Fully restored state from snapshot: H{game.health} Sp{game.spirit} Su{game.supply} Chaos{game.chaos_factor}")
 
     # Create upgraded roll
     upgraded = RollResult(old_roll.d1, old_roll.d2, old_roll.c1, old_roll.c2,
@@ -7656,6 +7582,7 @@ def process_momentum_burn(client: anthropic.Anthropic, game: GameState,
     # Replace last narration history entry with burned version
     if game.narration_history:
         game.narration_history[-1] = {
+            "scene": game.scene_count,
             "prompt_summary": f"Momentum burn ({new_result}): {brain_data.get('player_intent', '')[:80]}",
             "narration": narration,
         }

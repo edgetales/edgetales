@@ -8,8 +8,8 @@
 
 | | |
 |---|---|
-| **Version** | v0.9.67 |
-| **Codebase** | ~12,400 lines across 5 source files + config |
+| **Version** | v0.9.68 |
+| **Codebase** | ~13,600 lines across 5 source files + config |
 | **Stack** | Python 3.11+, NiceGUI, Anthropic SDK (Structured Outputs), reportlab, edge-tts, faster-whisper, wonderwords, stop-words, nameparser, cryptography |
 | **AI Models** | Narrator/Architect: `claude-sonnet-4-6` · Brain/Director/Extractors: `claude-haiku-4-5-20251001` |
 | **Core Principle** | "AI narrates, dice decide." — All outcomes determined by dice rolls, never by AI judgment |
@@ -74,14 +74,14 @@ Every UI change must account for **both** languages — without exception:
 ### 5-File Structure
 
 ```
-engine.py        (~6,860 L) — GameState, mechanics, all AI calls, prompts, parser,
+engine.py        (~7,600 L) — GameState, mechanics, all AI calls, prompts, parser,
                               save/load, NPC/memory/director, chapter archives, correction system
-app.py           (~3,290 L) — NiceGUI UI layer (sole NiceGUI dependency), auto-dependency
+app.py           (~3,540 L) — NiceGUI UI layer (sole NiceGUI dependency), auto-dependency
                               check, ARIA accessibility
-i18n.py          (~1,390 L) — UI strings, emojis, label dicts, voice options, translation
+i18n.py          (~1,400 L) — UI strings, emojis, label dicts, voice options, translation
                               functions, ARIA labels
 voice.py           (~590 L) — EdgeTTS, Chatterbox, VoiceEngine, STT (faster-whisper)
-custom_head.html   (~360 L) — CSS, meta tags, PWA, Google Fonts (Inter + Cinzel), CSS
+custom_head.html   (~450 L) — CSS, meta tags, PWA, Google Fonts (Inter + Cinzel), CSS
                               variable system, EdgeTales Design Mode CSS, entity-highlight JS
 ```
 
@@ -339,7 +339,7 @@ Mid-game NPCs without agenda/instinct get `needs_profile="true"` — Director pr
 
 **Tracks**: Health, Spirit, Supply (0–5), Momentum (-6 to +10)
 
-**Momentum Burn**: Player converts MISS → STRONG_HIT or WEAK_HIT → STRONG_HIT. `process_momentum_burn()` restores state from `pre_snapshot` (Health/Spirit/Supply/Bonds/Clocks/Chaos) before applying new consequences.
+**Momentum Burn**: Player converts MISS → STRONG_HIT or WEAK_HIT → STRONG_HIT. `process_momentum_burn()` fully restores state from `pre_snapshot` (all turn-mutable fields including NPCs, clocks, chaos, resources) before applying new consequences. `pre_snapshot` is always the `last_turn_snapshot` captured at the start of `process_turn()`.
 
 **Chaos System**: Scene dice with chaos threshold (3–9). Match on Miss → Chaos Interrupt (10 types). UI indicator `⚡ Chaos!` in dice row.
 
@@ -357,7 +357,7 @@ Mid-game NPCs without agenda/instinct get `needs_profile="true"` — Director pr
 
 Players prefix any input with `##` to correct the previous turn. The correction flow analyzes the error type automatically and selects the appropriate repair strategy.
 
-**Turn Snapshot** (`_build_turn_snapshot()`): Created at every `process_turn()` start. Captures all turn-mutable fields: resources, counters, flags, spatial/temporal state, NPCs (deepcopy), clocks (deepcopy), director guidance, scene intensity. Since v0.9.61 also backs up `story_blueprint` sub-fields: `bp_revealed`, `bp_triggered_transitions`, `bp_story_complete`. Both restore paths (`_restore_from_snapshot()` for `##` and momentum burn restore) write these back. Backward-compatible: older snapshots without these keys skip the restore steps.
+**Turn Snapshot** (`_build_turn_snapshot()`): Created at every `process_turn()` start. Captures all turn-mutable fields: resources, counters, flags, spatial/temporal state, NPCs (deepcopy), clocks (deepcopy), director guidance, scene intensity, and `story_blueprint` sub-fields (`bp_revealed`, `bp_triggered_transitions`, `bp_story_complete`). Both restore paths (`_restore_from_snapshot()` for `##` corrections and `process_momentum_burn()`) use direct key access — snapshot is always authoritative and complete.
 
 Since v0.9.62: `last_turn_snapshot` persisted in `SAVE_FIELDS`. `save_game()` converts `snapshot["roll"]` (a `RollResult` dataclass) via `dataclasses.asdict()` before serialization. `load_game()` reconstructs it via `RollResult(**r)`.
 
