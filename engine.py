@@ -1496,9 +1496,9 @@ def _process_npc_renames(game, json_text: str):
                 continue
             new_name = r["new_name"].strip()
             # Don't rename to player character (exact or partial match)
-            new_lower = new_name.lower()
-            player_lower = game.player_name.lower().strip()
-            if new_lower == player_lower or (set(new_lower.split()) & set(player_lower.split())):
+            new_norm = _normalize_for_match(new_name)
+            player_norm = _normalize_for_match(game.player_name)
+            if new_norm == player_norm or (set(new_norm.split()) & set(player_norm.split())):
                 log(f"[NPC] Rename rejected: '{new_name}' matches player character")
                 continue
             _merge_npc_identity(npc, new_name, r.get("description", ""))
@@ -5331,10 +5331,10 @@ def _process_game_data(game: GameState, data: dict, force_npcs: bool = True):
                     m["type"] = m.get("type", "observation")
                     m["_score_debug"] = f"opening game_data | {dbg}"
         # Filter out NPCs that match the player character name
-        player_lower = game.player_name.lower().strip()
+        player_norm = _normalize_for_match(game.player_name)
         data["npcs"] = [
             n for n in data["npcs"]
-            if n.get("name", "").lower().strip() != player_lower
+            if _normalize_for_match(n.get("name", "")) != player_norm
         ]
         # Sanitize NPC names: strip parenthetical annotations → aliases
         for nd in data["npcs"]:
@@ -5602,8 +5602,9 @@ def _apply_memory_updates(game: GameState, json_text: str):
                         _reactivate_npc(npc, reason="memory_update matched by name/alias — reactivated instead of stub")
                     log(f"[NPC] Auto-stub suppressed: '{npc_name}' matched existing "
                         f"'{npc['name']}' ({npc.get('id', '?')}) by name/alias")
-                elif npc_name.lower().strip() != game.player_name.lower().strip() \
-                        and not (set(npc_name.lower().split()) & set(game.player_name.lower().split())):
+                elif (_normalize_for_match(npc_name) != _normalize_for_match(game.player_name)
+                        and not (set(_normalize_for_match(npc_name).split())
+                                 & set(_normalize_for_match(game.player_name).split()))):
                     npc_id, _ = _next_npc_id(game)
                     npc = {
                         "id": npc_id,
@@ -6248,6 +6249,13 @@ def start_new_game(client: anthropic.Anthropic, creation_data: dict,
     opening_data = call_opening_metadata(client, narration, game, config)
     _process_game_data(game, opening_data)
 
+    # Opening-scene NPCs are extracted FROM the narration — they are introduced
+    # by definition. _process_game_data defaults to introduced=False (legacy),
+    # but parse_narrator_response step 10 can't check them because game.npcs
+    # was empty when it ran. Mark them now so the sidebar shows them immediately.
+    for npc in game.npcs:
+        npc["introduced"] = True
+
     # Record opening as neutral intensity
     record_scene_intensity(game, "action")
 
@@ -6600,6 +6608,10 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
     # defaults, then merge returning NPCs back.
     game.npcs = []
     _process_game_data(game, opening_data)
+
+    # Chapter-opening NPCs extracted from narration are introduced by definition
+    for npc in game.npcs:
+        npc["introduced"] = True
 
     # Merge: re-add returning NPCs that weren't re-introduced by the extractor.
     # NOTE: Do NOT check by old ID here. _process_game_data() just reassigned IDs
