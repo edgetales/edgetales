@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.69"
+VERSION = "0.9.68"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -5840,9 +5840,16 @@ def load_game(username: str, name: str = "autosave") -> tuple[Optional[GameState
     # Backward compatibility: migrate NPC memory system fields (v5.11)
     for npc in game.npcs:
         _ensure_npc_memory_fields(npc)
-    # Clean up transient flags that should not persist across save/load
+    # Reconstruct _needs_reflection from importance_accumulator on load.
+    # The flag itself is not persisted (it was previously stripped on load), but the
+    # accumulator IS saved — so we can deterministically reconstruct it.
+    # Without this, a saved NPC with accumulator >= REFLECTION_THRESHOLD would lose
+    # its pending reflection after a reload and only re-trigger if new memories arrived.
     for npc in game.npcs:
-        npc.pop("_needs_reflection", None)
+        if npc.get("importance_accumulator", 0) >= REFLECTION_THRESHOLD:
+            npc["_needs_reflection"] = True
+        else:
+            npc.pop("_needs_reflection", None)
     # Clean up legacy 'last_seen' field (replaced by 'last_location' in v0.9.14+)
     for npc in game.npcs:
         npc.pop("last_seen", None)

@@ -130,6 +130,7 @@ from engine import (
     list_users, create_user, delete_user,
     save_game, load_game, list_saves, list_saves_with_info, delete_save, export_story_pdf,
     save_chapter_archive, load_chapter_archive, list_chapter_archives, delete_chapter_archives,
+    copy_chapter_archives,
     get_current_act, setup_file_logging,
     call_setup_brain, start_new_game, start_new_chapter,
     process_turn, process_momentum_burn, process_correction, call_recap,
@@ -1218,7 +1219,12 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                     new_name = re.sub(r'[/\\.\s]+', '_', new_name).strip('_')
                     if not new_name:
                         return
+                    old_name = s.get("active_save", "autosave")
                     save_game(game, username, s["messages"], new_name)
+                    # Replace chapter archives in the destination slot wholesale so
+                    # no stale chapters from a previously existing save survive.
+                    delete_chapter_archives(username, new_name)
+                    copy_chapter_archives(username, old_name, new_name)
                     s["active_save"] = new_name
                     if on_refresh:
                         on_refresh()

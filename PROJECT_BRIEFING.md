@@ -259,7 +259,7 @@ Both paths set `last_location = game.current_location`. Updated on every memory 
 1. **`npc_renames`** (Metadata Extractor) → `_merge_npc_identity()`: old name → aliases, new name → primary. Guards: same-name check (identical names → skip), self-alias cleanup (new name removed from aliases), `load_game()` cleans self-aliases in existing saves. `_absorb_duplicate_npc()` called after every rename to absorb any NPC whose primary name **or alias** matches the renamed-to name.
 2. **Fuzzy name match** in `_process_new_npcs()` — substring overlap, word overlap, STT-variant matching (Levenshtein ≤ 1). Returns `(npc, match_type)`: `"identity"` for rename, `"stt_variant"` for alias-only.
 3. **Description match** `_description_match_existing_npc()` — catches duplicates when names have zero word overlap but descriptions match. Word overlap + substring matching + compound decomposition (Bindestrich split) + Long-Compound-Bonus (≥12 chars count 1.5×). Threshold: ≥25% ratio OR one long match with effective ≥2.0. **Spatial Guard**: skips candidates whose `last_location` differs from `game.current_location`. **Name-Reference Guard (v0.9.48)**: words from candidate's name/aliases (≥4 chars) are filtered from the new description word set before overlap check.
-4. **`_apply_memory_updates()`** — finds NPC even with unknown reference, creates stub only as last resort. Guards: `npc_\d+` pattern and player character name (part-intersection) are rejected. **Auto-stub humanization (v0.9.45)**: snake_case stub names → Title Case with spaces. **Name/alias guard (v0.9.66)**: after humanization, `_find_npc()` is called before any stub creation — if a match is found by name or alias, memory is routed to the existing NPC and no stub is created; background NPCs are reactivated as needed.
+4. **`_apply_memory_updates(game, json_text, scene_present_ids=None, pre_turn_npc_ids=None, pre_turn_lore_ids=None)`** — finds NPC even with unknown reference, creates stub only as last resort. Guards: `npc_\d+` pattern and player character name (part-intersection) are rejected. **Auto-stub humanization (v0.9.45)**: snake_case stub names → Title Case with spaces. **Name/alias guard (v0.9.66)**: after humanization, `_find_npc()` is called before any stub creation — if a match is found by name or alias, memory is routed to the existing NPC and no stub is created. **Presence guard (v0.9.69)**: when `scene_present_ids` + `pre_turn_npc_ids` are provided, memory updates for known NPCs absent from `scene_present_ids` are rejected. Four exemptions: (1) freshly-created NPCs (not in `pre_turn_npc_ids`); (2) auto-stubs (`pre_turn_npc_ids=None`); (3) `status="lore"` or `status="deceased"` — lore always accumulates memories, deceased are structurally excluded from `activate_npcs_for_prompt` so blocking them would prevent resurrection; (4) formerly-lore NPCs in `pre_turn_lore_ids` — lore→active transitions lose lore status before guard runs. `pre_turn_lore_ids` is captured *before* `_process_npc_renames` in `_apply_narrator_metadata` (since `_process_npc_renames → _merge_npc_identity` can promote lore→active). `_reactivate_npc` is NOT called in the `existing_by_name` stub path — it happens inside `if npc:` after the guard passes, preventing premature promotion of absent background NPCs. **Known edge case**: a background NPC promoted via `_process_npc_details → _merge_npc_identity` (identity reveal) in the same metadata cycle, but absent from `scene_present_ids`, will have its memory blocked. This is an unusual scenario (narrator spontaneously names an unmentioned background NPC) and degrades gracefully — one missed memory, no wrong memory added.
 5. **`_process_npc_details()` identity-reveal fallback**: if `full_name` completely differs from current NPC name, calls `_merge_npc_identity()` instead of rejecting. Then `_absorb_duplicate_npc()` checks if `_process_new_npcs()` already created a duplicate with the new name in the same metadata cycle, and absorbs its memories/data.
 6. **Slug resolution** `_resolve_slug_refs()` (v0.9.45) — runs in `_apply_narrator_metadata()` between `_process_new_npcs()` and `_apply_memory_updates()`. Converts snake_case slugs (e.g., `moderator_headset`) to real `npc_id`s for same-cycle cross-references.
 
@@ -493,6 +493,86 @@ Implemented via `custom_head.html` + server-side Python in `app.py`:
 
 Chapter archives: `save_chapter_archive()` / `load_chapter_archive()` / `list_chapter_archives()` / `delete_chapter_archives()` (via `shutil.rmtree`).
 
+#### Save File Field Reference
+
+**Canonical field names** — use these when analysing save files. Many have non-obvious names that differ from natural-language equivalents.
+
+**Top-level game state** (flat on the save dict, sourced from `GameState` attributes via `SAVE_FIELDS`):
+
+| Field | Type | Notes |
+|---|---|---|
+| `player_name` | str | Character name |
+| `character_concept` | str | One-line character concept |
+| `setting_genre` / `setting_tone` / `setting_archetype` | str | Setup choices |
+| `edge` / `heart` / `iron` / `shadow` / `wits` | int | Stats (NOT nested under "character") |
+| `health` / `spirit` / `supply` / `momentum` / `max_momentum` | int | Vitals (also flat) |
+| `scene_count` | int | Current scene number (NOT "scene") |
+| `chapter_number` | int | Current chapter (NOT "chapter") |
+| `chaos_factor` | int | 0–9 chaos (NOT "chaos") |
+| `current_location` | str | Full location description string |
+| `time_of_day` | str | e.g. `"deep_night"` |
+| `npcs` | list | List of NPC dicts (NOT a dict keyed by name) |
+| `clocks` | list | List of clock dicts |
+| `session_log` | list | Per-scene log entries |
+| `narration_history` | list | Rolling window of recent narrations |
+| `story_blueprint` | dict | Story Architect output |
+| `director_guidance` | dict | Latest Director output |
+| `last_turn_snapshot` | dict | Pre-turn state for `##` correction |
+| `chat_messages` | list | UI chat history (NOT in `SAVE_FIELDS` — written separately) |
+
+**NPC dict fields** (each entry in `game.npcs`):
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | str | e.g. `"npc_1"` |
+| `name` | str | Canonical display name |
+| `description` | str | Physical/behavioral description |
+| `agenda` / `instinct` | str | AI-authored personality fields |
+| `secrets` | list[str] | |
+| `disposition` | str | `hostile` / `distrustful` / `neutral` / `friendly` / `loyal` |
+| `bond` / `bond_max` | int | Bond level (0–4) |
+| `status` | str | `active` / `background` / `deceased` / `lore` |
+| `memory` | list | Memory entries (NOT "memories") |
+| `introduced` | bool | True once NPC appeared in narration |
+| `aliases` | list[str] | Alternative names / revealed identities |
+| `keywords` | list[str] | TF-IDF keywords for activation scoring |
+| `importance_accumulator` | int | Triggers reflection when ≥ threshold |
+| `last_reflection_scene` | int | Scene number of last reflection |
+| `last_location` | str | Location string where NPC was last seen (NOT "last_seen_scene") |
+
+**Memory entry fields** (each entry in `npc["memory"]`):
+
+| Field | Type | Notes |
+|---|---|---|
+| `scene` | int | Scene number |
+| `event` | str | What happened |
+| `emotional_weight` | str | e.g. `"conflicted"`, `"loyal"` |
+| `importance` | int | Scored 1–10 |
+| `type` | str | `"observation"` or `"reflection"` |
+| `about_npc` | str\|null | `npc_id` if memory is primarily about another NPC |
+| `_score_debug` | str | Debug string, intentionally kept during testing |
+| `tone` / `tone_key` | str | Reflection-only fields |
+
+**Clock dict fields**:
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | str | e.g. `"clock_1"` |
+| `name` | str | Display name |
+| `clock_type` | str | `"threat"` / `"scheme"` (NOT "type") |
+| `segments` | int | Total segments |
+| `filled` | int | Currently filled segments |
+| `fired` | bool | Whether clock has triggered |
+| `fired_at_scene` | int | Scene when it triggered |
+| `trigger_description` | str | What happens when filled |
+| `owner` | str | `"world"` or NPC name |
+
+**Scene marker entries in `chat_messages`** use a special format — they are NOT `role`/`content` dicts:
+```json
+{ "scene_marker": "Szene 3 — <location>" }
+```
+Regular messages have `role` (`"user"` / `"assistant"`) and `content` fields. `type` is not a standard field on chat messages.
+
 ---
 
 ### Structured Outputs
@@ -538,7 +618,7 @@ All JSON-delivering AI calls (Brain, Setup Brain, Director, Story Architect, Cha
 | `_description_match_existing_npc(game, new_desc)` | Description-based duplicate detection |
 | `_absorb_duplicate_npc(game, original, merged_name)` | After identity reveal: absorbs duplicate NPC (calls `_apply_name_sanitization` + `_consolidate_memory`) |
 | `_is_complete_description(desc)` | Checks if NPC description ends with sentence-terminating char |
-| `_apply_memory_updates(game, json_text)` | NPC memories (importance, accumulator, consolidation, auto-stub) |
+| `_apply_memory_updates(game, json_text, scene_present_ids, pre_turn_npc_ids)` | NPC memories (importance, accumulator, consolidation, auto-stub, presence guard) |
 | `_retire_distant_npcs(game, max_active)` | active → background by relevance score |
 | `_reactivate_npc(npc, reason, force)` | background → active; deceased → active only with `force=True` |
 | `score_importance(emotional_weight, event_text)` | Importance score 1–10 |
