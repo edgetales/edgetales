@@ -6046,6 +6046,23 @@ def delete_chapter_archives(username: str, save_name: str):
         log(f"[ChapterArchive] Deleted archives: {username}/{save_name}")
 
 
+def copy_chapter_archives(username: str, src_save: str, dst_save: str):
+    """Copy all chapter archives from one save slot to another.
+    Destination directory is created if it does not exist.
+    If source does not exist, this is a no-op.
+    """
+    import shutil
+    src_dir = _get_save_dir(username) / "chapters" / src_save
+    dst_dir = _get_save_dir(username) / "chapters" / dst_save
+    if not src_dir.exists():
+        return
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    for f in src_dir.iterdir():
+        shutil.copy2(f, dst_dir / f.name)
+    log(f"[ChapterArchive] Copied archives: {username}/{src_save} → {dst_save} "
+        f"({len(list(src_dir.iterdir()))} file(s))")
+
+
 # ===============================================================
 # STORY EXPORT (PDF)
 # ===============================================================
