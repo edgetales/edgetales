@@ -5,6 +5,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.71]
+
+### Changed
+- **Narrator: SENSORY RANGE + WORLD PERIPHERY rules added to system prompt.** Two new craft rules in `get_narrator_system()` address recurring atmospheric flatness. SENSORY RANGE instructs the narrator to include at least one non-visual sense per scene (sound, smell, texture, or temperature) — research-backed: non-visual senses anchor scenes in memory more durably than visual description alone. WORLD PERIPHERY instructs the narrator to include one small background detail per scene unrelated to the player's immediate action (a sound from another room, a stranger's exchange, a worn object, weather shifting) — signals that the world continues beyond the current moment and creates a "lived-in" feel. Both rules placed directly after the existing "Describe only sensory impressions" line, which they complement.
+
+---
+
 ## [0.9.70]
 
 ### Added
