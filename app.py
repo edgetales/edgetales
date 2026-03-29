@@ -177,6 +177,7 @@ def _load_server_config() -> dict:
         "enable_https": False,
         "ssl_certfile": "",
         "ssl_keyfile": "",
+        "ssl_extra_sans": [],
         "storage_secret": "",
         "port": 8080,
         "default_ui_lang": "",
@@ -187,6 +188,11 @@ def _load_server_config() -> dict:
     for key in cfg:
         if key in file_cfg:
             cfg[key] = file_cfg[key]
+    # Normalize ssl_extra_sans: config.json may supply a plain string instead of a
+    # list (e.g. "ssl_extra_sans": "77.21.237.27"). Convert to list so downstream
+    # code can always iterate safely.
+    if isinstance(cfg["ssl_extra_sans"], str):
+        cfg["ssl_extra_sans"] = [s.strip() for s in cfg["ssl_extra_sans"].split(",") if s.strip()]
     # 3. ENV overrides config.json (for Docker, systemd, .bat, etc.)
     env_map = {
         "ANTHROPIC_API_KEY": "api_key",
@@ -194,6 +200,7 @@ def _load_server_config() -> dict:
         "ENABLE_HTTPS": "enable_https",
         "SSL_CERTFILE": "ssl_certfile",
         "SSL_KEYFILE": "ssl_keyfile",
+        "SSL_EXTRA_SANS": "ssl_extra_sans",
         "STORAGE_SECRET": "storage_secret",
         "PORT": "port",
         "DEFAULT_UI_LANG": "default_ui_lang",
@@ -209,6 +216,9 @@ def _load_server_config() -> dict:
                     cfg[cfg_key] = int(env_val)
                 except ValueError:
                     pass
+            elif cfg_key == "ssl_extra_sans":
+                # ENV: comma-separated list, e.g. "77.21.237.27,myhost.example.com"
+                cfg[cfg_key] = [s.strip() for s in env_val.split(",") if s.strip()]
             else:
                 cfg[cfg_key] = env_val
     return cfg
@@ -219,6 +229,7 @@ SERVER_API_KEY: str = _server_cfg["api_key"]
 ENABLE_HTTPS: bool = _server_cfg["enable_https"]
 SSL_CERTFILE: str = _server_cfg["ssl_certfile"]
 SSL_KEYFILE: str = _server_cfg["ssl_keyfile"]
+SSL_EXTRA_SANS: list = _server_cfg["ssl_extra_sans"]  # Extra IPs/hostnames for SAN
 SERVER_PORT: int = _server_cfg["port"]
 # Validate default_ui_lang: must be a known code ('de', 'en', ...) or empty (→ DEFAULT_LANG)
 _raw_ui_lang = _server_cfg.get("default_ui_lang", "").strip().lower()
@@ -228,7 +239,8 @@ DEFAULT_UI_LANG: str = _raw_ui_lang if _raw_ui_lang in UI_LANGUAGES.values() els
 log(f"[Config] port={SERVER_PORT}, https={ENABLE_HTTPS}, "
     f"invite={'set' if INVITE_CODE else 'off'}, "
     f"default_ui_lang={DEFAULT_UI_LANG or DEFAULT_LANG}, "
-    f"api_key={'ENV' if os.environ.get('ANTHROPIC_API_KEY') else ('config.json' if SERVER_API_KEY else 'not set')}")
+    f"api_key={'ENV' if os.environ.get('ANTHROPIC_API_KEY') else ('config.json' if SERVER_API_KEY else 'not set')}"
+    + (f", ssl_extra_sans={SSL_EXTRA_SANS}" if SSL_EXTRA_SANS else ""))
 
 # Flush deferred dependency check results into log file
 import builtins
@@ -2876,15 +2888,21 @@ async def main_page(client: Client):
         pass  # Non-critical, page still works without it
 
     # ── WebSocket connected → init session ──
-    # With HTTPS/self-signed certs, tab storage may need extra time to become available
-    for _attempt in range(5):
+    # app.storage.tab requires a sessionStorage→WebSocket roundtrip to establish the
+    # tab ID. On desktop browsers this completes in <100ms. iOS Safari is significantly
+    # slower after a manually-trusted self-signed certificate is installed — the tab ID
+    # roundtrip can take 10–20s. We retry generously (30 × 1.0s = 30s max) to cover
+    # this case without affecting desktop performance (which succeeds on attempt 1).
+    for _attempt in range(30):
         try:
             init_session()
             break
         except RuntimeError:
-            await asyncio.sleep(0.5)
+            if _attempt == 5:
+                log("[Session] app.storage.tab slow to initialize — still waiting (iOS Safari?)")
+            await asyncio.sleep(1.0)
     else:
-        log("[Session] app.storage.tab not available after retries", level="warning")
+        log("[Session] app.storage.tab not available after 30s — giving up", level="warning")
         return
     loading.delete()
     setup_file_logging()
@@ -3426,60 +3444,228 @@ for _icon_url in ("/apple-touch-icon.png", "/apple-touch-icon-precomposed.png",
 # HTTPS / SSL setup
 # ---------------------------------------------------------------------------
 
-def _generate_self_signed_cert():
-    """Generate a self-signed SSL certificate for local HTTPS."""
+def _fetch_public_ip() -> str | None:
+    """Fetch the current public IP via ipify.org. Returns None on any failure.
+
+    Used to include the public IP in the certificate SAN so that external
+    users accessing EdgeTales via its public IP get a valid TLS connection.
+    Timeout is short (5s) to avoid delaying startup on offline systems.
+    """
+    try:
+        import urllib.request
+        with urllib.request.urlopen("https://api.ipify.org", timeout=5) as resp:
+            ip = resp.read().decode().strip()
+            # Basic sanity check — must look like an IPv4 address
+            parts = ip.split(".")
+            if len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+                return ip
+    except Exception:
+        pass
+    return None
+
+
+def _cert_is_ios_compatible(cert_path: Path, key_path: Path,
+                             required_san_ips: list | None = None) -> bool:
+    """Return True if cert and key are a valid, iOS 13+-compatible pair.
+
+    Checks performed:
+    1. BasicConstraints(ca=True)      — required for iOS Certificate Trust Settings toggle.
+    2. ExtendedKeyUsage(serverAuth)   — required for TLS server certs since iOS 13.
+    3. Public key match               — cert and key file must share the same public key.
+                                        Mismatch occurs if the process crashes between
+                                        writing key.pem and cert.pem.
+    4. Required SANs present          — if required_san_ips is provided, every IP in that
+                                        list must appear in the cert's SAN extension.
+                                        Triggers regeneration when the public IP changes.
+
+    Any failure returns False, triggering a full regeneration.
+    """
+    try:
+        from cryptography import x509
+        from cryptography.x509.extensions import BasicConstraints, ExtendedKeyUsage
+        from cryptography.x509.oid import ExtendedKeyUsageOID
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key
+        import ipaddress
+
+        cert = x509.load_pem_x509_certificate(cert_path.read_bytes())
+
+        # Check 1: CA BasicConstraints
+        bc = cert.extensions.get_extension_for_class(BasicConstraints)
+        if not bc.value.ca:
+            return False
+
+        # Check 2: ExtendedKeyUsage with serverAuth
+        eku = cert.extensions.get_extension_for_class(ExtendedKeyUsage)
+        if ExtendedKeyUsageOID.SERVER_AUTH not in eku.value:
+            return False
+
+        # Check 3: Public key fingerprint match
+        _enc = serialization.Encoding.PEM
+        _fmt = serialization.PublicFormat.SubjectPublicKeyInfo
+        private_key = load_pem_private_key(key_path.read_bytes(), password=None)
+        if cert.public_key().public_bytes(_enc, _fmt) != private_key.public_key().public_bytes(_enc, _fmt):
+            return False
+
+        # Check 4: Required SAN IPs present (e.g. public IP, ssl_extra_sans)
+        if required_san_ips:
+            san_ext = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+            cert_ips = {str(e.value) for e in san_ext.value
+                        if isinstance(e, x509.IPAddress)}
+            for ip in required_san_ips:
+                try:
+                    if str(ipaddress.ip_address(ip)) not in cert_ips:
+                        return False
+                except ValueError:
+                    # Not an IP — check as DNS name
+                    cert_dns = {e.value for e in san_ext.value
+                                if isinstance(e, x509.DNSName)}
+                    if ip not in cert_dns:
+                        return False
+
+        return True
+    except Exception:
+        return False
+
+
+def _generate_self_signed_cert(extra_sans: list | None = None):
+    """Generate a self-signed CA certificate for local HTTPS.
+
+    The certificate satisfies all iOS 13+ requirements for both CA trust
+    installation and TLS server use simultaneously:
+    - BasicConstraints(ca=True)           — for Certificate Trust Settings toggle
+    - ExtendedKeyUsage(serverAuth)        — required for all TLS server certs (iOS 13+)
+    - KeyUsage(key_cert_sign, crl_sign)   — standard CA key usage
+    - SubjectKeyIdentifier                — recommended for CA certs
+    - SubjectAlternativeName              — required; CommonName alone not trusted (iOS 13+)
+
+    extra_sans: list of additional IP strings or hostnames to include in SAN.
+    Public IP is auto-detected via ipify.org and always included when reachable.
+    """
     cert_dir = Path.home() / ".rpg_engine_ssl"
-    cert_dir.mkdir(exist_ok=True)
+    cert_dir.mkdir(mode=0o700, exist_ok=True)
+    # Ensure directory permissions are restricted even if it already existed
+    try:
+        cert_dir.chmod(0o700)
+    except OSError:
+        pass
     cert_path = cert_dir / "cert.pem"
     key_path = cert_dir / "key.pem"
-    # Reuse existing cert if less than 365 days old
+
+    # Determine which IPs/hostnames must be in the cert
+    _extra = list(extra_sans) if extra_sans else []
+
+    # Auto-detect public IP and add if not already in extra_sans
+    _public_ip = _fetch_public_ip()
+    if _public_ip and _public_ip not in _extra:
+        _extra.append(_public_ip)
+        log(f"[SSL] Public IP detected: {_public_ip}")
+    elif not _public_ip:
+        log("[SSL] Public IP detection failed — skipping (offline or timeout)")
+
+    # Reuse existing cert only if < 365 days old AND it passes all iOS checks
+    # including all required SAN entries.
     if cert_path.exists() and key_path.exists():
         import time
         age_days = (time.time() - cert_path.stat().st_mtime) / 86400
-        if age_days < 365:
-            log(f"[SSL] Reusing existing certificate from {cert_dir}")
+        if age_days >= 365:
+            log("[SSL] Existing certificate has expired — regenerating")
+        elif _cert_is_ios_compatible(cert_path, key_path, required_san_ips=_extra):
+            log(f"[SSL] Reusing existing CA certificate from {cert_dir}")
             return str(cert_path), str(key_path)
+        else:
+            log("[SSL] Existing certificate is not reusable "
+                "(missing extensions, key mismatch, or missing SANs) — regenerating")
+
     try:
         from cryptography import x509
-        from cryptography.x509.oid import NameOID
+        from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
         from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.asymmetric import rsa
-        import datetime, ipaddress, socket
-        log("[SSL] Generating self-signed certificate...")
+        import datetime, ipaddress, socket, stat
+        log("[SSL] Generating self-signed CA certificate...")
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        # Get local hostname and IPs for SAN
+
+        # Build SAN list — deduplicate DNS names and IPs separately
         hostname = socket.gethostname()
+        _san_seen_dns = {"localhost"}
+        _san_seen_ips = {"127.0.0.1"}
         san_entries = [
             x509.DNSName("localhost"),
-            x509.DNSName(hostname),
             x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
         ]
-        # Add all local network IPs
+        # Pi hostname
+        if hostname not in _san_seen_dns:
+            _san_seen_dns.add(hostname)
+            san_entries.insert(1, x509.DNSName(hostname))
+        # Local network IPs from getaddrinfo
         try:
             for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
                 ip = info[4][0]
-                if ip != "127.0.0.1":
+                if ip not in _san_seen_ips:
+                    _san_seen_ips.add(ip)
                     san_entries.append(x509.IPAddress(ipaddress.IPv4Address(ip)))
         except Exception:
             pass
+        # Extra SANs (public IP + ssl_extra_sans from config)
+        for entry in _extra:
+            try:
+                parsed_ip = ipaddress.ip_address(entry)
+                ip_str = str(parsed_ip)
+                if ip_str not in _san_seen_ips:
+                    _san_seen_ips.add(ip_str)
+                    san_entries.append(x509.IPAddress(parsed_ip))
+            except ValueError:
+                # Not an IP — treat as DNS name
+                if entry not in _san_seen_dns:
+                    _san_seen_dns.add(entry)
+                    san_entries.append(x509.DNSName(entry))
+
         subject = issuer = x509.Name([
-            x509.NameAttribute(NameOID.COMMON_NAME, "EdgeTales Local"),
+            x509.NameAttribute(NameOID.COMMON_NAME, "EdgeTales Local CA"),
             x509.NameAttribute(NameOID.ORGANIZATION_NAME, "EdgeTales"),
         ])
+        pub_key = key.public_key()
         cert = (x509.CertificateBuilder()
                 .subject_name(subject).issuer_name(issuer)
-                .public_key(key.public_key())
+                .public_key(pub_key)
                 .serial_number(x509.random_serial_number())
                 .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
                 .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=365))
+                # Required by iOS to show Certificate Trust Settings toggle
+                .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+                # Required by iOS 13+ for all TLS server certs (id-kp-serverAuth OID).
+                # Non-standard to combine with ca=True, but necessary for self-signed
+                # certs that serve as both CA root and TLS server certificate.
+                .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
+                # Standard CA key usage
+                .add_extension(x509.KeyUsage(
+                    digital_signature=True,
+                    content_commitment=False,
+                    key_encipherment=False,
+                    data_encipherment=False,
+                    key_agreement=False,
+                    key_cert_sign=True,
+                    crl_sign=True,
+                    encipher_only=False,
+                    decipher_only=False,
+                ), critical=True)
+                # Subject Key Identifier — recommended for CA certs
+                .add_extension(x509.SubjectKeyIdentifier.from_public_key(pub_key), critical=False)
+                # Required by iOS 13+; CommonName alone is not trusted
                 .add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
                 .sign(key, hashes.SHA256()))
         key_path.write_bytes(key.private_bytes(
             serialization.Encoding.PEM,
             serialization.PrivateFormat.TraditionalOpenSSL,
             serialization.NoEncryption()))
+        # Restrict private key permissions (Unix only)
+        try:
+            key_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        except OSError:
+            pass
         cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-        log(f"[SSL] Certificate generated: {cert_path}")
+        log(f"[SSL] CA certificate generated: {cert_path}")
         log(f"[SSL] SAN entries: {[str(s) for s in san_entries]}")
         return str(cert_path), str(key_path)
     except ImportError:
@@ -3520,19 +3706,52 @@ def _get_storage_secret() -> str:
 
 
 _ssl_kwargs = {}
+_AUTO_CERT_PATH: str | None = None  # Set when auto-generated cert is used; drives /download-cert
+
 if SSL_CERTFILE and SSL_KEYFILE:
     _ssl_kwargs = {"ssl_certfile": SSL_CERTFILE, "ssl_keyfile": SSL_KEYFILE}
     log(f"[SSL] Using custom certificate: {SSL_CERTFILE}")
 elif ENABLE_HTTPS:
-    _cert, _key = _generate_self_signed_cert()
+    _cert, _key = _generate_self_signed_cert(extra_sans=SSL_EXTRA_SANS)
     if _cert and _key:
         _ssl_kwargs = {"ssl_certfile": _cert, "ssl_keyfile": _key}
+        _AUTO_CERT_PATH = _cert
 
 if _ssl_kwargs:
     _proto = "https"
     log(f"[SSL] HTTPS enabled on port {SERVER_PORT}")
 else:
     _proto = "http"
+
+# ---------------------------------------------------------------------------
+# /download-cert  — serves the auto-generated CA certificate for iOS trust
+#
+# Usage: open https://<pi-ip>:<port>/download-cert in Safari on iOS.
+# Safari downloads the cert, iOS prompts to install it as a Profile.
+# After installation: Settings → General → About → Certificate Trust Settings
+# → enable the toggle for "EdgeTales Local CA".
+# Only active when EdgeTales generated its own certificate (enable_https: true
+# without ssl_certfile/ssl_keyfile overrides). Custom certs are not served.
+# ---------------------------------------------------------------------------
+if _AUTO_CERT_PATH:
+    from fastapi.responses import Response as _FastAPIResponse
+
+    @app.get("/download-cert")
+    async def _download_cert():
+        try:
+            cert_bytes = Path(_AUTO_CERT_PATH).read_bytes()
+            # No Content-Disposition header: iOS Safari must handle this purely
+            # via the MIME type to trigger the profile installation flow.
+            # Using 'attachment' would cause Safari to treat it as a generic
+            # download instead of opening the certificate installer.
+            return _FastAPIResponse(
+                content=cert_bytes,
+                media_type="application/x-x509-ca-cert",
+            )
+        except OSError:
+            return _FastAPIResponse(content=b"Certificate not found", status_code=404)
+
+    log("[SSL] Certificate download available at /download-cert")
 
 ui.run(
     title="EdgeTales",

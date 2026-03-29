@@ -5,6 +5,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.70]
+
+### Added
+- **`ssl_extra_sans` config key** — list of additional IP addresses or hostnames to include in the auto-generated TLS certificate's SAN extension. Accepts a JSON array in `config.json` (e.g. `"ssl_extra_sans": ["77.21.237.27"]`) or a comma-separated string via the `SSL_EXTRA_SANS` environment variable. Useful for external testers accessing EdgeTales via a public IP that the Pi cannot self-detect.
+- **Automatic public IP detection in cert generation** — `_fetch_public_ip()` queries `https://api.ipify.org` (5s timeout) at startup and automatically includes the current public IP in the SAN. This fixes WebSocket connections (WSS code 1006) for users accessing EdgeTales via its public IP from outside the local network. If detection fails (offline Pi, timeout), the startup continues without error.
+- **`GET /download-cert`** — FastAPI endpoint (active only when `enable_https: true` without custom cert paths). Serves the auto-generated CA cert as `application/x-x509-ca-cert` with no `Content-Disposition` header, triggering iOS Safari's profile installation flow. After installation, users must enable trust in Settings → General → About → Certificate Trust Settings.
+
+### Fixed
+- **iOS Safari infinite reload / hang with auto-generated self-signed HTTPS certificate.** NiceGUI 3.x uses `crypto.randomUUID()` on page load for its implicit handshake. This Web Crypto API is gated to secure contexts; iOS Safari enforces this strictly and does not consider a page served with an uninstalled self-signed certificate a secure context — even after manually accepting the browser's SSL warning. The resulting `TypeError` caused the handshake to time out and NiceGUI to reload the page indefinitely. Root fix: `_generate_self_signed_cert()` now generates a certificate that satisfies all iOS 13+ requirements for simultaneous use as a CA root and TLS server cert: `BasicConstraints(ca=True, path_length=None)` (critical) — required by iOS to display the Certificate Trust Settings toggle; `ExtendedKeyUsage([serverAuth])` (non-critical) — mandatory for all TLS server certs per Apple's iOS 13 requirements; `KeyUsage(key_cert_sign=True, crl_sign=True, digital_signature=True)` (critical); `SubjectKeyIdentifier`; `SubjectAlternativeName`. Common Name updated from `"EdgeTales Local"` to `"EdgeTales Local CA"`. `_cert_is_ios_compatible(cert_path, key_path, required_san_ips)` replaces the old check helper and validates: `BasicConstraints(ca=True)`, `ExtendedKeyUsage(serverAuth)`, public-key fingerprint match between cert and key file (crash-mid-write protection), and presence of all required SAN entries (triggers regeneration if public IP changes). Expired certs now emit an explicit log message.
+- **WSS connection fails with code 1006 for external users accessing via public IP.** The auto-generated certificate only contained local SANs (`raspi`, `127.0.0.1`, `127.0.1.1`). iOS Safari (and all browsers) require the connecting IP/hostname to appear in the cert's SAN — any mismatch causes the TLS handshake to fail at the WebSocket upgrade step, regardless of whether the cert is trusted. Fixed by auto-detecting the public IP via ipify.org and adding it to SAN during cert generation, with `ssl_extra_sans` as manual override.
+- **`ssl_extra_sans` as plain string in config.json caused char-by-char iteration.** If a user wrote `"ssl_extra_sans": "77.21.237.27"` (a string) instead of `"ssl_extra_sans": ["77.21.237.27"]` (an array), `list()` on the string would iterate character-by-character, producing `['7','7','.','2','1',...]` instead of `['77.21.237.27']`. The cert would be regenerated on every startup as none of the single-char "entries" matched a valid IP. Fix: after the `file_cfg` override loop in `_load_server_config`, a string value for `ssl_extra_sans` is split on commas and stripped, producing the correct list. The ENV path already handled this correctly (comma-split was already in place there).
+- **`app.storage.tab` not available after retries on iOS Safari.** `app.storage.tab` requires a `sessionStorage → WebSocket` roundtrip to establish the NiceGUI tab ID. The previous retry loop (5 × 0.5s = 2.5s) was too short for iOS Safari with a manually-trusted self-signed certificate. Extended to 30 × 1.0s (30s max). Desktop browsers succeed on the first attempt so there is no performance impact. A diagnostic log message is emitted after 5 failed attempts.
+- **`key.pem` written without restricted file permissions.** Fixed: `key_path.chmod(stat.S_IRUSR | stat.S_IWUSR)` after write. Wrapped in `try/except OSError`.
+- **`~/.rpg_engine_ssl/` directory created world-traversable.** Fixed: `mkdir(mode=0o700, exist_ok=True)` plus explicit `cert_dir.chmod(0o700)` on every startup (retroactively fixes existing directories from older versions).
+- **SAN IP list could contain duplicates from `getaddrinfo`.** Fixed: `_san_seen_ips` set deduplicates all IPs before appending.
+- **Cert/key mismatch after crash mid-generation.** Fixed: public-key fingerprint comparison in `_cert_is_ios_compatible`.
+
+---
+
 ## [0.9.69]
 
 ### Fixed

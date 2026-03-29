@@ -8,13 +8,13 @@
 
 | | |
 |---|---|
-| **Version** | v0.9.68 |
+| **Version** | v0.9.70 |
 | **Codebase** | ~13,600 lines across 5 source files + config |
 | **Stack** | Python 3.11+, NiceGUI, Anthropic SDK (Structured Outputs), reportlab, edge-tts, faster-whisper, wonderwords, stop-words, nameparser, cryptography |
 | **AI Models** | Narrator/Architect: `claude-sonnet-4-6` · Brain/Director/Extractors: `claude-haiku-4-5-20251001` |
 | **Core Principle** | "AI narrates, dice decide." — All outcomes determined by dice rolls, never by AI judgment |
 | **Start** | `python app.py` → `http://localhost:8080` (requires `config.json` with `api_key`) |
-| **ENV Overrides** | `ANTHROPIC_API_KEY`, `INVITE_CODE`, `ENABLE_HTTPS`, `PORT`, `DEFAULT_UI_LANG` |
+| **ENV Overrides** | `ANTHROPIC_API_KEY`, `INVITE_CODE`, `ENABLE_HTTPS`, `SSL_EXTRA_SANS`, `PORT`, `DEFAULT_UI_LANG` |
 
 Auto-install: `_ensure_requirements()` checks and installs 9 mandatory packages on startup. Chatterbox (TTS offline/voice cloning) remains optional — shown as info card in Settings if not installed.
 
@@ -663,6 +663,10 @@ All JSON-delivering AI calls (Brain, Setup Brain, Director, Story Architect, Cha
 | `do_tts(narration, container, autoplay)` | TTS pipeline with spinner + error handling. Removes previous audio player from DOM (`s["_tts_player"]` tracking) |
 | `_setup_stt_button(...)` | STT: MediaRecorder → faster-whisper → auto-send |
 | `save_cfg()` | Labels → codes for file, labels in session, config reset on language change |
+| `_fetch_public_ip()` | Queries `https://api.ipify.org` (5s timeout) to detect current public IP. Returns `None` on failure. Called during cert generation to auto-include the public IP in SAN. |
+| `_cert_is_ios_compatible(cert_path, key_path, required_san_ips)` | Validates a cert+key pair for reuse. Four checks: `BasicConstraints(ca=True)`, `ExtendedKeyUsage(serverAuth)`, public-key fingerprint match (crash-mid-write guard), all `required_san_ips` present in SAN (triggers regen if public IP changed). Returns `False` on any failure. |
+| `_generate_self_signed_cert(extra_sans)` | Generates iOS 13+-compatible CA cert. Auto-detects public IP via `_fetch_public_ip()`, merges with `ssl_extra_sans` config. SAN: `localhost`, Pi hostname, `127.0.0.1`, local LAN IPs, public IP, extra SANs — all deduplicated. Extensions: `BasicConstraints(ca=True)`, `ExtendedKeyUsage(serverAuth)`, `KeyUsage`, `SubjectKeyIdentifier`, `SubjectAlternativeName`. `key.pem` chmod 600, `cert_dir` chmod 700 on every startup. |
+| `GET /download-cert` | Serves auto-generated CA cert as `application/x-x509-ca-cert` (no `Content-Disposition`). Active only when `enable_https: true` without custom cert paths. iOS Safari triggers profile installation flow. |
 
 ### i18n.py — Key Functions/Constants
 
