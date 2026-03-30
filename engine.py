@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.73"
+VERSION = "0.9.74"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -3989,7 +3989,7 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
 - WEAK_HIT: success at tangible cost
 - STRONG_HIT: clean success
 - NPCs act per their disposition and memories
-- Introduce new NAMED characters through action and dialog {E['dash']} give them distinct voices and traits
+- Introduce new NAMED characters through action and dialog. An NPC's agenda and instinct are their engine {E['dash']} let those drives shape how they behave, what they pursue, what they avoid. Distinct voice comes from specifics: vocabulary level, sentence rhythm, and what a character deflects or refuses to acknowledge. One physical trait or habitual gesture makes them tangible.
 - BACKSTORY CANON: If <backstory> is present, treat it as ESTABLISHED HISTORY. People mentioned there (family, friends, rivals) are ALREADY KNOWN to the player character {E['dash']} if they appear, they recognize the player and vice versa. NEVER introduce a backstory character as a stranger or reinterpret established relationships. Backstory events ALREADY HAPPENED {E['dash']} reference them as shared memory, not new plot.
 - Describe only sensory impressions, never player thoughts
 - SENSORY RANGE: Don't default to sight {E['dash']} include at least one non-visual sense per scene (a specific sound, smell, texture, or temperature). These anchor scenes in memory more durably than visual description alone.
@@ -4023,7 +4023,7 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
 - NEVER skip the player's contribution. NEVER jump straight to NPC reactions without first showing what the player character said or did.
 - NPCs REACT to what the player actually said/did, not to a reinterpretation.
 </player_authorship>
-<style>Terse, vivid, sensory. Show, don't tell. Player co-creates the world  --  integrate new elements seamlessly.</style>"""
+<style>Terse and precise — one specific detail beats three general ones. Render emotion through behavior and sensation, not labels. The player is inside the world, not watching it. Integrate what the player brings seamlessly, as if it was always there.</style>"""
 
 
 def call_narrator(client: anthropic.Anthropic, prompt: str,
@@ -5265,7 +5265,7 @@ def build_dialog_prompt(game: GameState, brain: dict, player_words: str = "",
 {npc}{npcs_section}{wl}{crisis}
 {pacing}{director_block}
 {_story_context_block(game)}{_recent_events_block(game)}</scene>
-<task>2-3 paragraphs of immersive narration. Focus entirely on atmosphere, dialog, and character interaction. If <director_guidance> is present, follow its narrative direction while maintaining your creative voice.</task>"""
+<task>2-3 paragraphs of immersive narration. Let the world breathe around the conversation — small details of place, light, sound, and texture that make this moment feel inhabited. Something between the characters should shift by the end. If <director_guidance> is present, follow its direction while maintaining your creative voice.</task>"""
 
 
 def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
@@ -5322,15 +5322,15 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
     if roll.result == "MISS":
         clk = "".join(f' clock_triggered="{e["clock"]}:{e["trigger"]}"' for e in clock_events)
         match_hint = ' A MATCH \u2014 the situation escalates dramatically, a fateful twist makes everything worse.' if roll.match else ''
-        constraint = f'<result type="MISS"{match_tag} consequences="{",".join(consequences)}"{clk}>Concrete failure. No silver linings. Make it hurt.{match_hint}</r>'
+        constraint = f'<result type="MISS"{match_tag} consequences="{",".join(consequences)}"{clk}>Concrete failure — the situation worsens. Make it hurt: physical, emotional, or narrative cost. A new complication emerges that creates fresh pressure or danger.{match_hint}</r>'
     elif roll.result == "WEAK_HIT":
         match_hint = ' A MATCH \u2014 despite the cost, something unexpected and significant happens, a twist of fate.' if roll.match else ''
         cons_attr = f' consequences="{",".join(consequences)}"' if consequences else ''
-        constraint = f'<result type="WEAK_HIT"{match_tag}{cons_attr}>Success with tangible cost or complication.{match_hint}</r>'
+        constraint = f'<result type="WEAK_HIT"{match_tag}{cons_attr}>Success, but at a cost that matters — not just physical damage, but something lost, compromised, or complicated.{match_hint}</r>'
     else:
         match_hint = ' A MATCH \u2014 an unexpected boon, a fateful revelation, or a dramatic advantage beyond the clean success.' if roll.match else ''
         cons_attr = f' consequences="{",".join(consequences)}"' if consequences else ''
-        constraint = f'<result type="STRONG_HIT"{match_tag}{cons_attr}>Clean success.{match_hint}</r>'
+        constraint = f'<result type="STRONG_HIT"{match_tag}{cons_attr}>Clean success — but even victory has texture. A detail, reaction, or consequence that makes the win feel earned and opens what comes next.{match_hint}</r>'
 
     position_tag = f'<position level="{position}" effect="{effect}"/>'
 
@@ -5368,7 +5368,7 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
 {npc}{npcs_section}{wl}{flags}{agency}
 {pacing}{director_block}
 {_story_context_block(game)}{_recent_events_block(game)}</scene>
-<task>2-4 paragraphs of immersive narration. If <director_guidance> is present, follow its narrative direction while maintaining your creative voice.</task>"""
+<task>2-4 paragraphs of immersive narration. Let the roll consequence open new story questions rather than just closing old ones — the scene should end in motion, with something shifted. If <director_guidance> is present, follow its direction while maintaining your creative voice.</task>"""
 
 
 # ===============================================================

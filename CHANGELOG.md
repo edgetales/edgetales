@@ -5,6 +5,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.74]
+
+### Changed
+- **Narrator task tags improved for action and dialog turns.** Action prompt: replaced generic "2-4 paragraphs of immersive narration" with a craft-focused instruction that encourages roll consequences to open new story questions rather than simply resolving them — scenes should end in motion with something shifted. Dialog prompt: replaced "focus entirely on atmosphere, dialog, and character interaction" with a directive to let the world breathe around the conversation through sensory details of place, light, sound, and texture, while still requiring something to shift between the characters by the end. Both changes apply every turn and are intended to improve narrative momentum and scene texture.
+- **Narrator `<style>` block rewritten.** Replaced "Terse, vivid, sensory. Show, don't tell." with concrete craft direction: one specific detail beats three general ones; render emotion through behavior and sensation, not labels; the player is inside the world, not watching it.
+- **NPC introduction rule in narrator system prompt expanded.** Replaced the single-line "give them distinct voices and traits" with a concrete craft instruction: NPCs' agenda and instinct are their behavioral engine; distinct voice comes from vocabulary level, sentence rhythm, and what a character deflects or refuses to acknowledge; one physical trait or habitual gesture makes them tangible.
+- **Roll result guidance texts sharpened in `build_action_prompt()`.** MISS: added "physical, emotional, or narrative cost" to clarify cost types, and "a new complication emerges that creates fresh pressure or danger" to make failures story-generative rather than purely punishing. WEAK_HIT: replaced "tangible cost or complication" with "something lost, compromised, or complicated" to steer away from the default of taking physical damage. STRONG_HIT: replaced "Clean success" with a craft note that even victories have texture and should open what comes next, preventing flat resolution prose.
+
+---
+
 ## [0.9.73]
 
 ### Fixed
