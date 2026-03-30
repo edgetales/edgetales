@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.72"
+VERSION = "0.9.73"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -1527,7 +1527,14 @@ def _absorb_duplicate_npc(game, original: dict, merged_name: str):
     Example: Metadata Extractor sends both new_npcs=[{"name":"Finn"}] and
     npc_details=[{"npc_id":"npc_7","full_name":"Finn"}]. _process_new_npcs
     creates npc_8 "Finn", then _process_npc_details renames npc_7→"Finn".
-    This function merges npc_8 back into npc_7 to prevent duplication."""
+    This function merges npc_8 back into npc_7 to prevent duplication.
+
+    Merge direction: original keeps its ID (callers hold this reference), but if
+    dup is the richer character (established bond, agenda, more memories), its
+    substantive fields overwrite original's in-place. This handles rename scenarios
+    where a thin descriptor-NPC ("Die Frau im Wollhut") is renamed to a name already
+    carried by a rich established character ("Hanna") — the established character's
+    data must win."""
     merged_norm = _normalize_for_match(merged_name)
     for dup in game.npcs:
         dup_name_norm = _normalize_for_match(dup.get("name", ""))
@@ -1539,35 +1546,83 @@ def _absorb_duplicate_npc(game, original: dict, merged_name: str):
             continue
         dup_id = dup.get("id", "?")
         dup_mems = dup.get("memory", [])
-        # Transfer memories
+
+        # Determine which is the richer, more established character.
+        # Score: memories count heavily, plus established relationship signals.
+        # Computed BEFORE memory combination so the pre-merge state is compared.
+        def _richness(n):
+            return (len(n.get("memory", [])) * 2
+                    + bool(n.get("agenda")) * 3
+                    + bool(n.get("instinct")) * 3
+                    + n.get("bond", 0) * 2
+                    + bool(n.get("description")) * 1)
+
+        dup_richer = _richness(dup) > _richness(original)
+
+        # Transfer memories (always combine both sets)
         original.setdefault("memory", [])
         original["memory"].extend(dup_mems)
+
         # Absorb importance accumulator
         original["importance_accumulator"] = (
             original.get("importance_accumulator", 0)
             + dup.get("importance_accumulator", 0)
         )
-        # Absorb description/agenda/instinct if original is empty
-        if not original.get("description") and dup.get("description"):
-            original["description"] = dup["description"]
-        if not original.get("agenda") and dup.get("agenda"):
-            original["agenda"] = dup["agenda"]
-        if not original.get("instinct") and dup.get("instinct"):
-            original["instinct"] = dup["instinct"]
-        # Merge aliases (add dup's aliases, avoid self-aliases)
+
+        if dup_richer:
+            # dup is the established character — its substantive fields win.
+            # original keeps its ID, but gets dup's identity data in-place.
+            if dup.get("description"):
+                original["description"] = dup["description"]
+            if dup.get("agenda"):
+                original["agenda"] = dup["agenda"]
+            if dup.get("instinct"):
+                original["instinct"] = dup["instinct"]
+            if dup.get("bond", 0) > original.get("bond", 0):
+                original["bond"] = dup["bond"]
+            if dup.get("disposition") and dup["disposition"] != "neutral":
+                original["disposition"] = dup["disposition"]
+            if dup.get("last_location"):
+                original["last_location"] = dup["last_location"]
+            if dup.get("secrets"):
+                original.setdefault("secrets", [])
+                original["secrets"].extend(
+                    s for s in dup["secrets"] if s not in original["secrets"]
+                )
+            # Transfer reflection state so the merged NPC inherits dup's
+            # reflection history — avoids a spurious re-reflection of content
+            # that dup already processed.
+            if dup.get("last_reflection_scene", 0) > original.get("last_reflection_scene", 0):
+                original["last_reflection_scene"] = dup["last_reflection_scene"]
+            if dup.get("_needs_reflection"):
+                original["_needs_reflection"] = True
+            log(f"[NPC] Absorb: dup '{dup.get('name', '?')}' ({dup_id}) was richer — "
+                f"its fields promoted into original '{original['name']}' "
+                f"({original.get('id', '?')})")
+        else:
+            # original is established — only fill empty fields from dup
+            if not original.get("description") and dup.get("description"):
+                original["description"] = dup["description"]
+            if not original.get("agenda") and dup.get("agenda"):
+                original["agenda"] = dup["agenda"]
+            if not original.get("instinct") and dup.get("instinct"):
+                original["instinct"] = dup["instinct"]
+            if dup.get("last_location") and not original.get("last_location"):
+                original["last_location"] = dup["last_location"]
+
+        # Merge aliases from both sides (avoid self-aliases)
         original.setdefault("aliases", [])
         existing_norms = {_normalize_for_match(a) for a in original["aliases"]}
+        original_name_norm = _normalize_for_match(original.get("name", ""))
         for alias in dup.get("aliases", []):
-            if (_normalize_for_match(alias) not in existing_norms
-                    and _normalize_for_match(alias) != merged_norm):
+            alias_norm = _normalize_for_match(alias)
+            if alias_norm not in existing_norms and alias_norm != original_name_norm:
                 original["aliases"].append(alias)
-        # Prefer most recent last_location
-        if dup.get("last_location") and not original.get("last_location"):
-            original["last_location"] = dup["last_location"]
+
         game.npcs.remove(dup)
         log(f"[NPC] Absorbed duplicate '{dup.get('name', '?')}' ({dup_id}) "
             f"into '{original['name']}' ({original.get('id', '?')}): "
-            f"{len(dup_mems)} memories transferred")
+            f"{len(dup_mems)} memories transferred, richer={'dup' if dup_richer else 'original'}")
         # Sanitize: strip parenthetical descriptor aliases the dup name may have introduced
         _apply_name_sanitization(original)
         # Consolidate: merged memory lists may now exceed MAX_NPC_MEMORY_ENTRIES
@@ -3963,7 +4018,7 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
 - The PLAYER IS the character. If <player_words> is provided, these are CANONICAL.
 - DIALOG: The narration MUST SHOW the player character speaking. Include their words as quoted dialog in the scene (with speech tags/body language). The player's speech MUST appear in the text BEFORE NPCs react to it.
 - PRESERVE EXACTLY: Keep the player's word choices, names, spelling, and phrasing intact. If the player writes a wrong name, a typo, slang, or informal language, that IS what the character said {E['dash']} reproduce it faithfully. NEVER correct names, fix factual errors, convert numbers to words, or "improve" the player's language. The ONLY permitted changes are adding punctuation and capitalizing sentence starts.
-- DESCRIBED SPEECH: If the player describes speaking WITHOUT giving exact words (e.g. "I ask him about Thornhill" or "I describe the suspect"), narrate this as INDIRECT SPEECH or brief summary {E['dash']} do NOT invent specific quoted dialog for the player character. Write "Du fragst ihn nach Thornhill" or "Du beschreibst den Verdächtigen", then show the NPC's reaction. NEVER put invented words in the player character's mouth.
+- DESCRIBED SPEECH: If the player describes speaking WITHOUT giving exact words (e.g. "I ask him about Thornhill" or "I describe the suspect"), narrate this as INDIRECT SPEECH or brief summary {E['dash']} do NOT invent specific quoted dialog for the player character. Write "You ask him about Thornhill" or "You describe the suspect", then show the NPC's reaction. NEVER put invented words in the player character's mouth.
 - ACTIONS: The narration MUST SHOW the player character performing the described action. You may add sensory detail and atmosphere, but the core action stays as stated and must be visible in the text.
 - NEVER skip the player's contribution. NEVER jump straight to NPC reactions without first showing what the player character said or did.
 - NPCs REACT to what the player actually said/did, not to a reinterpretation.
@@ -4108,7 +4163,7 @@ emotional_weight must be ONE of: neutral, curious, wary, angry, grateful, suspic
 disposition must be ONE of: neutral, friendly, distrustful, hostile, loyal.
 time_update must be ONE of: early_morning, morning, midday, afternoon, evening, late_evening, night, deep_night — or null if no time change.
 location_update: new location name if the character MOVED to a different place, null if they stayed. IMPORTANT: if no movement occurred, always return null — do NOT add city names, qualifiers, or extra words to the existing location. If a move did occur, use the exact place name as it appears in the narration (short and specific, e.g. "Die Kathedrale", not "Die Kathedrale in Lyon").
-npc_renames: only for identity REVEALS (spy unmasked, alias discovered). NOT for surname additions.
+npc_renames: for identity REVEALS — when an NPC's true or personal name is established for the first time. Covers: spy unmasked, alias discovered, AND descriptor-named NPCs who receive a real name (e.g. "Die Frau im Wollhut" → "Hanna", "Der unbekannte Mann" → "Klaus", "Die Technikerin" → "Sara Novak"). Use the npc_id of the descriptor NPC from the known list and set new_name to the revealed personal name. NOT for surname additions to an already-named NPC (use npc_details for that).
 npc_details: for newly established facts (surname, role change). full_name if name extended, description if role/situation changed.
 new_npcs: ONLY for characters who are PHYSICALLY PRESENT in the scene AND actively interacting (speaking, acting, reacting). They must NOT already be in the known NPC list. NEVER include the player character. NEVER include:
 - Characters who are only MENTIONED in conversation, stories, or memories
@@ -4121,7 +4176,7 @@ memory_updates: for EACH NPC who participated in or witnessed this scene. Use th
 NPC DISAMBIGUATION: The known_npcs list shows each NPC's last known location [at:...] and a short description. When the narration uses a name or descriptor that could match multiple NPCs, prefer the NPC whose location matches <current_location> or who is described as being physically present. An NPC [at:FarAwayPlace] is unlikely to appear at <current_location> without the narration explicitly describing their arrival.
 about_npc (in memory_updates): If the memory is primarily ABOUT ANOTHER NPC (not the player), set about_npc to that other NPC's npc_id. Examples: NPC A is told something about NPC B → memory on A with about_npc=B's id. NPC A witnesses NPC B doing something → memory on A with about_npc=B's id. If the memory is about the player or a general event, set about_npc to null.
 IMPORTANT: If the player directly tells an NPC something about another NPC (gossip, warning, lie, compliment, romantic suggestion), this MUST be captured as its own memory_update with about_npc set — even if other events also happened to that NPC in the same scene. An NPC can have multiple memories per scene if distinctly different events occurred.
-deceased_npcs: list NPCs (by npc_id) whose death is DEPICTED BY THE NARRATOR as it happens — they collapse, are killed, stop breathing, are consumed by fire, are pulled under water/earth with no return described, are destroyed by supernatural forces, etc. The death must be shown as FINAL AND IRREVERSIBLE in the prose — the narrator describes them as gone, taken, destroyed, or dead.
+deceased_npcs: list NPCs (by npc_id) whose death is DEPICTED BY THE NARRATOR as it happens. This includes BOTH explicit deaths AND deaths described through physical sensation or literary language. Qualifying descriptions include: they collapse / are killed / stop breathing / go limp / their movement stops and does not resume / resistance ceases permanently / consumed by fire / destroyed / pulled under with no return described / body goes still / the struggle ended. LITERARY deaths count: e.g. "the legs kicked twice and then were still" or "the resistance left them" or "they ceased" — if the prose makes clear that a living character has become permanently non-living, mark them deceased. The death does not need to use the words "dead" or "died" — physical cessation described as final qualifies.
 CRITICAL: Do NOT mark an NPC as deceased if their death is only CLAIMED, REPORTED, or ALLEGED by another character in dialog (e.g. someone says "Leo ist tot"). Dialog claims about death are unreliable information — characters lie, bluff, or may be wrong. Only narrator-described, physically-witnessed deaths count. Never include NPCs already marked [DECEASED].
 lore_npcs: ONLY for named persons established in this scene as historically or narratively significant, but who have NEVER been and are NOT NOW physically present. Use this for dead mentors whose legacy drives the story, missing persons whose fate is central, historical figures whose past actions echo into the present. Rules: (1) They must be NAMED and clearly significant — not just mentioned in passing. (2) Do NOT use for corpses or physically present characters — use new_npcs for those, even if dead. (3) Do NOT include NPCs already marked [LORE] or any other marker in the known_npcs list — they are already tracked. (4) Only add when the narration establishes them as relevant to the ongoing story. NPCs marked [LORE] in known_npcs can receive memory_updates using their npc_id."""
 
@@ -5730,8 +5785,21 @@ def _apply_memory_updates(game: GameState, json_text: str,
 
                 # Update importance accumulator for reflection triggering
                 npc["importance_accumulator"] = npc.get("importance_accumulator", 0) + importance
-                # Track where this NPC was last seen (spatial consistency)
-                if game.current_location:
+                # Track where this NPC was last seen (spatial consistency).
+                # Only update for NPCs physically present in the scene (in scene_present_ids).
+                # NPCs only mentioned in dialog or remote (e.g. in a different time period)
+                # receive memory entries but must NOT have their location overwritten with
+                # the player's current location — they stayed where they were.
+                # Exemption: lore→active transitions (npc_id in pre_turn_lore_ids).
+                # These NPCs physically appeared this scene but were not in scene_present_ids
+                # (built before the metadata cycle) — _reactivate_npc does not set
+                # last_location, so without this exemption they would remain at ""
+                # despite arriving on-screen.
+                if game.current_location and (
+                    scene_present_ids is None
+                    or npc["id"] in scene_present_ids
+                    or (pre_turn_lore_ids is not None and npc["id"] in pre_turn_lore_ids)
+                ):
                     npc["last_location"] = game.current_location
                 if npc["importance_accumulator"] >= REFLECTION_THRESHOLD:
                     npc["_needs_reflection"] = True

@@ -5,6 +5,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.73]
+
+### Fixed
+- **Dead NPCs staying `active` after literary death descriptions.** The `deceased_npcs` metadata extractor prompt only listed explicit death vocabulary ("collapse", "stop breathing", etc.) — missing deaths described through physical sensation or literary language (e.g. *"die Beine treten zweimal, dann hört auch das auf"*). Haiku failed to flag NPCs as deceased when the narrator used this style. Prompt now explicitly covers literary/physical cessation patterns with German and English examples, making clear that the word "dead" or "died" is not required — permanent physical cessation described as final qualifies.
+- **Remote NPCs receiving wrong `last_location` after player teleports/time-travels.** When the player moved to a new location mid-scene, any NPC receiving a `memory_update` in that same scene had `last_location` blindly overwritten with `game.current_location` — even NPCs who remained in the previous location (e.g. Plaček and Hanka staying in 2026 while the player time-jumps to 1933). Fixed in `_apply_memory_updates`: `last_location` is now only updated for NPCs whose ID is in `scene_present_ids` (physically activated in the scene). NPCs that are merely mentioned or observed remotely keep their existing location. Follow-up: added `pre_turn_lore_ids` exemption to the same guard — lore→active NPCs (physically appearing for the first time) were not in `scene_present_ids` (built before the metadata cycle) and would have received an empty `last_location` despite arriving on-screen.
+- **Descriptor-named NPCs not merged when their real name is revealed.** `npc_renames` prompt was too narrow ("spy unmasked, alias discovered") — Haiku did not recognize the most common case: a descriptor-named NPC (e.g. "Die Frau im Wollhut") receiving a personal name ("Hanna") in a later scene. The prompt now explicitly covers this case with examples. Follow-up: `_absorb_duplicate_npc` now uses a richness score (memory count × 2 + bond × 2 + agenda × 3 + instinct × 3 + description × 1) to determine merge direction — if `dup` scores higher, its substantive fields (description, agenda, instinct, disposition, secrets, last_location, last_reflection_scene) overwrite `original`'s in-place while `original` retains its ID. `_needs_reflection` propagated from `dup` if set. Dead variable `orig_mems` removed.
+
+---
+
 ## [0.9.72]
 
 ### Removed
