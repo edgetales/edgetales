@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.71"
+VERSION = "0.9.72"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -116,7 +116,7 @@ NPC_ACTIVATION_THRESHOLD = 0.7     # Minimum score for full NPC activation
 NPC_MENTION_THRESHOLD = 0.3        # Minimum score for NPC name mention
 DIRECTOR_INTERVAL = 3              # Call director every N scenes (when no trigger)
 MEMORY_RECENCY_DECAY = 0.92        # Exponential decay factor for memory recency
-AUTONOMOUS_CLOCK_TICK_CHANCE = 0.18  # Per-scene chance each threat clock ticks autonomously
+AUTONOMOUS_CLOCK_TICK_CHANCE = 0.20  # Per-scene chance each threat clock ticks autonomously
 DIRECTOR_MODEL = BRAIN_MODEL       # Director uses same model as Brain (Haiku)
 
 # --- Max output tokens per call ---
@@ -1762,7 +1762,6 @@ def _process_new_npcs(game, json_text: str):
                 "memory": [],
                 "introduced": True,  # They appeared in narration
                 "aliases": paren_aliases,
-                "keywords": [],
                 "importance_accumulator": 0,
                 "last_reflection_scene": 0,
                 "last_location": game.current_location or "",
@@ -1849,7 +1848,6 @@ def _process_lore_npcs(game, lore_list: list):
             "memory": [],
             "introduced": True,
             "aliases": paren_aliases,
-            "keywords": [],
             "importance_accumulator": 0,
             "last_reflection_scene": 0,
             "last_location": "",
@@ -2245,7 +2243,6 @@ def _compute_npc_tfidf_scores(npcs: list, query_text: str) -> dict[str, float]:
 def _ensure_npc_memory_fields(npc: dict):
     """Ensure NPC has all memory system fields (migration + new NPC creation)."""
     npc.setdefault("memory", [])
-    npc.setdefault("keywords", [])  # Kept for savegame backward compatibility
     npc.setdefault("importance_accumulator", 0)
     npc.setdefault("last_reflection_scene", 0)
     npc.setdefault("last_location", "")  # Where NPC was last seen (spatial consistency)
@@ -3019,7 +3016,7 @@ def _tick_autonomous_clocks(game: GameState) -> list:
     """Autonomously advance threat clocks by chance each scene.
     Each unfilled threat clock rolls AUTONOMOUS_CLOCK_TICK_CHANCE independently —
     simulates the world moving forward regardless of player roll results.
-    Owner-controlled clocks (owner != '') are excluded.
+    NPC-owned scheme clocks are excluded (they tick via check_npc_agency instead).
     Returns a list of clock_event dicts (same format as apply_consequences)."""
     ticked = []
     for clock in game.clocks:
@@ -3027,8 +3024,8 @@ def _tick_autonomous_clocks(game: GameState) -> list:
             continue
         if clock.get("filled", 0) >= clock.get("segments", 6):
             continue  # Already full
-        if clock.get("owner", ""):
-            continue  # Owner-controlled clocks tick via dedicated mechanics
+        if clock.get("owner", "") not in ("", "world"):
+            continue  # NPC-owned clocks tick only via check_npc_agency
         if random.random() < AUTONOMOUS_CLOCK_TICK_CHANCE:
             clock["filled"] = min(clock["segments"], clock["filled"] + 1)
             triggered = clock["filled"] >= clock["segments"]
@@ -4750,6 +4747,18 @@ def call_director(client: anthropic.Anthropic, game: GameState,
         return {}
 
 
+_SENTENCE_ENDS = ('.', '!', '?', '"', '»', '…', ')', '–', '—')
+
+def _truncate_to_last_sentence(text: str) -> str:
+    """Truncate text to the last complete sentence.
+    Scans backwards for the last sentence-terminating character.
+    Returns empty string if no terminator is found (fully truncated)."""
+    for i in range(len(text) - 1, -1, -1):
+        if text[i] in _SENTENCE_ENDS:
+            return text[:i + 1]
+    return ""
+
+
 def _apply_director_guidance(game: GameState, guidance: dict):
     """Apply Director guidance to game state: store guidance, apply reflections,
     update session log with rich summary."""
@@ -4806,8 +4815,17 @@ def _apply_director_guidance(game: GameState, guidance: dict):
                     f"'{act.get('phase')}' → trigger fulfilled: '{trigger_text[:80]}'")
 
     # Enrich the latest session log entry with Director's summary
-    if guidance.get("scene_summary") and game.session_log:
-        game.session_log[-1]["rich_summary"] = guidance["scene_summary"]
+    scene_summary = guidance.get("scene_summary", "")
+    if scene_summary and game.session_log:
+        if not scene_summary.rstrip().endswith(_SENTENCE_ENDS):
+            scene_summary = _truncate_to_last_sentence(scene_summary)
+            if scene_summary:
+                log("[Director] rich_summary truncated to last complete sentence")
+            else:
+                log("[Director] rich_summary fully truncated — skipped, Brain summary kept",
+                    level="warning")
+        if scene_summary:
+            game.session_log[-1]["rich_summary"] = scene_summary
 
     # Apply NPC reflections
     for ref in guidance.get("npc_reflections", []):
@@ -4821,7 +4839,7 @@ def _apply_director_guidance(game: GameState, guidance: dict):
         if not reflection_text:
             continue
         # Reject truncated reflections (max_tokens cutoff)
-        if not reflection_text.rstrip().endswith(('.', '!', '?', '"', '»', '…', ')', '–', '—')):
+        if not reflection_text.rstrip().endswith(_SENTENCE_ENDS):
             log(f"[Director] Rejected truncated reflection for {npc.get('name','?')}: "
                 f"'{reflection_text[:60]}'", level="warning")
             continue
@@ -5329,7 +5347,6 @@ def _process_game_data(game: GameState, data: dict, force_npcs: bool = True):
             nd.setdefault("memory", [])
             nd.setdefault("introduced", False)
             nd.setdefault("aliases", [])
-            nd.setdefault("keywords", [])
             nd.setdefault("importance_accumulator", 0)
             nd.setdefault("last_reflection_scene", 0)
             nd.setdefault("last_location", game.current_location or "")
@@ -5652,7 +5669,6 @@ def _apply_memory_updates(game: GameState, json_text: str,
                         "memory": [],
                         "introduced": True,
                         "aliases": [],
-                        "keywords": [],
                         "importance_accumulator": 0,
                         "last_reflection_scene": 0,
                         "last_location": game.current_location or "",

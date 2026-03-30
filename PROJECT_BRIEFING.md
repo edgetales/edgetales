@@ -8,7 +8,7 @@
 
 | | |
 |---|---|
-| **Version** | v0.9.70 |
+| **Version** | v0.9.71 |
 | **Codebase** | ~13,600 lines across 5 source files + config |
 | **Stack** | Python 3.11+, NiceGUI, Anthropic SDK (Structured Outputs), reportlab, edge-tts, faster-whisper, wonderwords, stop-words, nameparser, cryptography |
 | **AI Models** | Narrator/Architect: `claude-sonnet-4-6` · Brain/Director/Extractors: `claude-haiku-4-5-20251001` |
@@ -535,7 +535,6 @@ Chapter archives: `save_chapter_archive()` / `load_chapter_archive()` / `list_ch
 | `memory` | list | Memory entries (NOT "memories") |
 | `introduced` | bool | True once NPC appeared in narration |
 | `aliases` | list[str] | Alternative names / revealed identities |
-| `keywords` | list[str] | TF-IDF keywords for activation scoring |
 | `importance_accumulator` | int | Triggers reflection when ≥ threshold |
 | `last_reflection_scene` | int | Scene number of last reflection |
 | `last_location` | str | Location string where NPC was last seen (NOT "last_seen_scene") |

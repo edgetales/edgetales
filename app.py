@@ -1927,10 +1927,9 @@ def render_creation_flow(chat_container) -> bool:
         return True
     if step == "tone_custom":
         ui.markdown(t("creation.custom_tone_title", lang))
-        inp = ui.input(placeholder=t("creation.tone_placeholder", lang), value=creation.get("tone_description", "")).classes("w-full").props(f'aria-label="{t("creation.tone_placeholder", lang)}"')
+        inp = ui.textarea(placeholder=t("creation.tone_placeholder", lang), value=creation.get("tone_description", "")).classes("w-full").props(f'rows=3 aria-label="{t("creation.tone_placeholder", lang)}"')
         async def go():
             if inp.value.strip(): _finish_tone_custom(inp.value.strip())
-        inp.on("keydown.enter", go)
         with ui.row().classes("gap-2"):
             ui.button(t("creation.back", lang), on_click=_creation_back_to_tone).props("flat")
             ui.button(t("creation.next", lang), on_click=go, color="primary")
@@ -2005,7 +2004,7 @@ def _pick_tone_custom():
     ui.navigate.reload()
 
 def _finish_tone_custom(txt):
-    s=S();c=s["creation"];c["tone"]="custom";c["tone_label"]=f"{E['pen']} {txt[:40]}";c["tone_description"]=txt;c["step"]="archetype"
+    s=S();c=s["creation"];label=txt.replace("\n"," ").replace("\r","");c["tone"]="custom";c["tone_label"]=f"{E['pen']} {label[:40]}";c["tone_description"]=txt;c["step"]="archetype"
     ui.navigate.reload()
 
 def _pick_archetype(l,c):

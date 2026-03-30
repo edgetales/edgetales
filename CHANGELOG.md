@@ -5,6 +5,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.72]
+
+### Removed
+- **`keywords` field removed from all NPC dicts.** Legacy stub from a previous keyword-based NPC activation system, fully superseded by TF-IDF scoring (`_compute_npc_tfidf_scores`). The field was never read or written after the TF-IDF migration — only `setdefault`-populated with `[]` for backward compatibility. Removed from 5 sites: active NPC creation, lore NPC creation, stub NPC creation in `_apply_memory_updates`, and migration setdefaults in `_ensure_npc_memory_fields` and `load_game`.
+
+### Fixed
+- **`world`-owned clocks never ticked autonomously.** `_tick_autonomous_clocks()` skipped any clock with a non-empty `owner` field. Since all world-owned clocks carry `owner: "world"` (non-empty string → truthy), the 18%-per-scene autonomous tick chance never fired for them — only player MISSes advanced world threat clocks. Fixed: the guard now skips only clocks whose owner is neither `""` nor `"world"`, matching the original intent (NPC-scheme clocks tick via `check_npc_agency`; world-threat clocks tick autonomously).
+- **Truncated `rich_summary` stored in `session_log`.** The Director's `scene_summary` was written verbatim even when truncated mid-sentence by the model. The field is now validated before writing: if it lacks a sentence-terminating character, `_truncate_to_last_sentence()` scans backwards for the last complete sentence and stores that instead. If no complete sentence exists, the write is skipped entirely and the Brain's `summary` remains as fallback (logged as warning). New `_SENTENCE_ENDS` module-level tuple and `_truncate_to_last_sentence()` helper are shared with the existing NPC reflection truncation guard (which previously used an inline literal).
+
+### Changed
+- **`AUTONOMOUS_CLOCK_TICK_CHANCE` raised from 0.18 to 0.20.** Pairs with the world-clock fix above; slightly increases narrative pressure from threat clocks.
+- **Tone "Tarantino-Style" renamed to "Pulp"** in `_TONES` for both `de` and `en` in `i18n.py`. Internal key `"tarantino"` unchanged.
+- **Custom tone input in creation flow changed from single-line `ui.input` to `ui.textarea` (3 rows).** Gives players more comfortable space to describe a custom tone. `keydown.enter` submit binding removed (inappropriate for textarea).
+
+---
+
 ## [0.9.71]
 
 ### Changed
