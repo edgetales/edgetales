@@ -13,6 +13,7 @@ import random
 import math
 import logging
 import sys
+import html
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass, field
@@ -61,7 +62,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.75"
+VERSION = "0.9.76"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -70,6 +71,27 @@ USERS_DIR.mkdir(exist_ok=True)
 GLOBAL_CONFIG_FILE = _SCRIPT_DIR / "config.json"
 LOG_DIR = _SCRIPT_DIR / "logs"
 LOG_DIR.mkdir(exist_ok=True)
+
+# --- Utility helpers ---
+
+def _xa(s: str) -> str:
+    """Escape a string for safe use as an XML attribute value.
+    Converts " → &quot;, < → &lt;, > → &gt;, & → &amp;.
+    Use for all AI-generated prose inserted into XML attribute positions."""
+    return html.escape(str(s), quote=True)
+
+
+def _scene_header(game: "GameState") -> str:
+    """Build the escaped <world> and <character> opening lines shared by all narrator prompts.
+    Attribute values are escaped via _xa(); element content via html.escape().
+    Single source of truth — prevents genre/tone/player_name/description from breaking prompt XML."""
+    return (
+        f'<world genre="{_xa(game.setting_genre)}" tone="{_xa(game.setting_tone)}">'
+        f'{html.escape(game.setting_description)}</world>\n'
+        f'<character name="{_xa(game.player_name)}">'
+        f'{html.escape(game.character_concept)}</character>'
+    )
+
 
 # --- Tuning constants ---
 STAT_TARGET_SUM = 7                # Character stats must total this
@@ -2965,7 +2987,7 @@ def apply_consequences(game: GameState, roll: RollResult, brain: dict) -> tuple[
                 old_bond = target["bond"]
                 target["bond"] = max(0, target["bond"] - 1)
                 if target["bond"] < old_bond:
-                    consequences.append(f'{target["name"]} bond -1')
+                    consequences.append(f'{html.escape(target["name"])} bond -1')
             dmg = 2 if position == "desperate" else 1
             old = game.spirit
             game.spirit = max(0, game.spirit - dmg)
@@ -3172,14 +3194,14 @@ def _story_context_block(game: GameState) -> str:
         )
     elif bp.get("story_complete"):
         endings = bp.get("possible_endings", [])
-        ending_hint = f'\n<story_ending>Story has EXCEEDED its planned arc (scene {game.scene_count}). Guide toward a satisfying conclusion in the next 1-2 scenes. Possible endings: {", ".join(e["type"] for e in endings)}. Let player actions determine which ending, but actively weave toward closure.</story_ending>'
+        ending_hint = f'\n<story_ending>Story has EXCEEDED its planned arc (scene {game.scene_count}). Guide toward a satisfying conclusion in the next 1-2 scenes. Possible endings: {", ".join(html.escape(e["type"]) for e in endings)}. Let player actions determine which ending, but actively weave toward closure.</story_ending>'
     elif act.get("approaching_end"):
         endings = bp.get("possible_endings", [])
-        ending_hint = f'\n<story_ending>Story nearing conclusion. Possible endings: {", ".join(e["type"] for e in endings)}. Let player actions determine which.</story_ending>'
+        ending_hint = f'\n<story_ending>Story nearing conclusion. Possible endings: {", ".join(html.escape(e["type"]) for e in endings)}. Let player actions determine which.</story_ending>'
 
     structure = bp.get("structure_type", "3act")
     thematic = bp.get("thematic_thread", "")
-    thematic_attr = f' thematic_thread="{thematic}"' if thematic else ""
+    thematic_attr = f' thematic_thread="{_xa(thematic)}"' if thematic else ""
 
     # Revelation hint: separate element so the full content reaches the narrator
     # untruncated. Only the first pending revelation is surfaced per scene.
@@ -3189,14 +3211,14 @@ def _story_context_block(game: GameState) -> str:
         rev = pending[0]
         rev_block = (
             f'\n<revelation_ready weight="{rev["dramatic_weight"]}">'
-            f'{rev["content"]}'
+            f'{html.escape(str(rev["content"]))}'
             f'</revelation_ready>'
         )
 
     return (
-        f'<story_arc structure="{structure}" act="{act["act_number"]}/{act["total_acts"]}"'
-        f' phase="{act["phase"]}" progress="{act["progress"]}" mood="{act.get("mood","")}"'
-        f' conflict="{bp.get("central_conflict","")}" act_goal="{act.get("goal","")}"'
+        f'<story_arc structure="{_xa(structure)}" act="{act["act_number"]}/{act["total_acts"]}"'
+        f' phase="{_xa(act["phase"])}" progress="{act["progress"]}" mood="{_xa(act.get("mood",""))}"'
+        f' conflict="{_xa(bp.get("central_conflict",""))}" act_goal="{_xa(act.get("goal",""))}"'
         f'{thematic_attr}/>'
         f'{rev_block}'
         f'{ending_hint}\n'
@@ -3218,7 +3240,7 @@ def _recent_events_block(game: GameState) -> str:
     for s in entries:
         summary = s.get("rich_summary") or s.get("summary", "")
         if summary:
-            lines.append(f"Scene {s.get('scene', '?')}: {summary[:120]}")
+            lines.append(f"Scene {s.get('scene', '?')}: {html.escape(summary[:120])}")
     if not lines:
         return ""
     return f"\n<recent_events>\n" + "\n".join(lines) + "\n</recent_events>"
@@ -3286,11 +3308,11 @@ def call_brain(client: anthropic.Anthropic, game: GameState, player_message: str
     if lore_summary:
         npc_summary += f"\n(lore, historically significant but never physically present):\n{lore_summary}"
     clock_summary = "\n".join(
-        f'- {c["name"]} ({c["clock_type"]}): {c["filled"]}/{c["segments"]}'
+        f'- {html.escape(c["name"])} ({c["clock_type"]}): {c["filled"]}/{c["segments"]}'
         for c in game.clocks if c["filled"] < c["segments"]
     ) or "(keine)"
     last_scenes = "\n".join(
-        f'Scene {s["scene"]}: {s.get("rich_summary") or s["summary"]}' for s in game.session_log[-3:]
+        f'Scene {s["scene"]}: {html.escape(s.get("rich_summary") or s["summary"])}' for s in game.session_log[-3:]
     ) or "(Start)"
 
     _cfg = config or EngineConfig()
@@ -3336,13 +3358,13 @@ dialog:none
     campaign_ctx = ""
     if game.campaign_history:
         campaign_ctx = f"\n<campaign>Chapter {game.chapter_number}. Previous: " + "; ".join(
-            f'Ch{ch.get("chapter","?")}:{ch.get("title","")}'
+            f'Ch{ch.get("chapter","?")}:{html.escape(ch.get("title",""))}'
             for ch in game.campaign_history[-3:]
         ) + "</campaign>"
 
     backstory_ctx = ""
     if getattr(game, 'backstory', ''):
-        backstory_ctx = f"\n<backstory>{game.backstory}</backstory>"
+        backstory_ctx = f"\n<backstory>{html.escape(game.backstory)}</backstory>"
 
     user_msg = f"""<state>
 loc:{game.current_location} | ctx:{game.current_scene_context}
@@ -3352,7 +3374,7 @@ time:{game.time_of_day or 'unspecified'} | prev_locations:{', '.join(game.locati
 <npcs>{npc_summary}</npcs>
 <clocks>{clock_summary}</clocks>
 <recent>{last_scenes}</recent>
-{_story_context_block(game)}{campaign_ctx}{backstory_ctx}<input>{player_message}</input>"""
+{_story_context_block(game)}{campaign_ctx}{backstory_ctx}<input>{html.escape(player_message)}</input>"""
 
     try:
         response = _api_create_with_retry(
@@ -3875,7 +3897,7 @@ def _content_boundaries_block(game: Optional[GameState] = None,
             "These topics MUST NOT appear in ANY form \u2014 not in narration, NPC dialog, "
             "backstories, world-building, descriptions, implied context, or metaphor. "
             "Treat them as non-existent in this world:\n"
-            f"{lines}\n"
+            f"{html.escape(lines)}\n"
             "</lines>"
         )
     if wishes:
@@ -3889,7 +3911,7 @@ def _content_boundaries_block(game: Optional[GameState] = None,
             "The opening scene should focus on establishing the world and tension; "
             "wish elements work best when they emerge unexpectedly in later scenes. "
             "Think of these as seeds to plant across the ENTIRE story arc, not a checklist for scene one:\n"
-            f"{wishes}\n"
+            f"{html.escape(wishes)}\n"
             "</player_wishes>"
         )
     parts.append("</content_boundaries>")
@@ -3914,7 +3936,7 @@ def _backstory_block(game: Optional[GameState] = None) -> str:
         "- Relationships described here ARE ESTABLISHED. A wife is already married, a mentor already known.\n"
         "- You may REFERENCE backstory naturally (memories, motivations, NPC dialog about the past) "
         "but never CONTRADICT or REWRITE it.\n"
-        f"{backstory}\n"
+        f"{html.escape(backstory)}\n"
         "</backstory>"
     )
 
@@ -3994,11 +4016,13 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
 - Describe only sensory impressions, never player thoughts
 - SENSORY RANGE: Don't default to sight {E['dash']} include at least one non-visual sense per scene (a specific sound, smell, texture, or temperature). These anchor scenes in memory more durably than visual description alone.
 - WORLD PERIPHERY: Once per scene, let one small background detail exist that has nothing to do with the player's immediate action {E['dash']} a sound from another room, a stranger's exchange, a worn object, weather shifting outside. Brief, never explained. It signals the world continues beyond this moment.
+- SCENE CONTINUITY: Begin in motion, not in setup. The player is still in the same body, the same emotional state as the last scene ended. Do NOT open with a fresh establishing paragraph when the last scene ended mid-action or mid-conversation — unless the player has moved to a new location (compare <location> with <prev_locations>), in which case briefly ground them in the new space before continuing the thread.
+- EMOTIONAL CARRY-THROUGH: If the previous scene ended with a significant emotional beat (betrayal, loss, triumph, relief, intimacy, shock), open this scene with that weight still present in the character's body language, perception, and attention. Emotional states do not reset between scenes. Show it through sensation and behavior, not through narration — the character did not process it yet.
 - End scenes OPEN {E['dash']} no option lists, no suggested actions
 - 2-4 paragraphs
 - TEMPORAL CONSISTENCY: If <time> is provided, maintain that time period. Time only moves FORWARD (never backward). If you mention specific times, they must be later than any previously mentioned time. Do NOT invent specific clock times unless narratively important {E['dash']} prefer atmospheric time cues (moonlight, sunset glow, morning mist). CRITICAL: Each scene transition represents minutes to hours of in-world time, NOT days or years. Events from recent scenes just happened {E['dash']} signs don't weather, wounds are fresh, sent NPCs are still en route or just arrived. Never describe recent events or objects as aged, decayed, or long-past unless the player explicitly time-skips.
 - SPATIAL CONSISTENCY: The <location> tag shows where the player currently IS. If <prev_locations> is provided, the player has LEFT those places. NEVER place the player back at a previous location unless they explicitly travel there. If an NPC has a last_seen attribute showing a DIFFERENT location than the player's current <location>, that NPC is NOT physically present {E['dash']} they cannot be heard through walls, seen, or interact directly. They can only appear if they plausibly traveled to the player's location (and the narration should describe their arrival). NPCs without last_seen or with last_seen matching <location> ARE present and can interact normally.
-- If <story_arc> is present, steer scenes toward the act goal and mood
+- If <story_arc> is present, steer scenes toward the act goal and mood. If <story_arc> contains a thematic_thread, let it surface periodically through NPC dialog, character reactions, or incidental observations {E['dash']} not as lecture or internal monologue, but as a question the world keeps quietly asking. Not every scene, but it should feel like a recurring undercurrent.
 - If revelation_ready is set, weave it into the scene naturally (through NPC dialog, discovered evidence, or environmental storytelling) {E['dash']} NEVER dump exposition
 - If <story_ending> is present, build toward a satisfying conclusion
 - If <director_guidance> is present, follow its narrative direction. It provides strategic story guidance — use it to inform the scene's direction, NPC behavior, and pacing, while maintaining your creative voice and atmospheric style.
@@ -4140,9 +4164,9 @@ def call_narrator_metadata(client: anthropic.Anthropic, narration: str,
     for n in game.npcs:
         if n.get("status") not in ("active", "background", "deceased", "lore"):
             continue
-        entry = f'{n["id"]}={n["name"]}'
+        entry = f'{n["id"]}={html.escape(n["name"])}'
         if n.get("aliases"):
-            entry += f' (aka {", ".join(n["aliases"])})'
+            entry += f' (aka {html.escape(", ".join(n["aliases"]))})'
         if n.get("status") == "deceased":
             entry += ' [DECEASED]'
         elif n.get("status") == "lore":
@@ -4150,15 +4174,16 @@ def call_narrator_metadata(client: anthropic.Anthropic, narration: str,
         # Location hint for spatial disambiguation
         npc_loc = n.get("last_location", "")
         if npc_loc:
-            entry += f' [at:{npc_loc}]'
+            entry += f' [at:{html.escape(npc_loc)}]'
         # Short description for identity disambiguation
         desc = n.get("description", "")
         if desc:
-            entry += f' — {desc[:60]}'
+            entry += f' — {html.escape(desc[:60])}'
         npc_refs.append(entry)
 
     system = f"""You are a metadata extractor for an RPG engine. Analyze the narration and extract game state changes.
 All text fields (event, description, scene_context) MUST be in {lang}.
+scene_context: 1 sentence capturing current situation AND dominant mood/tension — not just where/who, but the atmosphere. Example: "Negotiations at a standstill, the guard's suspicion barely concealed." Extract from the narration; do not invent.
 emotional_weight must be ONE of: neutral, curious, wary, angry, grateful, suspicious, terrified, loyal, conflicted, betrayed, devastated, euphoric.
 disposition must be ONE of: neutral, friendly, distrustful, hostile, loyal.
 time_update must be ONE of: early_morning, morning, midday, afternoon, evening, late_evening, night, deep_night — or null if no time change.
@@ -4181,11 +4206,11 @@ CRITICAL: Do NOT mark an NPC as deceased if their death is only CLAIMED, REPORTE
 lore_npcs: ONLY for named persons established in this scene as historically or narratively significant, but who have NEVER been and are NOT NOW physically present. Use this for dead mentors whose legacy drives the story, missing persons whose fate is central, historical figures whose past actions echo into the present. Rules: (1) They must be NAMED and clearly significant — not just mentioned in passing. (2) Do NOT use for corpses or physically present characters — use new_npcs for those, even if dead. (3) Do NOT include NPCs already marked [LORE] or any other marker in the known_npcs list — they are already tracked. (4) Only add when the narration establishes them as relevant to the ongoing story. NPCs marked [LORE] in known_npcs can receive memory_updates using their npc_id."""
 
     prompt = f"""<narration>{narration}</narration>
-<player_character>{game.player_name}</player_character>
+<player_character>{html.escape(game.player_name)}</player_character>
 <known_npcs>{chr(10).join(npc_refs) if npc_refs else '(none)'}</known_npcs>
-<current_location>{game.current_location or 'unknown'}</current_location>
-<current_time>{game.time_of_day or 'unknown'}</current_time>
-Extract all metadata from the narration above. Remember: {game.player_name} is the PLAYER CHARACTER, not an NPC."""
+<current_location>{html.escape(game.current_location or 'unknown')}</current_location>
+<current_time>{html.escape(game.time_of_day or 'unknown')}</current_time>
+Extract all metadata from the narration above. Remember: {html.escape(game.player_name)} is the PLAYER CHARACTER, not an NPC."""
 
     try:
         response = _api_create_with_retry(
@@ -4245,7 +4270,7 @@ def call_revelation_check(client: anthropic.Anthropic, narration: str,
     )
 
     prompt = (
-        f"<revelation weight=\"{rev_weight}\">{rev_content}</revelation>\n\n"
+        f"<revelation weight=\"{rev_weight}\">{html.escape(rev_content)}</revelation>\n\n"
         f"<narration>{narration}</narration>\n\n"
         f"Was this revelation meaningfully present in the narration above?"
     )
@@ -4293,9 +4318,9 @@ def call_opening_metadata(client: anthropic.Anthropic, narration: str,
     if known_npcs:
         parts = []
         for n in known_npcs:
-            entry = f'{n.get("name", "?")} ({n.get("disposition", "neutral")})'
+            entry = f'{html.escape(n.get("name", "?"))} ({n.get("disposition", "neutral")})'
             if n.get("aliases"):
-                entry += f' aka {", ".join(n["aliases"])}'
+                entry += f' aka {html.escape(", ".join(n["aliases"]))}'
             parts.append(entry)
         known_block = "\n".join(parts)
 
@@ -4315,7 +4340,7 @@ Clocks:
 - If no clock is obvious, create one based on the central tension of the scene.
 
 Location: the specific location where the scene takes place.
-scene_context: 1-2 sentence summary of the current situation after this scene.
+scene_context: 1 sentence capturing the current situation AND dominant mood/tension — not just where/who, but the atmosphere. Example: "Strangers in a hostile tavern, an uneasy truce already fraying at the edges." Extract from the narration; do not invent.
 time_of_day: one of early_morning|morning|midday|afternoon|evening|late_evening|night|deep_night, or null if unclear.
 
 <known_npcs>
@@ -4323,8 +4348,8 @@ time_of_day: one of early_morning|morning|midday|afternoon|evening|late_evening|
 </known_npcs>"""
 
     prompt = f"""<narration>{narration}</narration>
-<player_character>{game.player_name}</player_character>
-<current_location>{game.current_location or 'unknown'}</current_location>
+<player_character>{html.escape(game.player_name)}</player_character>
+<current_location>{html.escape(game.current_location or 'unknown')}</current_location>
 Extract all NPCs, clocks, location, scene context, and time of day from the opening narration above."""
 
     try:
@@ -4633,13 +4658,13 @@ def build_director_prompt(game: GameState, latest_narration: str,
         prev_ref_text = ""
         prev_tone_text = ""
         if prev_reflections:
-            escaped = prev_reflections[-1].get("event", "")[:200].replace('"', '&quot;')
+            escaped = _xa(prev_reflections[-1].get("event", "")[:200])
             prev_ref_text = f' last_reflection="{escaped}"'
             # Show previous tone so Director can evolve the emotional arc
             prev_tone = prev_reflections[-1].get("emotional_weight", "")
             if prev_tone:
-                prev_tone_text = f' last_tone="{prev_tone}"'
-        npc_desc = n.get("description", "").replace('"', '&quot;')
+                prev_tone_text = f' last_tone="{_xa(prev_tone)}"'
+        npc_desc = _xa(n.get("description", ""))
         # Flag NPCs that lack agenda/instinct so Director can suggest them
         needs_profile = ""
         if not n.get("agenda", "").strip() or not n.get("instinct", "").strip():
@@ -4647,14 +4672,14 @@ def build_director_prompt(game: GameState, latest_narration: str,
         # Include aliases so Director knows all names for this NPC
         alias_attr = ""
         if n.get("aliases"):
-            escaped_aliases = ", ".join(n["aliases"]).replace('"', '&quot;')
+            escaped_aliases = _xa(", ".join(n["aliases"]))
             alias_attr = f' aliases="{escaped_aliases}"'
         reflection_blocks.append(
-            f'<reflect npc_id="{n.get("id","")}" name="{n.get("name","")}"'
+            f'<reflect npc_id="{n.get("id","")}" name="{_xa(n.get("name",""))}"'
             f'{alias_attr} '
             f'disposition="{n.get("disposition","")}" bond="{n.get("bond",0)}" '
             f'description="{npc_desc}"{prev_ref_text}{prev_tone_text}{needs_profile}>'
-            f'{mem_text}</reflect>'
+            f'{html.escape(mem_text)}</reflect>'
         )
     reflection_section = "\n".join(reflection_blocks)
 
@@ -4670,20 +4695,20 @@ def build_director_prompt(game: GameState, latest_narration: str,
         past_range = game.scene_count > scene_range[1]
         past_range_attr = ' PAST_RANGE="true"' if past_range else ""
         story_info = (
-            f'\n<story_arc structure="{bp.get("structure_type", "3act")}" '
-            f'act="{act["act_number"]}/{act["total_acts"]}" phase="{act["phase"]}" '
+            f'\n<story_arc structure="{_xa(bp.get("structure_type", "3act"))}" '
+            f'act="{act["act_number"]}/{act["total_acts"]}" phase="{_xa(act["phase"])}" '
             f'progress="{act["progress"]}" '
             f'current_scene="{game.scene_count}" scene_range="{scene_range[0]}-{scene_range[1]}"'
             f'{past_range_attr} '
-            f'conflict="{bp.get("central_conflict", "")}"'
+            f'conflict="{_xa(bp.get("central_conflict", ""))}"'
         )
         if thematic:
-            story_info += f' thematic_thread="{thematic}"'
+            story_info += f' thematic_thread="{_xa(thematic)}"'
         story_info += '/>'
         if transition_trigger:
             story_info += (
                 f'\n<transition_trigger act="{act["act_number"]}">'
-                f'{transition_trigger}</transition_trigger>'
+                f'{html.escape(transition_trigger)}</transition_trigger>'
             )
 
     # Active NPC overview (include descriptions and aliases so Director stays consistent)
@@ -4721,7 +4746,7 @@ def build_director_prompt(game: GameState, latest_narration: str,
 </scene_history>
 
 <latest_scene>
-{latest_narration[:1000]}
+{html.escape(latest_narration[:1000])}
 </latest_scene>
 
 <npcs>
@@ -4739,7 +4764,7 @@ Reflections and narrator_guidance MUST be in {lang}.
 
 Field instructions:
 - scene_summary: 2-3 sentence summary of what happened and WHY it matters (in {lang})
-- narrator_guidance: Specific direction for the next 1-2 scenes (in {lang})
+- narrator_guidance: Specific direction for the next 1-2 scenes (in {lang}). When relevant, anchor the guidance to the thematic_thread from <story_arc> — surface the aspect of it most alive in the current moment.
 - npc_guidance: Array of {{"npc_id": "npc_1", "guidance": "what this NPC should do/feel next"}} — guidance text in {lang}
 - pacing: one of tension_rising, building, climax, breather, resolution
 - npc_reflections: Only for NPCs listed in <reflect> tags. Each object has:
@@ -4988,18 +5013,28 @@ def _apply_director_guidance(game: GameState, guidance: dict):
 # PROMPT BUILDERS
 # ===============================================================
 
+def _time_ctx(game: "GameState") -> str:
+    """Escaped <time> element, or empty string if time_of_day is unset."""
+    return f'\n<time>{html.escape(game.time_of_day)}</time>' if game.time_of_day else ""
+
+
+def _loc_hist(game: "GameState") -> str:
+    """Escaped <prev_locations> element, or empty string if location_history is empty."""
+    if not game.location_history:
+        return ""
+    locs = ", ".join(html.escape(loc) for loc in game.location_history[-3:])
+    return f'\n<prev_locations>{locs}</prev_locations>'
+
+
 def build_new_game_prompt(game: GameState) -> str:
     crisis = "\n<crisis>Character at breaking point.</crisis>" if game.crisis_mode else ""
     story = _story_context_block(game)
-    time_ctx = f'\n<time>{game.time_of_day}</time>' if game.time_of_day else ""
-    loc_hist = f'\n<prev_locations>{", ".join(game.location_history[-3:])}</prev_locations>' if game.location_history else ""
     seed = _creativity_seed()
     log(f"[Narrator] Opening creativity_seed={seed!r}")
     return f"""<scene type="opening">
-<world genre="{game.setting_genre}" tone="{game.setting_tone}">{game.setting_description}</world>
-<character name="{game.player_name}">{game.character_concept}</character>
-<location>{game.current_location}</location>{loc_hist}{time_ctx}
-<situation>{game.current_scene_context}</situation>{crisis}
+{_scene_header(game)}
+<location>{html.escape(game.current_location)}</location>{_loc_hist(game)}{_time_ctx(game)}
+<situation>{html.escape(game.current_scene_context)}</situation>{crisis}
 {story}</scene>
 <task>
 Opening scene: 3-4 paragraphs. Introduce 2 NPCs through action/dialog. Immediate tension. Create one threat clock.
@@ -5054,11 +5089,11 @@ def _npc_block(game: GameState, target_id: Optional[str],
     mem_str = "\n".join(mem_parts) if mem_parts else "(no memories)"
 
     secs = json.dumps(target.get("secrets", []), ensure_ascii=False)
-    aliases_attr = f' aliases="{",".join(target["aliases"])}"' if target.get("aliases") else ""
-    return f"""<target_npc name="{target['name']}" disposition="{target['disposition']}" bond="{target['bond']}/{target.get('bond_max',4)}"{aliases_attr}>
-agenda:{target.get('agenda','')} instinct:{target.get('instinct','')}
-{mem_str}
-secrets(weave subtly,never reveal):{secs}
+    aliases_attr = f' aliases="{_xa(",".join(target["aliases"]))}"' if target.get("aliases") else ""
+    return f"""<target_npc name="{_xa(target['name'])}" disposition="{target['disposition']}" bond="{target['bond']}/{target.get('bond_max',4)}"{aliases_attr}>
+agenda:{html.escape(target.get('agenda',''))} instinct:{html.escape(target.get('instinct',''))}
+{html.escape(mem_str)}
+secrets(weave subtly,never reveal):{html.escape(secs)}
 </target_npc>"""
 
 
@@ -5082,19 +5117,21 @@ def _activated_npcs_block(activated: list[dict], target_id: Optional[str],
         if memories:
             reflections = [m for m in memories if m.get("type") == "reflection"]
             if reflections:
-                mem_hint = f' insight="{reflections[0].get("event","")[:80]}"'
+                mem_hint = f' insight="{_xa(reflections[0].get("event","")[:80])}"'
             else:
-                mem_hint = f' recent="{memories[0].get("event","")[:60]}({memories[0].get("emotional_weight","")})"'
+                ew = memories[0].get("emotional_weight", "")
+                ev = memories[0].get("event", "")[:60]
+                mem_hint = f' recent="{_xa(f"{ev}({ew})")}"'
 
         # Spatial hint: show last location if different from player's current location
         loc_hint = ""
         npc_loc = npc.get("last_location", "")
         player_loc = game.current_location or ""
         if npc_loc and player_loc and not _locations_match(npc_loc, player_loc):
-            loc_hint = f' last_seen="{npc_loc}"'
+            loc_hint = f' last_seen="{_xa(npc_loc)}"'
 
         parts.append(
-            f'<activated_npc name="{npc["name"]}" disposition="{npc["disposition"]}" '
+            f'<activated_npc name="{_xa(npc["name"])}" disposition="{npc["disposition"]}" '
             f'bond="{npc["bond"]}"{mem_hint}{loc_hint}/>'
         )
     return "\n".join(parts)
@@ -5109,13 +5146,13 @@ def _known_npcs_string(mentioned: list[dict], game: GameState,
     parts = []
 
     def _npc_entry(n):
-        entry = f'{n["name"]}({n["disposition"]})'
+        entry = f'{html.escape(n["name"])}({n["disposition"]})'
         if n.get("status") == "background":
             entry += "[bg]"
         # Spatial hint: show last location if different from player
         npc_loc = n.get("last_location", "")
         if npc_loc and player_loc and not _locations_match(npc_loc, player_loc):
-            entry += f'[at:{npc_loc}]'
+            entry += f'[at:{html.escape(npc_loc)}]'
         return entry
 
     # Mentioned NPCs (scored but below activation threshold)
@@ -5144,11 +5181,11 @@ def _lore_figures_block(game: GameState) -> str:
         return ""
     parts = []
     for n in lore:
-        entry = n["name"]
+        entry = html.escape(n["name"])
         if n.get("description"):
-            entry += f": {n['description'][:80]}"
+            entry += f": {html.escape(n['description'][:80])}"
         if n.get("aliases"):
-            entry += f" (aka {', '.join(n['aliases'][:2])})"
+            entry += f" (aka {html.escape(', '.join(n['aliases'][:2]))})"
         parts.append(entry)
     return f"\n<lore_figures>{'; '.join(parts)}</lore_figures>"
 
@@ -5161,7 +5198,7 @@ def _pacing_block(game: GameState, chaos_interrupt: Optional[str] = None,
     if pacing != "neutral":
         parts.append(f'<pacing type="{pacing}"/>')
     if dramatic_question:
-        parts.append(f'<dramatic_question>{dramatic_question}</dramatic_question>')
+        parts.append(f'<dramatic_question>{html.escape(dramatic_question)}</dramatic_question>')
     if chaos_interrupt:
         interrupt_descriptions = {
             "npc_unexpected": "An NPC arrives unexpectedly or acts completely against their established pattern",
@@ -5187,12 +5224,12 @@ def _npcs_present_string(game: GameState) -> str:
     for n in game.npcs:
         if n.get("status") != "active":
             continue
-        entry = f'{n["name"]}:{n["disposition"]}'
+        entry = f'{html.escape(n["name"])}:{n["disposition"]}'
         if n.get("aliases"):
-            entry += f'(aka {",".join(n["aliases"])})'
+            entry += f'(aka {html.escape(",".join(n["aliases"]))})'
         npc_loc = n.get("last_location", "")
         if npc_loc and player_loc and not _locations_match(npc_loc, player_loc):
-            entry += f'[at:{npc_loc}]'
+            entry += f'[at:{html.escape(npc_loc)}]'
         parts.append(entry)
     return ", ".join(parts) or "none"
 
@@ -5241,31 +5278,28 @@ def build_dialog_prompt(game: GameState, brain: dict, player_words: str = "",
         npcs_section += _lore_figures_block(game)
 
     wa = brain.get("world_addition", "")
-    wl = f'\n<world_add>{wa}</world_add>' if wa else ""
+    wl = f'\n<world_add>{html.escape(wa)}</world_add>' if wa else ""
     crisis = '\n<crisis/>' if game.crisis_mode else ""
-    pw = f'\n<player_words>{player_words}</player_words>' if player_words else ""
+    pw = f'\n<player_words>{html.escape(player_words)}</player_words>' if player_words else ""
     pacing = _pacing_block(game, chaos_interrupt, brain.get("dramatic_question", ""))
-    time_ctx = f'\n<time>{game.time_of_day}</time>' if game.time_of_day else ""
-    loc_hist = f'\n<prev_locations>{", ".join(game.location_history[-3:])}</prev_locations>' if game.location_history else ""
 
     # Director guidance injection
     director_block = ""
     dg = game.director_guidance
     if dg and dg.get("narrator_guidance"):
-        director_block = f'\n<director_guidance>{dg["narrator_guidance"]}</director_guidance>'
+        director_block = f'\n<director_guidance>{html.escape(dg["narrator_guidance"])}</director_guidance>'
         # NPC-specific guidance
         for npc_id, guidance in dg.get("npc_guidance", {}).items():
-            director_block += f'\n<npc_note for="{npc_id}">{guidance}</npc_note>'
+            director_block += f'\n<npc_note for="{npc_id}">{html.escape(guidance)}</npc_note>'
 
     return f"""<scene type="dialog" n="{game.scene_count}">
-<world genre="{game.setting_genre}" tone="{game.setting_tone}">{game.setting_description}</world>
-<character name="{game.player_name}">{game.character_concept}</character>
-<intent>{brain.get('player_intent', '')}</intent>{pw}
-<location>{game.current_location}</location>{loc_hist}{time_ctx}
+{_scene_header(game)}
+<intent>{html.escape(brain.get('player_intent', ''))}</intent>{pw}
+<location>{html.escape(game.current_location)}</location>{_loc_hist(game)}{_time_ctx(game)}
 {npc}{npcs_section}{wl}{crisis}
 {pacing}{director_block}
 {_story_context_block(game)}{_recent_events_block(game)}</scene>
-<task>2-3 paragraphs of immersive narration. Let the world breathe around the conversation — small details of place, light, sound, and texture that make this moment feel inhabited. Something between the characters should shift by the end. If <director_guidance> is present, follow its direction while maintaining your creative voice.</task>"""
+<task>2-3 paragraphs of immersive narration. Let the world breathe around the conversation — small details of place, light, sound, and texture that make this moment feel inhabited. Something between the characters should shift by the end. Let the current act's mood (from <story_arc>) shape the undertone of the exchange — even a quiet conversation carries the weight of the surrounding phase. If <director_guidance> is present, follow its direction while maintaining your creative voice.</task>"""
 
 
 def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
@@ -5312,15 +5346,15 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
         npcs_section += _lore_figures_block(game)
 
     wa = brain.get("world_addition", "")
-    wl = f'\n<world_add>{wa}</world_add>' if wa else ""
-    pw = f'\n<player_words>{player_words}</player_words>' if player_words else ""
+    wl = f'\n<world_add>{html.escape(wa)}</world_add>' if wa else ""
+    pw = f'\n<player_words>{html.escape(player_words)}</player_words>' if player_words else ""
 
     position = brain.get("position", "risky")
     effect = brain.get("effect", "standard")
 
     match_tag = ' match="true"' if roll.match else ''
     if roll.result == "MISS":
-        clk = "".join(f' clock_triggered="{e["clock"]}:{e["trigger"]}"' for e in clock_events)
+        clk = "".join(f' clock_triggered="{_xa(e["clock"])}:{_xa(e["trigger"])}"' for e in clock_events)
         match_hint = ' A MATCH \u2014 the situation escalates dramatically, a fateful twist makes everything worse.' if roll.match else ''
         constraint = f'<result type="MISS"{match_tag} consequences="{",".join(consequences)}"{clk}>Concrete failure — the situation worsens. Make it hurt: physical, emotional, or narrative cost. A new complication emerges that creates fresh pressure or danger.{match_hint}</r>'
     elif roll.result == "WEAK_HIT":
@@ -5344,31 +5378,28 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
         status_flags.append("CRISIS:desperate,world closing in")
 
     flags = f'\n<flags>{",".join(status_flags)}</flags>' if status_flags else ""
-    agency = f'\n<npc_agency>{"| ".join(npc_agency)}</npc_agency>' if npc_agency else ""
+    agency = f'\n<npc_agency>{"| ".join(html.escape(a) for a in npc_agency)}</npc_agency>' if npc_agency else ""
     pacing = _pacing_block(game, chaos_interrupt, brain.get("dramatic_question", ""))
-    time_ctx = f'\n<time>{game.time_of_day}</time>' if game.time_of_day else ""
-    loc_hist = f'\n<prev_locations>{", ".join(game.location_history[-3:])}</prev_locations>' if game.location_history else ""
 
     # Director guidance injection
     director_block = ""
     dg = game.director_guidance
     if dg and dg.get("narrator_guidance"):
-        director_block = f'\n<director_guidance>{dg["narrator_guidance"]}</director_guidance>'
+        director_block = f'\n<director_guidance>{html.escape(dg["narrator_guidance"])}</director_guidance>'
         for npc_id, guidance in dg.get("npc_guidance", {}).items():
-            director_block += f'\n<npc_note for="{npc_id}">{guidance}</npc_note>'
+            director_block += f'\n<npc_note for="{npc_id}">{html.escape(guidance)}</npc_note>'
 
     return f"""<scene type="action" n="{game.scene_count}">
-<world genre="{game.setting_genre}" tone="{game.setting_tone}">{game.setting_description}</world>
-<character name="{game.player_name}">{game.character_concept}</character>
-<intent>{brain.get('player_intent', '')} ({brain.get('approach', '')})</intent>{pw}
+{_scene_header(game)}
+<intent>{html.escape(brain.get('player_intent', ''))} ({html.escape(brain.get('approach', ''))})</intent>{pw}
 {constraint}
 {position_tag}
 <status h="{game.health}" sp="{game.spirit}" su="{game.supply}" m="{game.momentum}"/>
-<location>{game.current_location}</location>{loc_hist}{time_ctx}
+<location>{html.escape(game.current_location)}</location>{_loc_hist(game)}{_time_ctx(game)}
 {npc}{npcs_section}{wl}{flags}{agency}
 {pacing}{director_block}
 {_story_context_block(game)}{_recent_events_block(game)}</scene>
-<task>2-4 paragraphs of immersive narration. Let the roll consequence open new story questions rather than just closing old ones — the scene should end in motion, with something shifted. If <director_guidance> is present, follow its direction while maintaining your creative voice.</task>"""
+<task>2-4 paragraphs of immersive narration. Let the roll consequence open new story questions rather than just closing old ones — the scene should end in motion, with something shifted. Let the current act's mood (from <story_arc>) shape the texture of this moment — a STRONG_HIT in a desperate phase still tastes of the surrounding darkness. If <director_guidance> is present, follow its direction while maintaining your creative voice.</task>"""
 
 
 # ===============================================================
@@ -6457,8 +6488,8 @@ def _campaign_history_block(game: GameState) -> str:
         return ""
     parts = [f'<campaign_history chapters="{len(game.campaign_history)}">']
     for ch in game.campaign_history[-3:]:  # Last 3 chapters for context
-        parts.append(f'  <chapter n="{ch.get("chapter", "?")}" title="{ch.get("title", "")}">'
-                     f'{ch.get("summary", "")}</chapter>')
+        parts.append(f'  <chapter n="{ch.get("chapter", "?")}" title="{_xa(ch.get("title", ""))}">'
+                     f'{html.escape(ch.get("summary", ""))}</chapter>')
     parts.append('</campaign_history>')
     return "\n".join(parts)
 
@@ -6485,7 +6516,7 @@ def call_chapter_summary(client: anthropic.Anthropic, game: GameState,
     # This ensures the chapter summary reflects what actually happened (post-mission,
     # post-resolution) rather than the mid-action state captured in session_log/context.
     epilogue_block = (f"\n<epilogue>This is how the story ended — treat it as the "
-                      f"authoritative final state when summarizing:\n{epilogue_text}\n</epilogue>"
+                      f"authoritative final state when summarizing:\n{html.escape(epilogue_text)}\n</epilogue>"
                       if epilogue_text.strip() else "")
 
     epilogue_location_hint = (
@@ -6554,8 +6585,8 @@ def build_epilogue_prompt(game: GameState) -> str:
     conflict = bp.get("central_conflict", "")
 
     npc_block = "\n".join(
-        f'<npc name="{n["name"]}" disposition="{n["disposition"]}" bond="{n["bond"]}/{n.get("bond_max",4)}">'
-        f'{n.get("description","")}</npc>'
+        f'<npc name="{_xa(n["name"])}" disposition="{n["disposition"]}" bond="{n["bond"]}/{n.get("bond_max",4)}">'
+        f'{html.escape(n.get("description",""))}</npc>'
         for n in game.npcs if n.get("status") == "active"
     )
 
@@ -6565,15 +6596,14 @@ def build_epilogue_prompt(game: GameState) -> str:
     )
 
     return f"""<scene type="epilogue">
-<world genre="{game.setting_genre}" tone="{game.setting_tone}">{game.setting_description}</world>
-<character name="{game.player_name}">{game.character_concept}</character>
-<location>{game.current_location}</location>
-<situation>{game.current_scene_context}</situation>
-<conflict>{conflict}</conflict>
-<possible_endings>{endings_text}</possible_endings>
+{_scene_header(game)}
+<location>{html.escape(game.current_location)}</location>
+<situation>{html.escape(game.current_scene_context)}</situation>
+<conflict>{html.escape(conflict)}</conflict>
+<possible_endings>{html.escape(endings_text)}</possible_endings>
 {npc_block}
 {campaign}
-<session_log>{log_text}</session_log>
+<session_log>{html.escape(log_text)}</session_log>
 </scene>
 <task>
 Write a beautiful EPILOGUE for this story (4-6 paragraphs). This is NOT a new scene — no dice, no mechanics.
@@ -6628,19 +6658,19 @@ def build_new_chapter_prompt(game: GameState) -> str:
     """Build opening prompt for a new chapter in an ongoing campaign."""
     campaign = _campaign_history_block(game)
     npc_block = "\n".join(
-        f'<returning_npc id="{n["id"]}" name="{n["name"]}" disposition="{n["disposition"]}" '
+        f'<returning_npc id="{n["id"]}" name="{_xa(n["name"])}" disposition="{n["disposition"]}" '
         f'bond="{n["bond"]}/{n.get("bond_max",4)}"'
-        + (f' aliases="{",".join(n["aliases"])}"' if n.get("aliases") else '')
-        + f'>{n.get("description","")}</returning_npc>'
+        + (f' aliases="{_xa(",".join(n["aliases"]))}"' if n.get("aliases") else '')
+        + f'>{html.escape(n.get("description",""))}</returning_npc>'
         for n in game.npcs if n.get("status") == "active"
     )
     bg_npcs = [n for n in game.npcs if n.get("status") == "background"]
     if bg_npcs:
         bg_parts = []
         for n in bg_npcs:
-            entry = f'{n["name"]}({n["disposition"]})'
+            entry = html.escape(n["name"]) + f'({n["disposition"]})'
             if n.get("aliases"):
-                entry += f'[aka {",".join(n["aliases"])}]'
+                entry += f'[aka {html.escape(",".join(n["aliases"]))}]'
             bg_parts.append(entry)
         bg_names = ", ".join(bg_parts)
         npc_block += f'\n<background_npcs>Known but not recently active: {bg_names}</background_npcs>'
@@ -6648,9 +6678,9 @@ def build_new_chapter_prompt(game: GameState) -> str:
     if lore_npcs_ch:
         lore_parts = []
         for n in lore_npcs_ch:
-            entry = n["name"]
+            entry = html.escape(n["name"])
             if n.get("description"):
-                entry += f': {n["description"][:60]}'
+                entry += f': {html.escape(n["description"][:60])}'
             lore_parts.append(entry)
         npc_block += f'\n<lore_figures>{"; ".join(lore_parts)}</lore_figures>'
 
@@ -6661,22 +6691,19 @@ def build_new_chapter_prompt(game: GameState) -> str:
         evolutions = last_ch.get("npc_evolutions", [])
         if evolutions:
             evo_lines = "\n".join(
-                f'  {e["name"]}: {e["projection"]}'
+                f'  {html.escape(e["name"])}: {html.escape(e["projection"])}'
                 for e in evolutions if e.get("name") and e.get("projection")
             )
             evolutions_block = f'\n<npc_evolutions hint="These are PROJECTIONS of how NPCs may have changed during the time skip. Use as inspiration, not as hard facts.">\n{evo_lines}\n</npc_evolutions>'
 
     story = _story_context_block(game)
-    time_ctx = f'\n<time>{game.time_of_day}</time>' if game.time_of_day else ""
-
     seed = _creativity_seed()
     log(f"[Narrator] Chapter {game.chapter_number} opening creativity_seed={seed!r}")
 
     return f"""<scene type="chapter_opening" chapter="{game.chapter_number}">
-<world genre="{game.setting_genre}" tone="{game.setting_tone}">{game.setting_description}</world>
-<character name="{game.player_name}">{game.character_concept}</character>
-<location>{game.current_location}</location>{time_ctx}
-<situation>{game.current_scene_context}</situation>
+{_scene_header(game)}
+<location>{html.escape(game.current_location)}</location>{_time_ctx(game)}
+<situation>{html.escape(game.current_scene_context)}</situation>
 {campaign}
 {npc_block}{evolutions_block}
 {story}</scene>
@@ -7315,7 +7342,8 @@ def call_correction_brain(client: anthropic.Anthropic, game: GameState,
 
     # Build concise NPC summary for the model
     def _npc_line(n):
-        return (f'id:{n["id"]} name:"{n["name"]}" '
+        aka = f' aliases:{json.dumps(n["aliases"], ensure_ascii=False)}' if n.get("aliases") else ""
+        return (f'id:{n["id"]} name:"{n["name"]}"{aka} '
                 f'disposition:{n["disposition"]} '
                 f'desc:"{n.get("description","")[:120]}"')
     npc_lines = "\n".join(_npc_line(n) for n in game.npcs) or "(none)"
@@ -7344,6 +7372,10 @@ def call_correction_brain(client: anthropic.Anthropic, game: GameState,
 - NPC DEATH: If the player states an NPC is dead/deceased, use op="npc_edit" with fields.status="deceased".
   Do NOT write death annotations like "VERSTORBEN" or "DECEASED" into fields.description — the status
   field is the correct and only mechanism. Set fields.description=null to leave it unchanged.
+- NPC RENAME: If the player explicitly renames an NPC (e.g. "Benenne X in Y um" / "Rename X to Y" /
+  "X heißt jetzt Y"), use op="npc_edit" with fields.name="Y". The engine will automatically move the
+  old name into aliases — you must NOT add it to fields.aliases yourself, and you must NOT put the new
+  name into fields.aliases. Set fields.aliases=null to leave aliases unchanged.
 </rules>"""
 
     user_msg = f"""## correction from player: {correction_text}
@@ -7411,10 +7443,30 @@ def _apply_correction_ops(game: GameState, ops: list) -> None:
                         log(f"[Correction] npc_edit: ignoring invalid status "
                             f"'{edits['status']}' for {npc.get('name','?')}", level="warning")
                         del edits["status"]
+                # Capture old name BEFORE applying edits — needed for alias bookkeeping
+                old_name = npc["name"] if "name" in edits else None
+                # If renaming, discard any aliases Haiku may have supplied in the same op.
+                # The engine owns alias bookkeeping for renames — Haiku's aliases would
+                # overwrite the existing list before the engine can preserve the old name.
+                if old_name:
+                    edits.pop("aliases", None)
                 for k, v in edits.items():
                     npc[k] = v
+                # NPC rename bookkeeping: move old name into aliases, clean up new name
+                if old_name and old_name != npc["name"]:
+                    npc.setdefault("aliases", [])
+                    old_norm = _normalize_for_match(old_name)
+                    # Add old name as alias if not already present
+                    if not any(_normalize_for_match(a) == old_norm for a in npc["aliases"]):
+                        npc["aliases"].append(old_name)
+                    # Remove new name from aliases if Haiku put it there anyway
+                    new_norm = _normalize_for_match(npc["name"])
+                    npc["aliases"] = [a for a in npc["aliases"]
+                                      if _normalize_for_match(a) != new_norm]
+                    log(f"[Correction] npc_edit: renamed '{old_name}' → '{npc['name']}' "
+                        f"(old name added to aliases)")
                 # If marked deceased, scrub common death annotations from description
-                if edits.get("status") == "deceased":
+                elif edits.get("status") == "deceased":
                     npc["description"] = re.sub(
                         r'[\.\s]*(?:VERSTORBEN|DECEASED|TOT|DEAD)\s*[\.\,]?',
                         '', npc.get("description", ""), flags=re.IGNORECASE
@@ -7634,7 +7686,7 @@ def process_correction(client: anthropic.Anthropic, game: GameState,
 
     # Step 3: Narrator rewrite — inject correction context
     correction_tag = (
-        f"\n<correction_context>{analysis['narrator_guidance']}</correction_context>"
+        f"\n<correction_context>{html.escape(analysis['narrator_guidance'])}</correction_context>"
         f"\n<correction_instruction>Rewrite the scene incorporating the correction above. "
         f"Same events and outcome — only adjust what the correction requires.</correction_instruction>"
     )

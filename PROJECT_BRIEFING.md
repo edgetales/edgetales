@@ -8,7 +8,7 @@
 
 | | |
 |---|---|
-| **Version** | v0.9.75 |
+| **Version** | v0.9.76 |
 | **Codebase** | ~13,600 lines across 5 source files + config |
 | **Stack** | Python 3.11+, NiceGUI, Anthropic SDK (Structured Outputs), reportlab, edge-tts, faster-whisper, wonderwords, stop-words, nameparser, cryptography |
 | **AI Models** | Narrator/Architect: `claude-sonnet-4-6` · Brain/Director/Extractors: `claude-haiku-4-5-20251001` |
@@ -365,6 +365,8 @@ Since v0.9.62: `last_turn_snapshot` persisted in `SAVE_FIELDS`. `save_game()` co
 
 **NPC death via correction (v0.9.65)**: `CORRECTION_OUTPUT_SCHEMA` `npc_edit.fields` now includes `"status"` (validated against `{"active","background","inactive","deceased"}`). `_apply_correction_ops()` `allowed` set updated accordingly. Correction brain system prompt instructs the model to use `status="deceased"` for death corrections — never write `"VERSTORBEN"` or similar into `description`. When `status="deceased"` is applied, any existing death annotation is automatically scrubbed from `description` via regex.
 
+**NPC rename via correction (v0.9.76)**: Player writes `## Benenne X in Y um` (or equivalent). Correction brain receives aliases in NPC summary and has a dedicated NPC RENAME rule: use `fields.name="Y"`, leave `fields.aliases=null`. Engine-side: `_apply_correction_ops()` captures `old_name` before applying edits; if renaming is detected, `edits.pop("aliases")` discards any Haiku-supplied alias list (engine owns alias bookkeeping for renames); old name is moved into aliases; new name is stripped from aliases. Combined: robust against Haiku ignoring the prompt rule.
+
 ---
 
 ### Narrator Systems
@@ -433,8 +435,15 @@ Four information layers:
 
 1. **Conversation history**: Last 3 narrations as user/assistant pairs. **Last narration untruncated** (v0.9.47), older ones at `MAX_NARRATION_CHARS` (1500). Provides style consistency and direct scene continuation.
 2. **Factual timeline** (`_recent_events_block()`): Last 7 `session_log` entries as `<recent_events>` block. Uses Director `rich_summary` (when present), else Brain `player_intent`. These are ESTABLISHED FACTS — Narrator must not contradict them.
-3. **Scene context** (`current_scene_context`): Single sentence from Metadata Extractor, overwritten each scene. Compact state indicator.
+3. **Scene context** (`current_scene_context`): Single sentence from Metadata Extractor, overwritten each scene. As of v0.9.76: explicitly defined as situation + dominant mood/tension (not just factual state) — improves Brain position/effect calibration and TF-IDF NPC activation.
 4. **Narrative state context** (`_status_context_block()`): Injects `<character_state>` block mapping Health/Spirit/Supply to 6 atmospheric stages each (e.g., health=3 → "injured — clearly hurting, moving with effort"). Narrator reflects state through body language/sensory detail, never mentions numbers. Only active when `game` is passed — opening calls without GameState are unaffected.
+
+#### Narrator System Prompt Rules (v0.9.76)
+
+- **SCENE CONTINUITY**: Begin in motion, not in setup. No fresh establishing paragraph when last scene ended mid-action or mid-conversation. Exception: if `<location>` differs from `<prev_locations>`, briefly ground the player in the new space first.
+- **EMOTIONAL CARRY-THROUGH**: Significant emotional beats (betrayal, loss, triumph, relief, intimacy, shock) carry into the next scene through body language, perception, and attention — not narration. Emotional states do not reset between scenes.
+- **Thematic thread**: When `<story_arc>` contains a `thematic_thread`, it surfaces periodically through NPC dialog, reactions, or incidental observations — as a recurring undercurrent, never as lecture.
+- **Act-mood texture** (action + dialog prompts): The current act's mood (from `<story_arc>`) shapes the texture of every outcome — a STRONG_HIT in a desperate phase still carries the surrounding darkness.
 
 #### Player Authorship Rules (Narrator System Prompt)
 
@@ -751,6 +760,9 @@ Key architectural choices and the reasoning behind them.
 | Shelved: NPC secret alias system | Implement it | Architecturally invasive; would destabilize core NPC/alias/merge systems |
 | Opening Metadata Extractor (Haiku, separate call) | Narrator fills `<game_data>` JSON inline | Inline JSON in prose = entire error class (code fences, malformed JSON, mixed prose/data). Separate call with Structured Outputs is clean. |
 | `copy.copy(game)` snapshot for Architect thread | Shared reference | `parse_narrator_response()` mutations on the main thread would race-condition the Architect's input |
+| `_xa(s)` helper for XML attribute escaping | Manual `.replace('"', '&quot;')` | Manual replace only covers `"` — misses `<` and `&`. `html.escape(str(s), quote=True)` covers all three in one call. Applied to all AI-prose fields in XML attribute position. |
+| `html.escape()` for XML element content | No escaping | AI-generated text in element positions (mem_text, revelation content, director guidance, NPC descriptions) can contain `<` or `&` — silently corrupts prompt structure without escaping. |
+| Engine owns alias bookkeeping on NPC rename | Let Haiku manage aliases in `npc_edit` | If Haiku supplies `fields.aliases` alongside `fields.name`, it overwrites the existing list before engine can preserve the old name. `edits.pop("aliases")` on rename detection makes the engine the sole authority. |
 
 ---
 
