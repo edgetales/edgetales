@@ -61,7 +61,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.74"
+VERSION = "0.9.75"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -6839,6 +6839,68 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
         # Skip if extractor already created an NPC with this name
         if _normalize_for_match(old_npc["name"]) in new_npc_names:
             continue
+
+        # Alias-based dedup: the extractor may have introduced the returning NPC
+        # under one of its aliases (e.g. returning NPC is "Ein erschöpfter Reiter"
+        # with alias "Dragoner Fink", but extractor created a hollow "Dragoner Fink").
+        # In that case we merge the returning NPC's history into the hollow one
+        # rather than adding a duplicate.
+        old_npc_norm = _normalize_for_match(old_npc["name"])
+        old_aliases_norm = {
+            _normalize_for_match(a) for a in old_npc.get("aliases", [])
+            if len(a.strip()) >= 4  # skip 1-3 char noise entries (e.g. "ok", "er")
+        }
+        alias_hit = None
+        for extractor_npc in game.npcs:
+            ext_name_norm = _normalize_for_match(extractor_npc["name"])
+            ext_aliases_norm = {_normalize_for_match(a) for a in extractor_npc.get("aliases", [])}
+            # Match in either direction: returning alias == extractor name, OR
+            # returning name == extractor alias
+            if ext_name_norm in old_aliases_norm or old_npc_norm in ext_aliases_norm:
+                alias_hit = extractor_npc
+                break
+
+        if alias_hit:
+            # Rename hollow extractor NPC to the canonical returning name;
+            # extractor name becomes an alias automatically.
+            old_id = old_npc["id"]
+            _merge_npc_identity(alias_hit, old_npc["name"])
+            # Transfer historical data from returning NPC into hollow extractor NPC.
+            # Memories: returning NPC has the full history; extractor NPC has none.
+            if old_npc.get("memory"):
+                alias_hit["memory"] = old_npc["memory"]
+            # Bond: take the higher value
+            alias_hit["bond"] = max(alias_hit.get("bond", 0), old_npc.get("bond", 0))
+            # Reflection state: preserve chapter-1 rhythm for Director
+            alias_hit["importance_accumulator"] = (
+                alias_hit.get("importance_accumulator", 0)
+                + old_npc.get("importance_accumulator", 0)
+            )
+            alias_hit["last_reflection_scene"] = max(
+                alias_hit.get("last_reflection_scene", 0),
+                old_npc.get("last_reflection_scene", 0),
+            )
+            # Secrets: keep extractor's fresh chapter-2 secrets if present, else inherit
+            if not alias_hit.get("secrets") and old_npc.get("secrets"):
+                alias_hit["secrets"] = old_npc["secrets"]
+            # Merge any remaining aliases from the returning NPC
+            alias_hit.setdefault("aliases", [])
+            existing_alias_norms = {_normalize_for_match(a) for a in alias_hit["aliases"]}
+            canonical_norm = _normalize_for_match(alias_hit["name"])
+            for alias in old_npc.get("aliases", []):
+                a_norm = _normalize_for_match(alias)
+                if a_norm not in existing_alias_norms and a_norm != canonical_norm:
+                    alias_hit["aliases"].append(alias)
+                    existing_alias_norms.add(a_norm)
+            # Status stays active (NPC appeared in chapter opening)
+            alias_hit["introduced"] = True
+            # Register id_remap so about_npc references get rewritten below
+            id_remap[old_id] = alias_hit["id"]
+            new_npc_names.add(_normalize_for_match(old_npc["name"]))
+            log(f"[Campaign] Alias-merged returning NPC '{old_npc['name']}' ({old_id}) "
+                f"into extractor NPC now named '{alias_hit['name']}' ({alias_hit['id']})")
+            continue
+
         # Assign a fresh ID to avoid collisions with extractor-assigned IDs
         old_id = old_npc["id"]
         fresh_id, _ = _next_npc_id(game)

@@ -5,6 +5,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.75]
+
+### Fixed
+- **Duplicate NPC at chapter boundary when extractor uses an alias as a new NPC name.** During `start_new_chapter()`, the returning-NPC merge loop only checked names — not aliases — against the extractor's freshly created NPCs. If a returning NPC (e.g. `"Ein erschöpfter Reiter"`) carried an alias (`"Dragoner Fink"`) that the Opening Metadata Extractor independently introduced as a new hollow NPC, both survived as separate entries: a hollow extractor NPC (0 memories, no context) and the rich returning NPC (full history). The Brain would activate the hollow NPC when the player mentioned the alias, silently discarding chapter-1 history. Fixed: the merge loop now performs a bidirectional alias check (returning alias ↔ extractor name, and returning name ↔ extractor aliases; minimum 4-char alias length to skip noise entries). On match, the returning NPC's history (memories, bond, importance_accumulator, last_reflection_scene, aliases, secrets) is merged into the hollow extractor NPC in-place; `_merge_npc_identity` renames the hollow NPC to the canonical returning name (extractor name becomes an alias); `id_remap` is populated so downstream `about_npc` references are rewritten correctly. Self-healing: if both the hollow and the rich NPC survive into a subsequent chapter transition, the alias-match fires there too and resolves the duplicate correctly.
+
+---
+
 ## [0.9.74]
 
 ### Changed

@@ -8,7 +8,7 @@
 
 | | |
 |---|---|
-| **Version** | v0.9.73 |
+| **Version** | v0.9.75 |
 | **Codebase** | ~13,600 lines across 5 source files + config |
 | **Stack** | Python 3.11+, NiceGUI, Anthropic SDK (Structured Outputs), reportlab, edge-tts, faster-whisper, wonderwords, stop-words, nameparser, cryptography |
 | **AI Models** | Narrator/Architect: `claude-sonnet-4-6` · Brain/Director/Extractors: `claude-haiku-4-5-20251001` |
@@ -383,7 +383,7 @@ Since v0.9.62: `last_turn_snapshot` persisted in `SAVE_FIELDS`. `save_game()` co
 
 `call_opening_metadata(narration, game, config, known_npcs)` runs in `start_new_game()` and `start_new_chapter()` **instead of** the mid-game extractor. Full schema: agenda, instinct, secrets + clocks, location, scene_context, time_of_day. Own schema `OPENING_METADATA_SCHEMA`. For chapter openings: `known_npcs` parameter ensures only genuinely new NPCs are extracted. Mid-game guard: from scene 2+, `force_npcs=False` — existing NPC list is never overwritten. **`introduced` flag (v0.9.67)**: `_process_game_data()` defaults `introduced=False` (legacy), but `parse_narrator_response()` step 10 — which sets the flag via name-matching — runs *before* `_process_game_data()` when `game.npcs` is still empty. Both `start_new_game()` and `start_new_chapter()` now explicitly set `introduced=True` on all NPCs immediately after `_process_game_data()`, since they were extracted from the narration by definition.
 
-**Chapter transition NPC merge (v0.9.65)**: `start_new_chapter()` clears `game.npcs = []` then calls `_process_game_data()`, which re-assigns IDs from `npc_1`. The merge loop that re-inserts returning NPCs must **not** use ID-based deduplication — IDs were just recycled and will collide. Name-based check only. Each returning NPC gets a fresh ID via `_next_npc_id()`. An `id_remap` dict (old→new) is built during insertion and used in a follow-up pass to rewrite all stale `about_npc` references across every NPC's memories.
+**Chapter transition NPC merge (v0.9.65, extended v0.9.74)**: `start_new_chapter()` clears `game.npcs = []` then calls `_process_game_data()`, which re-assigns IDs from `npc_1`. The merge loop that re-inserts returning NPCs must **not** use ID-based deduplication — IDs were just recycled and will collide. Two-stage dedup: (1) name-based check — if extractor already created an NPC with the same name, skip; (2) **alias-based check** — if an extractor NPC's name matches any alias of the returning NPC (or vice versa), the returning NPC's history (memories, bond, importance_accumulator, last_reflection_scene, secrets, aliases) is merged into the hollow extractor NPC via `_merge_npc_identity()` rather than creating a duplicate. Alias minimum length 4 chars to exclude spatial/temporal words (e.g. `"westlich"`, `"nächtlich"`) that Brain occasionally appends as parenthetical context. Each truly new returning NPC gets a fresh ID via `_next_npc_id()`. An `id_remap` dict (old→new) is built for both paths (normal insertion and alias-merge) and used in a follow-up pass to rewrite all stale `about_npc` references across every NPC's memories.
 
 **Step 2: Metadata Extractor (Haiku, Structured Outputs) → Game State**
 
