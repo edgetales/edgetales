@@ -5,7 +5,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## [0.9.76]
+## [0.9.77]
+
+### Changed
+- **Narrator: `<tone_authority>` block added to system prompt.** The player's chosen tone is now injected as a first-class `<tone_authority>` element, positioned before `<rules>`, making it the dominant stylistic register for every scene. Explicitly instructs the narrator that tone governs sentence rhythm, scene energy, what details get highlighted, NPC behavior, and what makes a moment land — and that `<director_guidance>` must never override it. Fixes slapstick (and other non-dark tones) being gradually suppressed as Director guidance accumulated thematic weight.
+- **Narrator: `<style>` block reduced to universal craft rules.** Removed "Terse and precise — one specific detail beats three general ones" and "Render emotion through behavior and sensation, not labels" from the `<style>` element. These were stylistically prescriptive (suited for dark/gritty or noir) and actively worked against comedy, whimsy, and high-energy tones. Remaining content: "The player is inside the world, not watching it. Integrate what the player brings seamlessly, as if it was always there." — both rules are truly universal. Tone-specific style guidance is now the responsibility of `<tone_authority>`.
+- **Director: `<setting>` context block added.** `build_director_prompt()` now opens with `<setting genre="..." tone="..."/>`, giving the Director awareness of genre and tone for the first time.
+- **Director: TONE RULE added to `<task>`.** `narrator_guidance` and `npc_guidance` must honor the story's tone. A comedy tone requires comedy-compatible beats; a dark tone requires weight. Prevents the Director from producing tonally neutral or drama-biased guidance that pulls the narrator away from the player's chosen register.
+- **Director: `player_name` intentionally excluded from `<setting>`.** The Director does not need the player character's name for strategic guidance — omitting it prevents Haiku from referencing the protagonist by name in `narrator_guidance`, which was the root cause of third-person drift in the Narrator's prose.
+
 
 ### Changed
 - **Narrator: SCENE CONTINUITY rule added.** New rule instructs the narrator to begin each scene in motion rather than with a fresh establishing paragraph, carrying forward the physical and situational thread from where the previous scene ended. Exception: when the player has moved to a new location (detectable via `<location>` vs `<prev_locations>`), the narrator briefly grounds the player in the new space before continuing. Prevents the common pattern of opening each scene as if the previous one had cleanly closed.

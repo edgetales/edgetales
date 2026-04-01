@@ -438,12 +438,21 @@ Four information layers:
 3. **Scene context** (`current_scene_context`): Single sentence from Metadata Extractor, overwritten each scene. As of v0.9.76: explicitly defined as situation + dominant mood/tension (not just factual state) — improves Brain position/effect calibration and TF-IDF NPC activation.
 4. **Narrative state context** (`_status_context_block()`): Injects `<character_state>` block mapping Health/Spirit/Supply to 6 atmospheric stages each (e.g., health=3 → "injured — clearly hurting, moving with effort"). Narrator reflects state through body language/sensory detail, never mentions numbers. Only active when `game` is passed — opening calls without GameState are unaffected.
 
-#### Narrator System Prompt Rules (v0.9.76)
+#### Narrator System Prompt Rules (v0.9.77)
 
+- **`<tone_authority>` block**: Player's chosen tone injected as a first-class element before `<rules>`. Governs sentence rhythm, scene energy, highlighted details, NPC behavior, and scene mood. Explicitly instructs the narrator that `<director_guidance>` must never override or dilute the tone. Empty when `game` is `None` (opening calls unaffected).
+- **`<style>` reduced to universal craft rules**: "Terse and precise" and "Render emotion through behavior and sensation" removed — these were dark/gritty-specific and actively suppressed comedy and high-energy tones. Remaining: "The player is inside the world, not watching it. Integrate what the player brings seamlessly." Tone-specific style guidance is now the sole responsibility of `<tone_authority>`.
 - **SCENE CONTINUITY**: Begin in motion, not in setup. No fresh establishing paragraph when last scene ended mid-action or mid-conversation. Exception: if `<location>` differs from `<prev_locations>`, briefly ground the player in the new space first.
 - **EMOTIONAL CARRY-THROUGH**: Significant emotional beats (betrayal, loss, triumph, relief, intimacy, shock) carry into the next scene through body language, perception, and attention — not narration. Emotional states do not reset between scenes.
 - **Thematic thread**: When `<story_arc>` contains a `thematic_thread`, it surfaces periodically through NPC dialog, reactions, or incidental observations — as a recurring undercurrent, never as lecture.
 - **Act-mood texture** (action + dialog prompts): The current act's mood (from `<story_arc>`) shapes the texture of every outcome — a STRONG_HIT in a desperate phase still carries the surrounding darkness.
+
+#### Director Prompt Rules (v0.9.77)
+
+- **`<setting>` context block**: `build_director_prompt()` now opens with `<setting genre="..." tone="..."/>`, giving the Director awareness of genre and tone for the first time.
+- **TONE RULE**: `narrator_guidance` and `npc_guidance` must honor the story's tone. Comedy tones require comedy-compatible beats; dark tones require weight. Prevents Director guidance from pulling the narrator into a tonally mismatched register.
+- **`player_name` intentionally absent from `<setting>`**: The Director does not need the player character's name for strategic guidance. Omitting it prevents Haiku from using it in `narrator_guidance` — which was the root cause of third-person drift. The fix is structural (don't give the information) rather than instructional (don't use the information).
+
 
 #### Player Authorship Rules (Narrator System Prompt)
 

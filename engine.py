@@ -62,7 +62,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.76"
+VERSION = "0.9.77"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -3993,6 +3993,18 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
     cb = _content_boundaries_block(game)
     bs = _backstory_block(game)
     sc = _status_context_block(game)
+    # Tone authority block — makes the player's chosen tone the dominant stylistic register.
+    # Injected as a first-class element before <rules> so it outranks generic style defaults.
+    tone_block = ""
+    if game and getattr(game, "setting_tone", ""):
+        tone_block = (
+            f'\n<tone_authority tone="{_xa(game.setting_tone)}">'
+            f'This is the player\'s chosen creative register for the entire story. '
+            f'It governs sentence rhythm, scene energy, what details get highlighted, '
+            f'how NPCs behave, and what makes a moment land. Every scene must feel it. '
+            f'Follow <director_guidance> for narrative direction, but never let it '
+            f'override or dilute the tone.</tone_authority>'
+        )
     _quote_rule = (
         "- DIALOG QUOTES: Use German quotation marks exclusively. "
         "Opening quote: \u201e (lower-9, U+201E). Closing quote: \u201c (upper-6, U+201C). "
@@ -4003,7 +4015,7 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
         "Pattern: \u201cText.\u201d \u2014 NEVER use guillemets, straight ASCII quotes (\"), or any other style."
     )
     return f"""<role>Narrator of an immersive RPG. All output in {lang}, second person singular.</role>
-{kf}{cb}{bs}{sc}
+{kf}{cb}{bs}{sc}{tone_block}
 <rules>
 - NEVER mention dice, stats, numbers, or game mechanics
 {_quote_rule}
@@ -4047,7 +4059,7 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
 - NEVER skip the player's contribution. NEVER jump straight to NPC reactions without first showing what the player character said or did.
 - NPCs REACT to what the player actually said/did, not to a reinterpretation.
 </player_authorship>
-<style>Terse and precise — one specific detail beats three general ones. Render emotion through behavior and sensation, not labels. The player is inside the world, not watching it. Integrate what the player brings seamlessly, as if it was always there.</style>"""
+<style>The player is inside the world, not watching it. Integrate what the player brings seamlessly, as if it was always there.</style>"""
 
 
 def call_narrator(client: anthropic.Anthropic, prompt: str,
@@ -4741,7 +4753,9 @@ def build_director_prompt(game: GameState, latest_narration: str,
             clocks_lines.append(f'  - {c["name"]}: {c.get("trigger_description", "")}')
     clocks_block = "<clocks>\n" + "\n".join(clocks_lines) + "\n</clocks>" if clocks_lines else ""
 
-    return f"""<scene_history>
+    return f"""<setting genre="{_xa(game.setting_genre)}" tone="{_xa(game.setting_tone)}"/>
+
+<scene_history>
 {log_text}
 </scene_history>
 
@@ -4761,6 +4775,7 @@ def build_director_prompt(game: GameState, latest_narration: str,
 Analyze the latest scene and provide strategic guidance in {lang}.
 LANGUAGE RULE: Every text field you write MUST be in {lang}. This is an absolute requirement — do not use English for any field value, not even partially or for a single sentence. If the narration language is German, write all guidance, reflections, descriptions, and summaries in German.
 Reflections and narrator_guidance MUST be in {lang}.
+TONE RULE: narrator_guidance and npc_guidance MUST honor the story's tone ("{_xa(game.setting_tone)}"). Do not steer the story toward a register that contradicts it — a comedy tone requires comedy-compatible beats, a dark tone requires weight, etc.
 
 Field instructions:
 - scene_summary: 2-3 sentence summary of what happened and WHY it matters (in {lang})
