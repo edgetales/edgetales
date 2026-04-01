@@ -62,7 +62,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.77"
+VERSION = "0.9.78"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -3592,11 +3592,17 @@ def call_story_architect(client: anthropic.Anthropic, game: GameState,
         system = f"""<role>Story architect for an RPG campaign. Create a flexible story blueprint.</role>
 {kf}{cb}<rules>
 - Design a 3-act structure with ~15-20 total scenes
+- Each act serves a distinct narrative function:
+  Setup: Establish the protagonist's WORKING ASSUMPTIONS about the conflict {E['dash']} the frame that will later be challenged or recontextualized.
+  Confrontation: Deepen and complicate. Plant evidence that challenges the initial frame, even if the player cannot yet see the full picture.
+  Climax: Force a REFRAMING {E['dash']} the resolution must answer a different question than Act 1 appeared to pose. Not just "does the protagonist win?" but "what does winning actually mean now?"
 - Each act has a GOAL the player should work toward, not a script
 - Each act has a TRANSITION_TRIGGER: a narrative condition that signals this act is complete and the next should begin. This is a PLAYER ACTION or STORY EVENT, not a scene number. Example: "Mike decides to cooperate with the authorities" or "The first repair attempt fails spectacularly". The scene_range is a fallback estimate; the trigger is the real boundary.
-- Include a THEMATIC_THREAD: the emotional/philosophical question that runs through the entire chapter as a vertical narrative layer. This connects to character_growth from previous chapters if available.
-- Include 2-3 key revelations that can be woven in at appropriate moments
-- Define 2-3 possible endings (triumphant, bittersweet, tragic)
+- The confrontation{E['arrow_r']}climax TRANSITION_TRIGGER must be a REFRAMING EVENT {E['dash']} not merely an escalation of existing tension, but a discovery or realization that changes what the conflict is fundamentally about.
+- central_conflict must have a SURFACE LAYER (what the conflict appears to be at the start) and a HIDDEN LAYER (what it turns out to actually be about). The hidden layer should emerge through Act 2 revelations and reframe the climax.
+- THEMATIC_THREAD: A genuine open philosophical question {E['dash']} not a label ("loyalty") but an unresolved question ("Can loyalty survive when the person you are loyal to may not exist?"). It must surface implicitly in Act 1, be challenged in Act 2, and be CONFRONTED {E['dash']} not necessarily resolved {E['dash']} in Act 3.
+- Include 2-3 key revelations that can be woven in at appropriate moments. At least one must be a PERCEPTION SHIFT {E['dash']} it changes how the player understands something already seen, not just adds new information.
+- Define 2-3 possible endings. Each must address BOTH the external conflict outcome AND the thematic question {E['dash']} what does the protagonist understand at the end that they did not at the start? (e.g. hard-won, bittersweet, pyrrhic)
 - The blueprint is a COMPASS, not rails {E['dash']} player choices override everything
 - If this is a continuing campaign (campaign_chapter > 1): build on unresolved threads from previous chapters, evolve existing relationships, introduce new conflicts that connect to the established world. Use previous character_growth and thematic_question to continue the emotional arc.
 - All text fields in {lang}

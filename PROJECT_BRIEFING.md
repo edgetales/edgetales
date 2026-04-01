@@ -8,7 +8,7 @@
 
 | | |
 |---|---|
-| **Version** | v0.9.76 |
+| **Version** | v0.9.78 |
 | **Codebase** | ~13,600 lines across 5 source files + config |
 | **Stack** | Python 3.11+, NiceGUI, Anthropic SDK (Structured Outputs), reportlab, edge-tts, faster-whisper, wonderwords, stop-words, nameparser, cryptography |
 | **AI Models** | Narrator/Architect: `claude-sonnet-4-6` · Brain/Director/Extractors: `claude-haiku-4-5-20251001` |
@@ -163,6 +163,8 @@ Player Input
 `call_story_architect()` runs once at game start and once per chapter start. Uses Sonnet with Structured Outputs. Runs **in parallel** with the opening Narrator via `concurrent.futures.ThreadPoolExecutor(max_workers=2)` — halves startup wait (~15s vs ~30s). Thread-safe: Architect only needs genre/tone/setting/character (populated by Setup Brain before threads launch). In `start_new_chapter()`, the Architect thread receives a `copy.copy(game)` snapshot to prevent race conditions from `parse_narrator_response()` mutations.
 
 **Output**: Story blueprint with `central_conflict`, `antagonist_force`, `thematic_thread`, Acts (3-act or Kishōtenketsu) with `transition_trigger` per act, revelations, and possible endings.
+
+**3-act prompt (v0.9.78)**: Five additions bring the 3-act prompt to qualitative parity with Kishōtenketsu: (1) Explicit act definitions — Setup establishes working assumptions, Confrontation plants the reframing seed, Climax forces a perspective shift on what the conflict means. (2) Anti-escalation rule — the confrontation→climax `transition_trigger` must be a REFRAMING EVENT, not mere escalation. (3) Dual-layer `central_conflict` — SURFACE LAYER (apparent start) + HIDDEN LAYER (true meaning, emerging through Act 2). (4) `thematic_thread` structurally anchored — defined as a genuine open philosophical question with explicit act-by-act surfacing instructions. (5) Perception-shift revelation — at least one revelation must recontextualize something already seen; endings must address both external outcome and thematic question.
 
 **Revelation pipeline (v0.9.65)**:
 - `get_pending_revelations()` returns revelations eligible at current `scene_count` (not yet in `revealed`).

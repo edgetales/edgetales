@@ -5,6 +5,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.78]
+
+### Improved
+- **3-act Story Architect prompt: qualitative parity with Kishōtenketsu.** Five targeted additions close the quality gap between the two structure prompts:
+  (1) **Explicit act definitions** — Setup/Confrontation/Climax now carry purpose descriptions (working assumptions → challenged frame → reframing), analogous to Ki/Shō/Ten/Ketsu. Prevents the model from defaulting to training-data generics for these labels.
+  (2) **Anti-escalation rule on the confrontation→climax transition** — `TRANSITION_TRIGGER` for Act 2→3 must be a REFRAMING EVENT, not merely an escalation of existing tension. Mirrors the Ten-rule constraint that produced the "echo of your former self" motif in Kishōtenketsu runs.
+  (3) **Dual-layer `central_conflict`** — Must have a SURFACE LAYER (what the conflict appears to be at the start) and a HIDDEN LAYER (what it turns out to actually be about), emerging through Act 2 revelations and reframing the climax. Forces two-dimensional conflict thinking.
+  (4) **Structurally anchored `thematic_thread`** — Now defined as a genuine open philosophical question (not a label), with explicit act anchoring: surfaces in Act 1, challenged in Act 2, confronted in Act 3. Prevents the thematic thread from floating as an orphaned bullet with no structural connection.
+  (5) **Perception-shift revelation requirement + reframed endings** — At least one revelation must change how the player understands something already seen. Possible endings must address both external outcome AND thematic question (labels changed: triumphant/bittersweet/tragic → hard-won/bittersweet/pyrrhic as examples).
+
+---
+
 ## [0.9.77]
 
 ### Changed
