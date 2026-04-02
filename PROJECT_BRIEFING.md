@@ -8,7 +8,7 @@
 
 | | |
 |---|---|
-| **Version** | v0.9.78 |
+| **Version** | v0.9.82 |
 | **Codebase** | ~13,600 lines across 5 source files + config |
 | **Stack** | Python 3.11+, NiceGUI, Anthropic SDK (Structured Outputs), reportlab, edge-tts, faster-whisper, wonderwords, stop-words, nameparser, cryptography |
 | **AI Models** | Narrator/Architect: `claude-sonnet-4-6` · Brain/Director/Extractors: `claude-haiku-4-5-20251001` |
@@ -176,7 +176,12 @@ Player Input
 
 **Akt-Transitions Guard + Back-fill (v0.9.61)**:
 - **Final-act guard**: If `act_idx >= len(acts)-1`, Director signal is ignored (final act has no outbound trigger by design).
-- **Back-fill**: When recording `act_N`, all preceding `act_i` (i < N) with exceeded `scene_range` are also written to `triggered_transitions` if not yet present — prevents gaps like `['act_0', 'act_2']`.
+- **Back-fill in `_apply_director_guidance`**: When recording `act_N`, all preceding `act_i` (i < N) with exceeded `scene_range` are also written to `triggered_transitions` if not yet present — prevents gaps like `['act_0', 'act_2']`.
+
+**`_check_story_completion` — Three-Stage Trigger (v0.9.81)**:
+1. **Primary**: `penultimate_id` in `triggered_transitions` AND `scene_count >= final_end` → `story_complete = True`. Requires Director to have confirmed the transition via `act_transition: true`.
+2. **Scene-range back-fill**: If primary fails AND `scene_count >= final_end`, all preceding acts whose `scene_range` is past are added to `triggered_transitions` (same logic as Director back-fill). Primary check is then re-evaluated. This handles campaigns where all Director runs were superseded by fast play and `triggered_transitions` stayed empty — which previously caused the epilogue to be permanently suppressed.
+3. **Fallback**: `scene_count >= final_end + 5` → `story_complete = True` (safety net, unchanged).
 
 ### Narrative Continuity Pipeline (Chapter Transitions)
 
@@ -211,7 +216,9 @@ Phase trigger list: `"climax"`, `"resolution"` (3-act finale), `"ten_twist"` (Ki
 - `agenda`/`instinct`: fills **only empty fields** (`needs_profile="true"` NPCs)
 - `updated_agenda`/`updated_instinct` (v0.9.61): **actively overwrites** when non-null — for NPCs whose goals fundamentally changed (defeat, betrayal, revelation). Director prompt explains when to use update vs. leave null.
 
-**Reflection-Truncation Guard**: `_apply_director_guidance()` checks if reflection text ends with sentence-terminating character. Truncated reflections are discarded — `_needs_reflection` stays active, Director retries next cycle.
+**`rich_summary` Truncation Guard (v0.9.82)**: The `scene_summary` field from the Director is validated before writing to `session_log[-1]["rich_summary"]`. Uses `_SUMMARY_ENDS = ('.', '!', '?', '"', '»', '…', ')')` — **no em/en-dashes** — because a trailing `—` in a summary almost always indicates a model truncation, not a literary device. `_truncate_to_last_sentence()` accepts an optional `ends` parameter (default: `_SENTENCE_ENDS`) so callers can choose strictness. If truncation leaves an empty string, `rich_summary` is not stored and the Brain's `summary` serves as fallback in all three consumers (`_recent_events_block`, `build_brain_prompt`, `build_director_prompt`). NPC reflections continue using `_SENTENCE_ENDS` (em-dash valid as literary terminal).
+
+**Reflection-Truncation Guard & Fallback**: `_apply_director_guidance()` tracks successfully stored reflections in `successfully_reflected_ids` — populated only when a reflection passes all checks (non-empty, ends with sentence-terminating punctuation) and is written to memory. The fallback loop uses this set (not the raw `npc_reflections` list) to identify NPCs whose reflection was rejected or not produced; it resets both `_needs_reflection = False` and `importance_accumulator = 0`. Resetting the accumulator is essential: an accumulator already ≥ `REFLECTION_THRESHOLD` (30) would cause `_apply_memory_updates()` to immediately re-set the flag on the next memory addition, nullifying the fallback. Note: a truncated or empty reflection from the Director counts as "not addressed" — the NPC will re-accumulate and trigger again naturally from new scene observations.
 
 ### Post-Completion Aftermath Phase (v0.9.61)
 
@@ -303,7 +310,7 @@ Search chain: exact ID → **normalized name** → **normalized alias** → subs
 
 Each memory: `importance` (1–10), `type` (`"observation"` | `"reflection"`), `emotional_weight`, `scene`, optional `about_npc` (NPC ID or null).
 
-**NPC-to-NPC relationships (`about_npc`)**: Optional field on any memory. When a memory primarily concerns another NPC (player tells Sophie about Bruce, Sophie observes Bruce acting), `about_npc` is set to the referenced NPC's ID. No separate relationship system — relationships emerge organically from tagged memories within the existing memory infrastructure. Extractor prompt instructs: player-initiated NPC-to-NPC communication (gossip, warnings, lies, compliments) MUST be captured as a memory with `about_npc`.
+**NPC-to-NPC relationships (`about_npc`)**: Optional field on any memory. When a memory primarily concerns another NPC (player tells Sophie about Bruce, Sophie observes Bruce acting), `about_npc` is set to the referenced NPC's ID. No separate relationship system — relationships emerge organically from tagged memories within the existing memory infrastructure. Extractor prompt instructs: player-initiated NPC-to-NPC communication (gossip, warnings, lies, compliments) MUST be captured as a memory with `about_npc`. **Self-reference guard (v0.9.81)**: `_resolve_about_npc()` now accepts an `owner_id` parameter — if the resolved NPC ID matches the memory's owning NPC, `None` is returned and a rejection is logged. Both call sites (`_apply_memory_updates`, `_apply_director_guidance`) pass `owner_id=npc.get("id")`.
 
 **Weighted retrieval** `retrieve_memories()`:
 ```
@@ -313,7 +320,9 @@ Exponential recency decay (`0.92^scene_gap`). Reflections have floor 0.6 and sto
 
 **Consolidation** `_consolidate_memory()`: Reflections always kept (max 8), observations by budget split (60% recency + 40% importance). Total max 25 entries.
 
-**Reflection trigger**: `importance_accumulator` incremented per memory update. At `REFLECTION_THRESHOLD` (30) → `_needs_reflection = True` → Director generates reflection (importance 8, decays slower). Director receives last reflection in `<reflect>` tag (`last_reflection="..."`, `last_tone="..."`) with instruction not to repeat themes or emotional tone.
+**Reflection trigger**: `importance_accumulator` incremented per memory update. At `REFLECTION_THRESHOLD` (30) → `_needs_reflection = True` → Director generates reflection (importance 8, decays slower). `_should_call_director()` picks the NPC with the **highest accumulator** as the trigger label (v0.9.81 — previously always named the first NPC in the list regardless of accumulator value). `build_director_prompt()` includes ALL `_needs_reflection` NPCs in `<reflect>` blocks regardless of which one the trigger label names. Director receives last reflection in `<reflect>` tag (`last_reflection="..."`, `last_tone="..."`) with instruction not to repeat themes or emotional tone.
+
+**Stale reflection reset (v0.9.81)**: When the `_bg_director` background task is superseded by a newer turn (`_director_gen` mismatch), `reset_stale_reflection_flags(game)` is called before the early return. This clears `_needs_reflection` and resets `importance_accumulator` to 0 for all pending NPCs — preventing the zombie-reflection loop where `_needs_reflection` stays `True` permanently across every subsequent scene without ever producing output.
 
 Mid-game NPCs without agenda/instinct get `needs_profile="true"` — Director proposes both.
 
@@ -649,8 +658,9 @@ All JSON-delivering AI calls (Brain, Setup Brain, Director, Story Architect, Cha
 | `_sanitize_npc_name(name)` | Strips bracket annotations → `(clean_name, extracted_aliases)` |
 | `_apply_name_sanitization(npc)` | In-place sanitization with alias preservation and self-alias cleanup |
 | `_locations_match(loc_a, loc_b)` | Fuzzy location comparison (word-set-subset + prefix check) |
-| `_should_call_director(...)` | Director trigger decision |
+| `_should_call_director(...)` | Director trigger decision — returns reason string naming NPC with highest accumulator |
 | `_apply_director_guidance(game, guidance)` | Apply Director guidance dict to GameState |
+| `reset_stale_reflection_flags(game)` | Reset `_needs_reflection` + `importance_accumulator` for all pending NPCs when Director is skipped (race condition) |
 | `save_game(game, username, chat_messages, name)` | Save game as JSON |
 | `load_game(username, name)` | Load game → (GameState, chat_history) |
 | `list_saves_with_info(username)` | Saves with metadata (newest first) |
@@ -728,6 +738,7 @@ Hard-won lessons from real development — read before making changes.
 - Token budget constants are named module-level constants — never hardcode inline values.
 - **Structured Outputs replaced JSON repair** — do not reintroduce `json.loads(repair(text))` patterns.
 - Narrator `PURE PROSE ONLY` instruction exists for a reason — never add metadata templates or JSON examples to Narrator prompts. The rule also explicitly forbids role-label prefixes (`"Narrator:"`) — Sonnet uses them in English if not told otherwise.
+- **Director `_bg_director` race condition**: `_director_gen` is incremented at turn start — any turn played in < ~1–2s will supersede the previous Director task before it runs. When the early-return fires, `reset_stale_reflection_flags()` MUST be called before returning, or `_needs_reflection` flags accumulate indefinitely (zombie-reflection loop). Savegame diagnostic: if `importance_accumulator` equals the exact sum of all NPC memory importances and `last_reflection_scene = 0`, the Director has never completed for that NPC.
 
 ### NPC System
 - The six-layer anti-duplicate system is delicate — test changes against all six layers.

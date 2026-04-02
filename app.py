@@ -134,7 +134,7 @@ from engine import (
     get_current_act, setup_file_logging,
     call_setup_brain, start_new_game, start_new_chapter,
     process_turn, process_momentum_burn, process_correction, call_recap,
-    run_deferred_director, generate_epilogue,
+    run_deferred_director, reset_stale_reflection_flags, generate_epilogue,
 )
 from i18n import (
     t, UI_LANGUAGES, DEFAULT_LANG,
@@ -2464,9 +2464,16 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
             async def _bg_director():
                 try:
                     # Don't even run if a newer turn has already started
-                    # (the game object may be mutated by the new turn's thread)
+                    # (the game object may be mutated by the new turn's thread).
+                    # Still reset reflection flags so they don't accumulate indefinitely —
+                    # without this, _needs_reflection stays True forever, triggering the
+                    # Director every scene without ever producing output (zombie-reflection loop).
                     if _s.get("_director_gen", 0) != _dgen:
                         log("[Director] Skipping — newer turn already started")
+                        reset_stale_reflection_flags(_g)
+                        # Save the reset state if the turn context is still valid
+                        if _s.get("_turn_gen", 0) == _gen:
+                            save_game(_g, _u, _s["messages"], _s.get("active_save", "autosave"))
                         return
                     await asyncio.to_thread(run_deferred_director, client, _g, _dc)
                     # Don't save if user switched to a different game during Director processing

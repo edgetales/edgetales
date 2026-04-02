@@ -62,7 +62,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.78"
+VERSION = "0.9.82"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -1127,16 +1127,20 @@ def _find_npc(game, npc_ref: str) -> Optional[dict]:
     return None
 
 
-def _resolve_about_npc(game, raw: str) -> Optional[str]:
+def _resolve_about_npc(game, raw: str, owner_id: str = None) -> Optional[str]:
     """Resolve an about_npc value (slug, name, or id) to a canonical npc_id.
     Returns the npc_id string if found, None otherwise.
     Prevents dangling slug references (e.g. 'leonhard' instead of 'npc_3')
+    and self-references (an NPC's memory marked as being about itself)
     from being stored in memory entries."""
     if not raw:
         return None
     npc = _find_npc(game, raw)
     if npc:
         resolved = npc.get("id")
+        if owner_id and resolved == owner_id:
+            log(f"[NPC] about_npc self-reference rejected (owner={owner_id}, raw='{raw}')")
+            return None
         if resolved != raw:
             log(f"[NPC] about_npc resolved '{raw}' → '{resolved}'")
         return resolved
@@ -4622,10 +4626,15 @@ def _should_call_director(game: GameState, roll_result: str = "",
     if revelation_used:
         return "revelation"
 
-    # 2. Any NPC needs reflection
-    for npc in game.npcs:
-        if npc.get("_needs_reflection") and npc.get("status") in ("active", "background"):
-            return f"reflection:{npc.get('name', '?')}"
+    # 2. Any NPC needs reflection — pick the one with the highest accumulator so the
+    # trigger label reflects the most-pending NPC (build_director_prompt includes all of them).
+    reflection_npcs = [
+        npc for npc in game.npcs
+        if npc.get("_needs_reflection") and npc.get("status") in ("active", "background")
+    ]
+    if reflection_npcs:
+        top = max(reflection_npcs, key=lambda n: n.get("importance_accumulator", 0))
+        return f"reflection:{top.get('name', '?')}"
 
     # 3. Act phase change — Director is especially valuable in high-stakes phases.
     # "resolution" = 3-act finale; "ketsu_resolution" = kishotenketsu finale;
@@ -4849,13 +4858,17 @@ def call_director(client: anthropic.Anthropic, game: GameState,
 
 
 _SENTENCE_ENDS = ('.', '!', '?', '"', '»', '…', ')', '–', '—')
+# Stricter set for summaries: em/en-dashes excluded because a trailing dash
+# in a summary almost always means a model truncation, not a literary device.
+_SUMMARY_ENDS = ('.', '!', '?', '"', '»', '…', ')')
 
-def _truncate_to_last_sentence(text: str) -> str:
+def _truncate_to_last_sentence(text: str, ends: tuple = _SENTENCE_ENDS) -> str:
     """Truncate text to the last complete sentence.
     Scans backwards for the last sentence-terminating character.
-    Returns empty string if no terminator is found (fully truncated)."""
+    Returns empty string if no terminator is found (fully truncated).
+    Pass ends=_SUMMARY_ENDS for stricter truncation (no dash terminals)."""
     for i in range(len(text) - 1, -1, -1):
-        if text[i] in _SENTENCE_ENDS:
+        if text[i] in ends:
             return text[:i + 1]
     return ""
 
@@ -4864,6 +4877,14 @@ def _apply_director_guidance(game: GameState, guidance: dict):
     """Apply Director guidance to game state: store guidance, apply reflections,
     update session log with rich summary."""
     if not guidance:
+        # API failure — reset any stuck _needs_reflection flags so we don't loop
+        # on a zombie trigger (Director keeps firing every turn but always fails).
+        for npc in game.npcs:
+            if npc.get("_needs_reflection") and npc.get("status") in ("active", "background"):
+                npc["_needs_reflection"] = False
+                npc["importance_accumulator"] = 0
+                log(f"[Director] Reset _needs_reflection for {npc.get('name','?')} "
+                    f"(guidance empty — API failure or empty response)")
         return
 
     # Store guidance for next narrator call
@@ -4918,8 +4939,8 @@ def _apply_director_guidance(game: GameState, guidance: dict):
     # Enrich the latest session log entry with Director's summary
     scene_summary = guidance.get("scene_summary", "")
     if scene_summary and game.session_log:
-        if not scene_summary.rstrip().endswith(_SENTENCE_ENDS):
-            scene_summary = _truncate_to_last_sentence(scene_summary)
+        if not scene_summary.rstrip().endswith(_SUMMARY_ENDS):
+            scene_summary = _truncate_to_last_sentence(scene_summary, ends=_SUMMARY_ENDS)
             if scene_summary:
                 log("[Director] rich_summary truncated to last complete sentence")
             else:
@@ -4929,6 +4950,10 @@ def _apply_director_guidance(game: GameState, guidance: dict):
             game.session_log[-1]["rich_summary"] = scene_summary
 
     # Apply NPC reflections
+    # Only NPCs whose reflection was actually stored count as "addressed" for the fallback below.
+    # Reflections rejected as empty or truncated must NOT count — otherwise the fallback skips
+    # them and _needs_reflection stays True permanently (infinite Director loop).
+    successfully_reflected_ids: set = set()
     for ref in guidance.get("npc_reflections", []):
         npc_id = ref.get("npc_id", "")
         npc = _find_npc(game, npc_id)
@@ -4953,11 +4978,12 @@ def _apply_director_guidance(game: GameState, guidance: dict):
             "tone_key": ref.get("tone_key", ""),  # Machine-readable single word from enum
             "importance": 8,  # Reflections are always important
             "type": "reflection",
-            "about_npc": _resolve_about_npc(game, ref.get("about_npc")),
+            "about_npc": _resolve_about_npc(game, ref.get("about_npc"), owner_id=npc.get("id")),
         })
         npc["_needs_reflection"] = False
         npc["importance_accumulator"] = 0
         npc["last_reflection_scene"] = game.scene_count
+        successfully_reflected_ids.add(npc_id)
 
         # Fill empty agenda/instinct if Director suggested them
         suggested_agenda = (ref.get("agenda") or "").strip()
@@ -5017,17 +5043,40 @@ def _apply_director_guidance(game: GameState, guidance: dict):
 
         log(f"[Director] Reflection for {npc['name']}: {reflection_text[:80]}")
 
-    # Fallback: reset _needs_reflection for any NPCs the Director didn't address.
-    # Without this, the flag stays True forever, triggering Director every turn.
-    reflected_ids = {ref.get("npc_id", "") for ref in guidance.get("npc_reflections", [])}
+    # Fallback: reset _needs_reflection for any NPCs the Director didn't successfully address.
+    # "Successfully addressed" means the reflection passed all checks and was stored.
+    # NPCs whose reflection was rejected (empty/truncated) are NOT in successfully_reflected_ids
+    # and must be reset here.
+    # The accumulator is also reset: if it stays >= REFLECTION_THRESHOLD, _apply_memory_updates()
+    # would immediately re-set _needs_reflection on the very next memory addition, turning the
+    # fallback into a one-scene respite and creating an infinite Director loop.
     for npc in game.npcs:
-        if npc.get("_needs_reflection") and npc.get("id", "") not in reflected_ids:
+        if npc.get("_needs_reflection") and npc.get("id", "") not in successfully_reflected_ids:
             npc["_needs_reflection"] = False
-            # Don't reset accumulator — it will re-trigger next threshold crossing
+            npc["importance_accumulator"] = 0
             log(f"[Director] Reset stale _needs_reflection for {npc.get('name','?')} "
-                f"(Director didn't address)")
+                f"(reflection not produced or rejected)")
 
     log(f"[Director] Guidance applied: pacing={guidance.get('pacing', '?')}")
+
+
+def reset_stale_reflection_flags(game: GameState) -> None:
+    """Reset _needs_reflection and importance_accumulator for NPCs whose Director turn was
+    skipped because a newer turn superseded it (race condition: player sent a new message
+    before the background Director task could run).
+
+    Without this reset, the flags remain True permanently — the Director is triggered every
+    subsequent scene, but is always superseded again, creating a zombie-reflection loop that
+    never produces output and causes log noise.
+
+    Called from the UI layer (_bg_director early-return path) when _director_gen mismatch
+    prevents the Director from running."""
+    for npc in game.npcs:
+        if npc.get("_needs_reflection") and npc.get("status") in ("active", "background"):
+            npc["_needs_reflection"] = False
+            npc["importance_accumulator"] = 0
+            log(f"[Director] Reset stale reflection flag for {npc.get('name', '?')} "
+                f"(Director skipped — superseded by newer turn)")
 
 
 # ===============================================================
@@ -5831,7 +5880,7 @@ def _apply_memory_updates(game: GameState, json_text: str,
                     "emotional_weight": emotional,
                     "importance": importance,
                     "type": "observation",
-                    "about_npc": _resolve_about_npc(game, u.get("about_npc")),
+                    "about_npc": _resolve_about_npc(game, u.get("about_npc"), owner_id=npc.get("id")),
                     "_score_debug": score_debug,
                 })
 
@@ -7215,7 +7264,7 @@ def run_deferred_director(client: anthropic.Anthropic, game: GameState,
 def _check_story_completion(game: GameState):
     """Check if the story has reached its natural end point.
 
-    Two-stage trigger to avoid premature epilogue offers mid-mission:
+    Three-stage trigger to avoid premature epilogue offers mid-mission:
 
     PRIMARY: The penultimate act must have a recorded transition in
     triggered_transitions — meaning the Director confirmed the final act was
@@ -7224,9 +7273,16 @@ def _check_story_completion(game: GameState):
     the penultimate act's transition is the only reliable signal that the
     resolution phase is genuinely underway.
 
-    FALLBACK: If no Director-confirmed transition exists (e.g. the game ran
-    very long without a clean phase trigger), story_complete fires at
-    final_end + 5 as a safety net. The +5 buffer is intentionally generous
+    SCENE-RANGE BACK-FILL: If scene_count has reached final_end but the Director
+    never returned act_transition=true (e.g. all Director runs were superseded by
+    fast play), transitions are derived from scene_range alone and added to
+    triggered_transitions. The primary check is then re-evaluated. This prevents
+    the epilogue from being permanently suppressed when the race-condition fix
+    (reset_stale_reflection_flags) cleared Director contexts before they ran.
+
+    FALLBACK: If no Director-confirmed transition exists and scene_count is
+    still below final_end (back-fill not yet eligible), story_complete fires at
+    final_end + 5 as a final safety net. The +5 buffer is intentionally generous
     because Kishōtenketsu structures naturally run longer than 3-act ones.
 
     Once set, story_complete is never unset here (Director or ## correction
@@ -7246,19 +7302,39 @@ def _check_story_completion(game: GameState):
     # Primary: penultimate act was Director-confirmed → final act narratively entered
     # Use `or []` to guard against triggered_transitions=None (can occur when the
     # Story Architect returns the field as null instead of omitting it entirely)
-    triggered = set(game.story_blueprint.get("triggered_transitions") or [])
+    bp = game.story_blueprint
+    triggered = set(bp.get("triggered_transitions") or [])
     penultimate_id = f"act_{len(acts) - 2}"
     final_act_entered = len(acts) >= 2 and penultimate_id in triggered
 
+    # Scene-range back-fill: if the scene count has reached (or passed) the final act's
+    # range end but the Director never returned act_transition=true (e.g. all Director
+    # runs were superseded by fast play), derive transitions from scene_range alone.
+    # This mirrors the back-fill in _apply_director_guidance and runs at most once per
+    # game — only when primary check fails AND scene_count >= final_end.
+    if not final_act_entered and game.scene_count >= final_end:
+        if bp.get("triggered_transitions") is None:
+            bp["triggered_transitions"] = []
+        for i, act in enumerate(acts[:-1]):  # all acts except the final one
+            act_id = f"act_{i}"
+            sr = act.get("scene_range", [1, 20])
+            if game.scene_count > sr[1] and act_id not in bp["triggered_transitions"]:
+                bp["triggered_transitions"].append(act_id)
+                log(f"[Story] Back-filled transition: {act_id} "
+                    f"(scene {game.scene_count} > range end {sr[1]}, Director never confirmed)")
+        # Re-evaluate with the back-filled set
+        triggered = set(bp.get("triggered_transitions") or [])
+        final_act_entered = len(acts) >= 2 and penultimate_id in triggered
+
     if final_act_entered and game.scene_count >= final_end:
-        game.story_blueprint["story_complete"] = True
+        bp["story_complete"] = True
         log(f"[Story] Complete: final act entered ('{penultimate_id}' triggered) "
             f"+ scene {game.scene_count} >= range end {final_end}")
         return
 
     # Fallback: significantly past the final range with no Director confirmation
     if game.scene_count >= final_end + 5:
-        game.story_blueprint["story_complete"] = True
+        bp["story_complete"] = True
         log(f"[Story] Complete (fallback): scene {game.scene_count} >= "
             f"final_end+5 ({final_end + 5}), no Director confirmation")
 
