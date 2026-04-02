@@ -5854,9 +5854,10 @@ def _apply_memory_updates(game: GameState, json_text: str,
                 ):
                     npc["last_location"] = game.current_location
                 if npc["importance_accumulator"] >= REFLECTION_THRESHOLD:
+                    if not npc.get("_needs_reflection"):
+                        log(f"[NPC] {npc['name']} needs reflection "
+                            f"(accumulator={npc['importance_accumulator']})")
                     npc["_needs_reflection"] = True
-                    log(f"[NPC] {npc['name']} needs reflection "
-                        f"(accumulator={npc['importance_accumulator']})")
 
                 # Consolidate memory (replaces simple FIFO)
                 _consolidate_memory(npc)
