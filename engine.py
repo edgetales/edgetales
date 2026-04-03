@@ -62,7 +62,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.82"
+VERSION = "0.9.83"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -1352,9 +1352,10 @@ def _fuzzy_match_existing_npc(game, new_name: str) -> tuple:
     return best_match, best_type
 
 
-def _merge_npc_identity(existing: dict, new_name: str, new_desc: str = ""):
+def _merge_npc_identity(existing: dict, new_name: str, new_desc: str = "", game=None):
     """Merge a new identity into an existing NPC (identity reveal).
-    Old name becomes an alias, new name becomes primary."""
+    Old name becomes an alias, new name becomes primary.
+    Pass game to also update any clock whose owner string matches the old name."""
     old_name = existing["name"]
     new_name = new_name.strip()
     # Strip parenthetical annotations from new name (e.g. "Cremin (auch bekannt als Cremon)")
@@ -1382,6 +1383,16 @@ def _merge_npc_identity(existing: dict, new_name: str, new_desc: str = ""):
     # Ensure active status (lore figures become active when their identity is revealed)
     if existing.get("status") in ("background", "lore"):
         _reactivate_npc(existing, reason=f"identity revealed as {new_name}")
+    # Update any clock whose owner string still carries the old name.
+    # Normalize both sides to catch whitespace/hyphen/case drift.
+    if game is not None:
+        old_name_norm = _normalize_for_match(old_name)
+        for clock in game.clocks:
+            if _normalize_for_match(clock.get("owner", "")) == old_name_norm:
+                old_owner = clock["owner"]
+                clock["owner"] = new_name
+                log(f"[Clock] Owner updated on NPC rename: '{clock['name']}' "
+                    f"'{old_owner}' → '{new_name}'")
     log(f"[NPC] Identity merged: '{old_name}' → '{new_name}' (aliases: {existing['aliases']})")
 
 
@@ -1528,7 +1539,7 @@ def _process_npc_renames(game, json_text: str):
             if new_norm == player_norm or (set(new_norm.split()) & set(player_norm.split())):
                 log(f"[NPC] Rename rejected: '{new_name}' matches player character")
                 continue
-            _merge_npc_identity(npc, new_name, r.get("description", ""))
+            _merge_npc_identity(npc, new_name, r.get("description", ""), game=game)
             # Absorb any NPC whose name or alias matches the renamed-to name.
             # Alias matching is intentional: if another NPC already carries this name
             # as an alias, they are narratively the same person and should be merged.
@@ -1711,7 +1722,7 @@ def _process_npc_details(game, json_text: str):
                     # completely (e.g. "Der Jungfahrer" → "Finn")
                     log(f"[NPC] npc_details: treating '{old_name}' → '{new_name}' "
                         f"as identity reveal (names too different for extension)")
-                    _merge_npc_identity(npc, new_name)
+                    _merge_npc_identity(npc, new_name, game=game)
                     # Check if _process_new_npcs already created a duplicate NPC
                     # with this name earlier in the same metadata cycle
                     _absorb_duplicate_npc(game, npc, new_name)
@@ -1799,7 +1810,7 @@ def _process_new_npcs(game, json_text: str):
                         if fuzzy_hit.get("status") in ("background", "lore"):
                             _reactivate_npc(fuzzy_hit, reason="STT variant reappeared")
                     else:
-                        _merge_npc_identity(fuzzy_hit, nd["name"], nd.get("description", ""))
+                        _merge_npc_identity(fuzzy_hit, nd["name"], nd.get("description", ""), game=game)
                     existing_names.add(name_norm)
                     continue
 
@@ -1818,7 +1829,7 @@ def _process_new_npcs(game, json_text: str):
                     else:
                         log(f"[NPC] Description-based dedup: '{nd['name']}' matches "
                             f"'{desc_hit['name']}' — treating as identity reveal")
-                        _merge_npc_identity(desc_hit, nd["name"], new_desc)
+                        _merge_npc_identity(desc_hit, nd["name"], new_desc, game=game)
                         existing_names.add(name_norm)
                         continue
 
@@ -3166,8 +3177,16 @@ def check_npc_agency(game: GameState) -> list[str]:
         if npc.get("status") == "active" and npc.get("agenda"):
             actions.append(
                 f'NPC "{npc["name"]}" pursues agenda "{npc["agenda"]}" {E["dash"]} concrete offscreen action.')
+            # Build normalised name set for this NPC (canonical name + aliases).
+            # Clock owner is written by the AI as a name string ("world" or NPC name),
+            # never as a raw npc_id — so we must compare by name, not by id.
+            npc_norms = {_normalize_for_match(npc["name"])}
+            npc_norms.update(_normalize_for_match(a) for a in npc.get("aliases", []))
             for clock in game.clocks:
-                if (clock["clock_type"] == "scheme" and clock.get("owner") == npc["id"]
+                clock_owner = clock.get("owner", "")
+                if (clock["clock_type"] == "scheme"
+                        and clock_owner not in ("", "world")
+                        and _normalize_for_match(clock_owner) in npc_norms
                         and clock["filled"] < clock["segments"]):
                     clock["filled"] += 1
                     if clock["filled"] >= clock["segments"]:
@@ -4858,17 +4877,13 @@ def call_director(client: anthropic.Anthropic, game: GameState,
 
 
 _SENTENCE_ENDS = ('.', '!', '?', '"', '»', '…', ')', '–', '—')
-# Stricter set for summaries: em/en-dashes excluded because a trailing dash
-# in a summary almost always means a model truncation, not a literary device.
-_SUMMARY_ENDS = ('.', '!', '?', '"', '»', '…', ')')
 
-def _truncate_to_last_sentence(text: str, ends: tuple = _SENTENCE_ENDS) -> str:
+def _truncate_to_last_sentence(text: str) -> str:
     """Truncate text to the last complete sentence.
     Scans backwards for the last sentence-terminating character.
-    Returns empty string if no terminator is found (fully truncated).
-    Pass ends=_SUMMARY_ENDS for stricter truncation (no dash terminals)."""
+    Returns empty string if no terminator is found (fully truncated)."""
     for i in range(len(text) - 1, -1, -1):
-        if text[i] in ends:
+        if text[i] in _SENTENCE_ENDS:
             return text[:i + 1]
     return ""
 
@@ -4939,8 +4954,8 @@ def _apply_director_guidance(game: GameState, guidance: dict):
     # Enrich the latest session log entry with Director's summary
     scene_summary = guidance.get("scene_summary", "")
     if scene_summary and game.session_log:
-        if not scene_summary.rstrip().endswith(_SUMMARY_ENDS):
-            scene_summary = _truncate_to_last_sentence(scene_summary, ends=_SUMMARY_ENDS)
+        if not scene_summary.rstrip().endswith(_SENTENCE_ENDS):
+            scene_summary = _truncate_to_last_sentence(scene_summary)
             if scene_summary:
                 log("[Director] rich_summary truncated to last complete sentence")
             else:
@@ -6086,6 +6101,22 @@ def load_game(username: str, name: str = "autosave") -> tuple[Optional[GameState
         # will remove it on the next turn (0 is always > keep_scenes scenes ago)
         if clock.get("fired") and "fired_at_scene" not in clock:
             clock["fired_at_scene"] = 0
+    # Backward compatibility: repair clock owners that still carry a stale NPC name.
+    # _merge_npc_identity now updates owners live, but saves made before this fix
+    # may have owner = old name (now an alias). Build normalized alias → canonical map.
+    _norm_alias_to_canonical: dict[str, str] = {}
+    for npc in game.npcs:
+        for alias in npc.get("aliases", []):
+            norm = _normalize_for_match(alias)
+            if norm not in _norm_alias_to_canonical:
+                _norm_alias_to_canonical[norm] = npc["name"]
+    for clock in game.clocks:
+        owner = clock.get("owner", "")
+        if owner and owner not in ("", "world"):
+            canonical = _norm_alias_to_canonical.get(_normalize_for_match(owner))
+            if canonical and canonical != owner:
+                log(f"[Load] Clock owner repaired: '{clock["name"]}' '{owner}' → '{canonical}'")
+                clock["owner"] = canonical
     # Normalize story_blueprint null fields: Story Architect occasionally returns
     # triggered_transitions/story_complete/revealed as JSON null instead of omitting them,
     # causing set(None) → TypeError in get_current_act, _check_story_completion,
@@ -6962,7 +6993,7 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
             # Rename hollow extractor NPC to the canonical returning name;
             # extractor name becomes an alias automatically.
             old_id = old_npc["id"]
-            _merge_npc_identity(alias_hit, old_npc["name"])
+            _merge_npc_identity(alias_hit, old_npc["name"], game=game)
             # Transfer historical data from returning NPC into hollow extractor NPC.
             # Memories: returning NPC has the full history; extractor NPC has none.
             if old_npc.get("memory"):

@@ -5,10 +5,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## [0.9.82]
+## [0.9.83]
 
 ### Fixed
-- **`rich_summary` truncation guard accepted em-dash as valid sentence end:** `_SENTENCE_ENDS` includes `–` and `—` (literary German sentence terminators). A Director response truncated mid-sentence with a trailing `—` (e.g. `"Sarré beginnt endlich zu brechen —"`) passed the guard unchanged — and if the guard had triggered, `_truncate_to_last_sentence` would have scanned back to the same `—` and returned the identical bad string. Fix: added `_SUMMARY_ENDS` constant (`.`, `!`, `?`, `"`, `»`, `…`, `)` — no dashes) and updated `_truncate_to_last_sentence` to accept an optional `ends` parameter. The `rich_summary` block now uses `_SUMMARY_ENDS` for both check and truncation. NPC reflections are unaffected — they continue using `_SENTENCE_ENDS` where `—` is a valid literary terminal. Savegame analysis (elvira_run.json scene 17): `"Sarré beginnt endlich zu brechen —"` stored in session_log.
+- **Clock owner not updated on NPC rename:** `_merge_npc_identity()` updated `npc["name"]` and appended the old name to `npc["aliases"]`, but clock `owner` strings (which the Metadata Extractor writes as free NPC-name strings) were never updated. Any clock created while an NPC had a temporary description-name (e.g. "Eine Frau mittleren Alters") would permanently retain that name as owner after the identity reveal. `_tick_autonomous_clocks()` treats any owner not in `("", "world")` as NPC-controlled and skips it — so affected threat clocks silently stopped ticking. Fix: `_merge_npc_identity()` now accepts an optional `game` parameter; when provided, iterates `game.clocks` and updates any owner whose normalized form matches the old name. All 5 call sites updated to pass `game=game`. Normalized comparison (`_normalize_for_match`) catches whitespace/hyphen/case drift. Limitation: article-level drift in AI-written owner strings (e.g. "Die Frau" vs canonical "Eine Frau") is not covered — this is an AI clock-creation quality issue, not a rename bug.
+- **`check_npc_agency()` scheme clocks never ticked:** The function compared `clock.get("owner") == npc["id"]` (e.g. `"npc_7"`), but the Metadata Extractor always writes owner as a name string (`"world"` or NPC name) — never as a raw ID. This comparison was always `False`, so NPC-owned scheme clocks advanced only via player MISS rolls, never via NPC agency. Fix: `check_npc_agency()` now builds a normalized name set per NPC (canonical name + all aliases) and matches `_normalize_for_match(clock_owner)` against it.
+- **`load_game()` backward-compat repair for stale clock owners:** Saves made before the above fix may have clock owners that are now aliases of a renamed NPC. On load, a normalized `alias → canonical name` map is built from all NPC aliases; any clock owner that maps to a different canonical name is updated and logged.
 
 ---
 
