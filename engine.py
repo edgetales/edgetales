@@ -6115,7 +6115,8 @@ def load_game(username: str, name: str = "autosave") -> tuple[Optional[GameState
         if owner and owner not in ("", "world"):
             canonical = _norm_alias_to_canonical.get(_normalize_for_match(owner))
             if canonical and canonical != owner:
-                log(f"[Load] Clock owner repaired: '{clock["name"]}' '{owner}' → '{canonical}'")
+                clock_name = clock["name"]
+                log(f"[Load] Clock owner repaired: '{clock_name}' '{owner}' → '{canonical}'")
                 clock["owner"] = canonical
     # Normalize story_blueprint null fields: Story Architect occasionally returns
     # triggered_transitions/story_complete/revealed as JSON null instead of omitting them,
