@@ -62,7 +62,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.83"
+VERSION = "0.9.84"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -537,8 +537,20 @@ OPENING_METADATA_SCHEMA = {
         "location":      {"type": "string"},
         "scene_context":  {"type": "string"},
         "time_of_day":    {"type": ["string", "null"]},
+        "deceased_npcs": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "npc_id": {"type": "string"},
+                },
+                "required": ["npc_id"],
+                "additionalProperties": False,
+            },
+        },
     },
-    "required": ["npcs", "clocks", "location", "scene_context", "time_of_day"],
+    "required": ["npcs", "clocks", "location", "scene_context", "time_of_day",
+                 "deceased_npcs"],
     "additionalProperties": False,
 }
 
@@ -4383,6 +4395,7 @@ Clocks:
 Location: the specific location where the scene takes place.
 scene_context: 1 sentence capturing the current situation AND dominant mood/tension — not just where/who, but the atmosphere. Example: "Strangers in a hostile tavern, an uneasy truce already fraying at the edges." Extract from the narration; do not invent.
 time_of_day: one of early_morning|morning|midday|afternoon|evening|late_evening|night|deep_night, or null if unclear.
+deceased_npcs: list any characters from the npcs list above who die in this opening scene. Write the character's FULL NAME exactly as it appears in the npcs list above — do NOT invent IDs like "npc_1". Only include characters whose death is clearly depicted in the narration — not characters merely mentioned as dead before the scene, or historical figures. Leave empty if no one dies.
 
 <known_npcs>
 {known_block}
@@ -4412,7 +4425,7 @@ Extract all NPCs, clocks, location, scene context, and time of day from the open
     except Exception as e:
         log(f"[OpeningMeta] Extraction failed: {e}", level="warning")
         return {"npcs": [], "clocks": [], "location": "",
-                "scene_context": "", "time_of_day": None}
+                "scene_context": "", "time_of_day": None, "deceased_npcs": []}
 
 
 def _resolve_slug_refs(game: GameState, mem_updates: list, fresh_npcs: list):
@@ -4549,6 +4562,12 @@ def _apply_narrator_metadata(game: GameState, metadata: dict,
                               pre_turn_npc_ids=pre_npc_ids,
                               pre_turn_lore_ids=pre_lore_ids)
 
+    # Fallback death detection: catches off-screen deaths that the extractor's
+    # physically-witnessed rule would miss (e.g. death heard but not seen by the
+    # player character). Runs after all memories are stored so cross-NPC signals
+    # are complete. See _check_death_corroboration() for threshold logic.
+    _check_death_corroboration(game)
+
 
 def _process_deceased_npcs(game: GameState, deceased_list: list,
                            scene_present_ids: set = None):
@@ -4584,6 +4603,82 @@ def _process_deceased_npcs(game: GameState, deceased_list: list,
         old_status = npc.get("status", "active")
         npc["status"] = "deceased"
         log(f"[NPC] Marked as deceased: {npc['name']} ({npc['id']}, was {old_status})")
+
+
+def _check_death_corroboration(game: GameState):
+    """Fallback death detection for off-screen deaths the metadata extractor missed.
+
+    The primary deceased_npcs detection requires a physically-witnessed death.
+    This catches the complementary case: an NPC dies off-screen (e.g. heard but
+    not seen), but two independent memory signals written in the same scene
+    corroborate it:
+
+      Cross-NPC vote: another NPC wrote an observation about NPC X this scene with
+        importance >= 9 and emotional_weight in {betrayed, devastated} via about_npc.
+      Self-vote: NPC X's own observation this scene has importance >= 9 and
+        emotional_weight == devastated (total devastation, near-exclusive to death).
+
+    Threshold: at least 1 cross-NPC vote AND total votes >= 2.
+    This prevents false positives from a single traumatic-but-non-lethal event
+    (e.g. a massive betrayal that devastates only one side).
+
+    Known edge case: a catastrophic betrayal (not death) where NPC A writes a
+    memory about NPC X with about_npc=X + w=betrayed/devastated + imp=9 AND NPC X
+    writes a self-memory with w=devastated + imp=9 (about=null) will trigger the
+    threshold. In practice the extractor tends to use w=betrayed (not devastated)
+    for the victim's own reaction, or sets about_npc to the betrayer — making this
+    pattern rare. If it occurs, ## correction resolves it.
+
+    Only observation-type memories are evaluated — reflections are Director-generated
+    and must not contribute to death detection.
+
+    Called at the end of _apply_narrator_metadata(), after both _process_deceased_npcs
+    and _apply_memory_updates have run, so all memories for the scene are stored and
+    any extractor-driven resurrections have already completed.
+    """
+    scene = game.scene_count
+    cross_votes: dict[str, int] = {}  # npc_id → votes from other NPCs' observations
+    self_votes: dict[str, int] = {}   # npc_id → votes from the NPC's own observations
+
+    for npc in game.npcs:
+        if npc.get("status") == "deceased":
+            continue  # already handled by primary mechanism; skip as memory writer
+        for mem in npc.get("memory", []):
+            if mem.get("scene") != scene:
+                continue
+            if mem.get("type") == "reflection":
+                continue  # Director-generated; not an extractor death signal
+
+            about = mem.get("about_npc")
+            imp = mem.get("importance", 0)
+            weight = mem.get("emotional_weight", "")
+
+            # Cross-NPC vote: NPC A observed something about NPC B with death-tier signal
+            if (about
+                    and about != npc.get("id")
+                    and imp >= 9
+                    and weight in {"betrayed", "devastated"}):
+                cross_votes[about] = cross_votes.get(about, 0) + 1
+
+            # Self-vote: NPC's own observation at maximum devastation (no about_npc)
+            # "devastated" alone at imp=9 is near-exclusive to death or irreversible loss
+            if (not about
+                    and imp >= 9
+                    and weight == "devastated"):
+                self_votes[npc["id"]] = self_votes.get(npc["id"], 0) + 1
+
+    # Apply threshold: at least 1 cross-NPC vote required; total must reach 2
+    for npc_id in set(cross_votes) | set(self_votes):
+        cv = cross_votes.get(npc_id, 0)
+        sv = self_votes.get(npc_id, 0)
+        if cv >= 1 and (cv + sv) >= 2:
+            target = _find_npc(game, npc_id)
+            if target and target.get("status") != "deceased":
+                old_status = target.get("status", "active")
+                target["status"] = "deceased"
+                log(f"[NPC] Death corroborated by memory signals: '{target['name']}' "
+                    f"(cross_votes={cv}, self_votes={sv}, "
+                    f"scene={scene}, was {old_status})")
 
 
 # ===============================================================
@@ -6577,6 +6672,14 @@ def start_new_game(client: anthropic.Anthropic, creation_data: dict,
     for npc in game.npcs:
         npc["introduced"] = True
 
+    # Deceased NPCs in the opening scene (e.g. someone killed right in front of
+    # the player as a dramatic opener). NPCs are extracted first (with full
+    # agenda/instinct/secrets) so the data is preserved even after marking deceased.
+    # No scene_present_ids guard needed — everything in the opening is witnessed.
+    opening_deceased = opening_data.get("deceased_npcs", [])
+    if opening_deceased:
+        _process_deceased_npcs(game, opening_deceased)
+
     # Record opening as neutral intensity
     record_scene_intensity(game, "action")
 
@@ -7063,6 +7166,13 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
     # Seed location_history with the new chapter's starting location
     if game.current_location and not game.location_history:
         game.location_history.append(game.current_location)
+
+    # Deceased NPCs in the chapter opening. Processed after the merge loop so
+    # returning NPCs are already in game.npcs and reachable by name.
+    # No scene_present_ids guard — everything in the opening is witnessed.
+    opening_deceased = opening_data.get("deceased_npcs", [])
+    if opening_deceased:
+        _process_deceased_npcs(game, opening_deceased)
 
     # Record opening
     record_scene_intensity(game, "action")

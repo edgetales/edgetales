@@ -5,6 +5,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.84]
+
+### Added
+- **Off-screen death detection — `_check_death_corroboration(game)`:** The primary `deceased_npcs` extractor requires a physically-witnessed death (Karina must see it happen). This left a gap for off-screen deaths described as narrative fact in the narration — the NPC remained `active`, and subsequent scenes could revive them without any engine-level resistance. The new fallback scans observation-type memories written in the current scene and accumulates two independent signal types: (1) a *cross-NPC vote* — another NPC's memory with `about_npc=X`, `importance >= 9`, and `emotional_weight` in `{betrayed, devastated}`; (2) a *self-vote* — NPC X's own memory with `importance >= 9` and `emotional_weight == devastated`. Threshold: at least 1 cross-NPC vote AND total votes ≥ 2. This prevents false positives from single traumatic-but-non-lethal events (a massive betrayal that devastates only one side). Reflections are excluded — they are Director-generated and must not contribute to death detection. Called at the end of `_apply_narrator_metadata()`, after both `_process_deceased_npcs` and `_apply_memory_updates` have run, so all extractor-driven resurrections have already completed before the fallback fires. Validated against a real savegame (backtownw2.json): the function correctly fires at scene 15 (Reindl killed off-screen, cv=1 from Gramm's `about_npc` memory + sv=1 from Reindl's own memory) and stays silent at scene 14 (1 self-vote only, ambiguous) and scene 16 (resurrection memory `w=curious, imp=3` — far below threshold).
+- **Opening-scene death detection:** `OPENING_METADATA_SCHEMA` now includes a `deceased_npcs` array (same `npc_id` structure as the regular metadata schema). `call_opening_metadata` instructs the extractor to list characters who clearly die in the opening narration, using the character's **full name** as reference (IDs are not yet assigned at extraction time — `_find_npc` resolves by name; the prompt explicitly forbids inventing IDs like "npc_1" to prevent wrong-NPC mismatches). `_process_deceased_npcs` is called after `_process_game_data` in `start_new_game` (immediately after the `introduced` loop) and after the full merge loop in `start_new_chapter` (so returning NPCs are reachable by name before the check runs). No `scene_present_ids` guard is applied — everything in an opening scene is physically witnessed. NPCs are always extracted with full schema (agenda, instinct, secrets) before being marked deceased, preserving narrative data for context continuity. Error fallback dict includes `"deceased_npcs": []` for schema consistency.
+
+---
+
 ## [0.9.83]
 
 ### Fixed
