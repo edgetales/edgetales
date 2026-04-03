@@ -4706,10 +4706,18 @@ def build_director_prompt(game: GameState, latest_narration: str,
         if prev_reflections:
             escaped = _xa(prev_reflections[-1].get("event", "")[:200])
             prev_ref_text = f' last_reflection="{escaped}"'
-            # Show previous tone so Director can evolve the emotional arc
-            prev_tone = prev_reflections[-1].get("emotional_weight", "")
-            if prev_tone:
-                prev_tone_text = f' last_tone="{_xa(prev_tone)}"'
+            # Expose both arc dimensions so the Director has full context to evolve from:
+            #   last_tone     — narrative compound (e.g. "protective_guilt"): emotional register / arc texture
+            #   last_tone_key — enum word (e.g. "conflicted"): machine-readable reference for tone_key evolution
+            # Fallback for old saves predating the dual-tone system: use emotional_weight as compound;
+            # skip last_tone_key if tone_key field absent.
+            prev_tone_compound = prev_reflections[-1].get("tone") or prev_reflections[-1].get("emotional_weight", "")
+            prev_tone_key_val  = prev_reflections[-1].get("tone_key", "")
+            prev_tone_text = ""
+            if prev_tone_compound:
+                prev_tone_text += f' last_tone="{_xa(prev_tone_compound)}"'
+            if prev_tone_key_val:
+                prev_tone_text += f' last_tone_key="{_xa(prev_tone_key_val)}"'
         npc_desc = _xa(n.get("description", ""))
         # Flag NPCs that lack agenda/instinct so Director can suggest them
         needs_profile = ""
@@ -4833,7 +4841,7 @@ Field instructions:
   (b) the story has moved PAST the act's scene_range (PAST_RANGE="true") and the trigger's spirit has been approximately met.
   Set to false only if the trigger condition is clearly unmet AND we are still within scene_range. The scene_range is a fallback — content-driven transitions via this flag produce better pacing.
 
-If a <reflect> tag has a last_reflection attribute, write a NEW insight that builds on, deepens, or contradicts it. Do NOT repeat the same theme or emotional tone. If last_tone is present, evolve the emotion — show how the NPC's feelings have shifted, intensified, or transformed since then.
+If a <reflect> tag has a last_reflection attribute, write a NEW insight that builds on, deepens, or contradicts it. Do NOT repeat the same theme or emotional tone. If last_tone is present, use it as the emotional register to evolve from — the texture and arc direction of the previous state. If last_tone_key is present, use it as the enum category to move away from when choosing the new tone_key (avoid repeating the identical value unless deliberate stagnation is the point).
 </task>"""
 
 
@@ -4988,9 +4996,9 @@ def _apply_director_guidance(game: GameState, guidance: dict):
         npc["memory"].append({
             "scene": game.scene_count,  # Track when reflection was generated
             "event": reflection_text,
-            "emotional_weight": ref.get("tone", "reflective"),  # Narrative compound (e.g. "protective_guilt")
-            "tone": ref.get("tone", ""),        # Preserve narrative compound separately for arc tracking
-            "tone_key": ref.get("tone_key", ""),  # Machine-readable single word from enum
+            "emotional_weight": ref.get("tone_key") or "reflective",  # Enum-constrained single English word for scoring
+            "tone": ref.get("tone", ""),        # Narrative compound (e.g. "protective_guilt") for arc tracking
+            "tone_key": ref.get("tone_key", ""),  # Machine-readable single word from enum (mirrors emotional_weight)
             "importance": 8,  # Reflections are always important
             "type": "reflection",
             "about_npc": _resolve_about_npc(game, ref.get("about_npc"), owner_id=npc.get("id")),

@@ -239,18 +239,20 @@ When `story_complete=True` + `epilogue_dismissed=True` (player keeps playing aft
 
 ### NPC System
 
-#### Three-Tier NPC Status (+deceased)
+#### NPC Status System
 
 | Status | Sidebar | Brain/Narrator Context | Purpose |
 |---|---|---|---|
 | `active` | ✅ prominent | ✅ full (agenda, memories, secrets) | Currently relevant NPCs |
 | `background` | ✅ dimmed, collapsed | Brain name list only (for target recognition) | Known NPCs, not currently present |
+| `lore` | ✅ dimmed, collapsed (same as background) | `<lore_figures>` slim block (name + 80-char description) | Narratively significant figures never physically present (dead mentors, historical figures, off-screen handlers). Collect memories. Do not count against `MAX_ACTIVE_NPCS`. |
 | `deceased` | ☠️ strikethrough, collapsed | ❌ (only `[DECEASED]` in metadata ref) | Killed NPCs — protected from all merges |
-| `inactive` | ❌ | ❌ | Legacy compat / chapter transitions |
+| `inactive` | ❌ | ❌ | Legacy only — migrated to `background` on `load_game()` since v0.9.14. Never set by current code. |
 
 **Status transitions**:
 - `active` → `background`: `_retire_distant_npcs()` at >MAX_ACTIVE_NPCS (12). Relevance score: `last_memory_scene + bond × 3 + current_scene_bonus (+1000)`. Current-scene bonus protects freshly introduced NPCs.
 - `background` → `active`: Automatically when Brain identifies `target_npc`, Metadata Extractor recognizes new NPCs matching a known NPC, or memory updates arrive for background NPCs.
+- `lore` → `active`: Via `_reactivate_npc()` when the figure physically appears in a scene (e.g. time-travel, resurrection). Registered from `lore_npcs` Metadata Extractor field by `_process_lore_npcs()`. Lore NPCs are always exempt from the scene-presence guard in `_apply_memory_updates()` — they accumulate memories regardless of whether they were activated for the current scene.
 - `active`/`background` → `deceased`: `_process_deceased_npcs()` when Narrator **depicts** an on-screen death (not dialog claims). Extractor rule covers explicit deaths (collapse, killed, stop breathing), literary/physical cessation (legs stop moving, resistance ceases, body goes still — explicit death words not required), and supernatural/atmospheric finality (pulled under water, consumed, destroyed — described as irreversible). German-language examples included in prompt. Two-stage guard: (1) Extractor prompt distinguishes narrator-depicted deaths from dialog claims; (2) code guard checks `scene_present_ids` (activated + mentioned NPC IDs, v0.9.47).
 - `deceased` → `active`: Only on exact name match in `new_npcs` or `memory_updates` (resurrection). `_reactivate_npc(force=True)` required. Fuzzy matches are blocked.
 
