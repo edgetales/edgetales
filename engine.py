@@ -8118,7 +8118,11 @@ def process_momentum_burn(client: anthropic.Anthropic, game: GameState,
             game.story_blueprint["story_complete"] = True
         else:
             game.story_blueprint.pop("story_complete", None)
-    log(f"[Burn] Fully restored state from snapshot: H{game.health} Sp{game.spirit} Su{game.supply} Chaos{game.chaos_factor}")
+    # Reset momentum to burn-reset value (Ironsworn: cost of burning is momentum → 2)
+    # This must happen before apply_consequences so the upgraded result's momentum
+    # gain (+2/+3) is applied on top of the reset value, not on top of the old peak.
+    game.momentum = 2
+    log(f"[Burn] Fully restored state from snapshot: H{game.health} Sp{game.spirit} Su{game.supply} Chaos{game.chaos_factor} | Momentum reset to 2")
 
     # Create upgraded roll
     upgraded = RollResult(old_roll.d1, old_roll.d2, old_roll.c1, old_roll.c2,
