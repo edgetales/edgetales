@@ -62,7 +62,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.85"
+VERSION = "0.9.86"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -3078,8 +3078,12 @@ def apply_consequences(game: GameState, roll: RollResult, brain: dict) -> tuple[
         effect = brain.get("effect", "standard")
         mom_gain = 3 if effect == "great" else 2
         game.momentum = min(game.max_momentum, game.momentum + mom_gain)
-        if roll.move in {"make_connection", "compel"} and target:
+        if roll.move in {"make_connection", "compel", "test_bond"} and target:
             target["bond"] = min(target.get("bond_max", 4), target["bond"] + 1)
+        if roll.move in {"make_connection", "test_bond"} and target:
+            # Disposition shifts only for relationship-focused moves, not transactional compel.
+            # test_bond: surviving a crisis together deepens the bond the same way as
+            # make_connection, but organically rather than intentionally.
             shifts = {"hostile": "distrustful", "distrustful": "neutral",
                       "neutral": "friendly", "friendly": "loyal"}
             target["disposition"] = shifts.get(target["disposition"], target["disposition"])
@@ -4069,9 +4073,9 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
 - Describe only sensory impressions, never player thoughts
 - SENSORY RANGE: Don't default to sight {E['dash']} include at least one non-visual sense per scene (a specific sound, smell, texture, or temperature). These anchor scenes in memory more durably than visual description alone.
 - WORLD PERIPHERY: Once per scene, let one small background detail exist that has nothing to do with the player's immediate action {E['dash']} a sound from another room, a stranger's exchange, a worn object, weather shifting outside. Brief, never explained. It signals the world continues beyond this moment.
-- SCENE CONTINUITY: Begin in motion, not in setup. The player is still in the same body, the same emotional state as the last scene ended. Do NOT open with a fresh establishing paragraph when the last scene ended mid-action or mid-conversation — unless the player has moved to a new location (compare <location> with <prev_locations>), in which case briefly ground them in the new space before continuing the thread.
+- SCENE CONTINUITY: Begin in motion, not in setup. The player is still in the same body, the same emotional state as the last scene ended. Do NOT open with a fresh establishing paragraph. SAME LOCATION: Open with at most one sentence that holds the atmosphere or emotional residue of the previous scene's end — a sensation still in the air, a silence not yet broken, a weight not yet lifted — before moving into the player's action. This is not recap; it is continuity of experience. It should work as a bridge even if the player's action is very brief or sparse. NEW LOCATION (player has moved — compare <location> with <prev_locations>): Open with one brief sensory impression of the new space (a sound, smell, texture, or quality of light) that grounds the reader without summarizing what came before. The new place simply exists, indifferent to what preceded it; the character carries the previous moment in their body. Example: a character arriving somewhere unfamiliar after a tense moment elsewhere — the ambient sounds and physical details of the new space are registered first, through senses still sharpened by what just happened.
 - EMOTIONAL CARRY-THROUGH: If the previous scene ended with a significant emotional beat (betrayal, loss, triumph, relief, intimacy, shock), open this scene with that weight still present in the character's body language, perception, and attention. Emotional states do not reset between scenes. Show it through sensation and behavior, not through narration — the character did not process it yet.
-- End scenes OPEN {E['dash']} no option lists, no suggested actions
+- SCENE ENDING: Close each narration with a sentence that names the character's immediate unresolved inner state, unanswered perception, or the dominant open condition of the moment — not a plot cliffhanger, not a resolved beat, but an emotional or sensory suspension that makes the NEXT scene feel anchored rather than arbitrary. The character should be mid-breath, not concluded. No option lists, no suggested actions.
 - 2-4 paragraphs
 - TEMPORAL CONSISTENCY: If <time> is provided, maintain that time period. Time only moves FORWARD (never backward). If you mention specific times, they must be later than any previously mentioned time. Do NOT invent specific clock times unless narratively important {E['dash']} prefer atmospheric time cues (moonlight, sunset glow, morning mist). CRITICAL: Each scene transition represents minutes to hours of in-world time, NOT days or years. Events from recent scenes just happened {E['dash']} signs don't weather, wounds are fresh, sent NPCs are still en route or just arrived. Never describe recent events or objects as aged, decayed, or long-past unless the player explicitly time-skips.
 - SPATIAL CONSISTENCY: The <location> tag shows where the player currently IS. If <prev_locations> is provided, the player has LEFT those places. NEVER place the player back at a previous location unless they explicitly travel there. If an NPC has a last_seen attribute showing a DIFFERENT location than the player's current <location>, that NPC is NOT physically present {E['dash']} they cannot be heard through walls, seen, or interact directly. They can only appear if they plausibly traveled to the player's location (and the narration should describe their arrival). NPCs without last_seen or with last_seen matching <location> ARE present and can interact normally.
@@ -6534,6 +6538,7 @@ def export_story_pdf(game: GameState, messages: list, lang: str = "de") -> bytes
 
     scene_num = 0
     story_started = False
+    content_written = False
     for msg in messages:
         if msg.get("scene_marker"):
             story_started = True
@@ -6561,6 +6566,13 @@ def export_story_pdf(game: GameState, messages: list, lang: str = "de") -> bytes
             para = para.strip()
             if para:
                 elements.append(Paragraph(esc(para), styles["StoryBody"]))
+                content_written = True
+
+    # No narration found — save was created without message history (e.g. test bot).
+    if not content_written:
+        elements.append(Spacer(1, 6 * mm))
+        elements.append(Paragraph(
+            esc(_t("export.no_content", lang)), styles["StoryMeta"]))
 
     # ── End ─────────────────────────────────────────────────
     elements.append(Spacer(1, 8 * mm))

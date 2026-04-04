@@ -8,7 +8,7 @@
 
 | | |
 |---|---|
-| **Version** | v0.9.85 |
+| **Version** | v0.9.86 |
 | **Codebase** | ~13,600 lines across 5 source files + config |
 | **Stack** | Python 3.11+, NiceGUI, Anthropic SDK (Structured Outputs), reportlab, edge-tts, faster-whisper, wonderwords, stop-words, nameparser, cryptography |
 | **AI Models** | Narrator/Architect: `claude-sonnet-4-6` · Brain/Director/Extractors: `claude-haiku-4-5-20251001` |
@@ -195,9 +195,21 @@ This is the authoritative analysis artifact. It contains far more than a regular
 - `engine_log` — the engine's own session_log entry: rich_summary, move, position, effect, dramatic_question, chaos_interrupt, director_trigger, consequences, clock_events, npc_activation
 - `story_arc` — current act phase/title/goal/mood + story_complete flag. Phase is determined by `_get_current_act(game, bp)`, which mirrors the engine's `get_current_act()`: reads `game.bp_triggered_transitions` first (`len(triggered)` == current act index, each `"act_N"` entry means that act's transition has fired), falls back to `scene_range` only before any transition fires. `story_complete` reads from `game.bp_story_complete` directly (not from the blueprint dict, which may not carry the key after a save/load cycle).
 
-### Action dice
+### Social Moves & Bond Mechanics (v0.9.86)
 
-EdgeTales uses **2d6** as the action dice (same as vanilla Ironsworn). The roll mechanic is:
+`SOCIAL_MOVES = {"compel", "make_connection", "test_bond"}` — all three share the MISS consequence (bond -1, spirit -1 or -2), but differ on success:
+
+| Move | WEAK_HIT | STRONG_HIT |
+|---|---|---|
+| `compel` | — | bond +1 |
+| `make_connection` | bond +1 | bond +1, disposition shift ↑ one step |
+| `test_bond` | — | bond +1, disposition shift ↑ one step |
+
+Disposition shift ladder (one step per trigger): `hostile → distrustful → neutral → friendly → loyal`.
+
+**Design rationale**: `compel` is transactional — repeated successful coercion builds familiarity (bond) but not fundamental attitude (disposition). `make_connection` is relational — explicitly investing in the relationship shifts both. `test_bond` on STRONG_HIT deepens a relationship organically: surviving a crisis together is equivalent to a deliberate connection moment. `test_bond` was previously a dead move on success (no unique outcome beyond momentum) — fixed in v0.9.86. Reaching `loyal` disposition requires `make_connection` or `test_bond` — it cannot be compelled.
+
+ The roll mechanic is:
 
 ```
 action_score = min(d1 + d2 + stat, 10)   (two d6s, capped at 10)
@@ -546,12 +558,13 @@ Four information layers:
 3. **Scene context** (`current_scene_context`): Single sentence from Metadata Extractor, overwritten each scene. As of v0.9.76: explicitly defined as situation + dominant mood/tension (not just factual state) — improves Brain position/effect calibration and TF-IDF NPC activation.
 4. **Narrative state context** (`_status_context_block()`): Injects `<character_state>` block mapping Health/Spirit/Supply to 6 atmospheric stages each (e.g., health=3 → "injured — clearly hurting, moving with effort"). Narrator reflects state through body language/sensory detail, never mentions numbers. Only active when `game` is passed — opening calls without GameState are unaffected.
 
-#### Narrator System Prompt Rules (v0.9.77)
+#### Narrator System Prompt Rules (v0.9.86)
 
 - **`<tone_authority>` block**: Player's chosen tone injected as a first-class element before `<rules>`. Governs sentence rhythm, scene energy, highlighted details, NPC behavior, and scene mood. Explicitly instructs the narrator that `<director_guidance>` must never override or dilute the tone. Empty when `game` is `None` (opening calls unaffected).
 - **`<style>` reduced to universal craft rules**: "Terse and precise" and "Render emotion through behavior and sensation" removed — these were dark/gritty-specific and actively suppressed comedy and high-energy tones. Remaining: "The player is inside the world, not watching it. Integrate what the player brings seamlessly." Tone-specific style guidance is now the sole responsibility of `<tone_authority>`.
-- **SCENE CONTINUITY**: Begin in motion, not in setup. No fresh establishing paragraph when last scene ended mid-action or mid-conversation. Exception: if `<location>` differs from `<prev_locations>`, briefly ground the player in the new space first.
+- **SCENE CONTINUITY (v0.9.86)**: Begin in motion, not in setup. No fresh establishing paragraph. **Same location**: open with at most one bridging sentence holding the atmospheric or emotional residue of the previous scene's end (a sensation still in the air, a weight not yet lifted) — before moving into the player's action. This applies even when the player's input is very brief or sparse. **New location** (compare `<location>` with `<prev_locations>`): open with one sensory impression of the new space (sound, smell, texture, light quality) that grounds the reader without summarizing what came before — the new place exists indifferent to what preceded it; the character carries the previous moment in their body.
 - **EMOTIONAL CARRY-THROUGH**: Significant emotional beats (betrayal, loss, triumph, relief, intimacy, shock) carry into the next scene through body language, perception, and attention — not narration. Emotional states do not reset between scenes.
+- **SCENE ENDING (v0.9.86)**: Replaces the old "End scenes OPEN" rule. Each narration must close with a sentence naming the character's immediate unresolved inner state, unanswered perception, or the dominant open condition of the moment — not a plot cliffhanger, not a resolved beat, but an emotional/sensory suspension that gives the next scene's opening something to anchor to. The character is mid-breath, not concluded. Paired with SCENE CONTINUITY: the ending of each scene produces what the opening of the next scene picks up.
 - **Thematic thread**: When `<story_arc>` contains a `thematic_thread`, it surfaces periodically through NPC dialog, reactions, or incidental observations — as a recurring undercurrent, never as lecture.
 - **Act-mood texture** (action + dialog prompts): The current act's mood (from `<story_arc>`) shapes the texture of every outcome — a STRONG_HIT in a desperate phase still carries the surrounding darkness.
 
@@ -615,7 +628,7 @@ Implemented via `custom_head.html` + server-side Python in `app.py`:
 
 `list_saves_with_info()`: Returns saves with full creation metadata: `setting_genre`, `setting_tone`, `setting_archetype`, `character_concept`, `backstory`, `player_wishes`, `content_lines`.
 
-`export_story_pdf()`: PDF export via reportlab Platypus.
+`export_story_pdf()`: PDF export via reportlab Platypus. Uses `scene_marker` messages as the gate to begin writing narration content. Tracks `content_written` — if no narration is found after processing all messages (e.g. save created by bot without `chat_messages`), inserts an explanatory note (`export.no_content` i18n key) instead of a silently empty story section.
 
 Chapter archives: `save_chapter_archive()` / `load_chapter_archive()` / `list_chapter_archives()` / `delete_chapter_archives()` (via `shutil.rmtree`).
 

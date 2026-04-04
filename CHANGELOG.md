@@ -5,6 +5,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.86]
+
+### Fixed
+- **`compel` no longer shifts NPC disposition on STRONG_HIT (`engine.py`):** `compel` and `make_connection` were treated identically on STRONG_HIT — both granted bond+1 and a full disposition step up. This allowed repeated successful compel rolls to push an NPC from `neutral` to `loyal` in two turns (observed in Elvira session: Jawas reached `loyal`/bond=3 within 6 turns of purely compel-based interaction). `compel` is now transactional: STRONG_HIT grants bond+1 only. Disposition shifts are restricted to `make_connection` and `test_bond` — moves where the relationship itself is the explicit or emergent focus.
+- **`test_bond` was a dead move on success (`engine.py`):** `test_bond` appeared in `SOCIAL_MOVES` (and therefore cost bond-1 + spirit-1 on MISS), but STRONG_HIT and WEAK_HIT produced no unique outcome beyond momentum — identical to not using the move at all. STRONG_HIT now grants bond+1 and a disposition shift (same as `make_connection`): a relationship that holds under pressure deepens through the shared experience. WEAK_HIT unchanged (momentum+1 only — the bond held but without growth).
+- **PDF export shows no story content for bot-generated saves (`engine.py`, `i18n.py`):** `export_story_pdf` uses `scene_marker` messages as the gate to begin writing narration content. Bot-generated saves (e.g. Elvira test sessions) call `save_game` without `chat_messages`, so the save file has `"chat_messages": []`. When such a save is loaded in the UI, only the "Spielstand geladen" status message exists in `s["messages"]` — no `scene_marker` is ever found, `story_started` stays `False`, and the PDF story section is silently empty. Fixed: track `content_written` in the loop; if `False` after all messages are processed, insert a clear explanatory note (`export.no_content` i18n key, DE + EN) instead of an empty section. Normal UI-played sessions are unaffected.
+
+### Changed
+- **Narrator scene continuity and ending guidance (`engine.py`):** Analysis of a real 10-turn session (Elvira/Marcus Kellner) revealed that 5 of 9 scene transitions felt abrupt when reading narrations in sequence — the narrator opened directly with the player's action, bypassing the atmospheric residue of the previous scene's end. Three prompt rules updated: (1) `SCENE CONTINUITY` now explicitly distinguishes same-location (open with one bridging sentence holding the previous scene's atmosphere before the new action) from new-location (open with one sensory impression of the new space, indifferent to what preceded it — includes generic example). The bridging sentence is required even for very sparse player inputs. (2) `EMOTIONAL CARRY-THROUGH` unchanged. (3) `End scenes OPEN` replaced by `SCENE ENDING`: narrator must close each narration with a sentence naming the character's immediate unresolved inner state or open condition — not a cliffhanger, but an emotional/sensory suspension that gives the next scene something to anchor to.
+
+---
+
 ## [0.9.85]
 
 ### Fixed
