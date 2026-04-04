@@ -2989,6 +2989,12 @@ def apply_consequences(game: GameState, roll: RollResult, brain: dict) -> tuple[
     tid = brain.get("target_npc")
     target = _find_npc(game, tid) if tid else None
 
+    # Warn when a social move has no resolvable target — bond/disposition effects
+    # are silently skipped, which is hard to spot without this log line.
+    if roll.move in SOCIAL_MOVES and target is None:
+        log(f"[Consequences] Social move '{roll.move}' has no resolvable target "
+            f"(target_npc={tid!r}) — bond/disposition effects skipped", level="warning")
+
     position = brain.get("position", "risky")
 
     if roll.result == "MISS":
@@ -3048,10 +3054,17 @@ def apply_consequences(game: GameState, roll: RollResult, brain: dict) -> tuple[
             if clock["clock_type"] == "threat" and clock["filled"] < clock["segments"]:
                 ticks = 2 if position == "desperate" else 1
                 clock["filled"] = min(clock["segments"], clock["filled"] + ticks)
-                if clock["filled"] >= clock["segments"]:
+                fired = clock["filled"] >= clock["segments"]
+                if fired:
                     clock["fired"] = True
                     clock["fired_at_scene"] = game.scene_count
-                    clock_events.append({"clock": clock["name"], "trigger": clock["trigger_description"]})
+                clock_events.append({
+                    "clock": clock["name"],
+                    "trigger": clock["trigger_description"],
+                    "source": "miss",
+                    "ticks": ticks,
+                    "fired": fired,
+                })
                 break
 
     elif roll.result == "WEAK_HIT":
@@ -3085,11 +3098,16 @@ def apply_consequences(game: GameState, roll: RollResult, brain: dict) -> tuple[
                 for clock in game.clocks:
                     if clock["clock_type"] == "threat" and clock["filled"] < clock["segments"]:
                         clock["filled"] = min(clock["segments"], clock["filled"] + 1)
-                        if clock["filled"] >= clock["segments"]:
+                        fired = clock["filled"] >= clock["segments"]
+                        if fired:
                             clock["fired"] = True
                             clock["fired_at_scene"] = game.scene_count
-                            clock_events.append({"clock": clock["name"],
-                                                 "trigger": clock["trigger_description"]})
+                        clock_events.append({
+                            "clock": clock["name"],
+                            "trigger": clock["trigger_description"],
+                            "source": "weak_hit",
+                            "fired": fired,
+                        })
                         break
 
     else:  # STRONG_HIT
@@ -7409,9 +7427,20 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
                              "effect": brain.get("effect", "standard"),
                              "dramatic_question": brain.get("dramatic_question", ""),
                              "chaos_interrupt": chaos_interrupt,
+                             "target_npc": brain.get("target_npc"),
                              "npc_activation": npc_activation_debug})
     if len(game.session_log) > MAX_SESSION_LOG:
         game.session_log = game.session_log[-MAX_SESSION_LOG:]
+    # Post-hoc: annotate unresolved social-move target so the warning is visible in
+    # session_log["warnings"] (and therefore Elvira's engine_log) — not in consequences[]
+    # which is Narrator-visible. apply_consequences() already logs this via log(..., warning),
+    # but that only reaches the file logger, not the session JSON.
+    if roll.move in SOCIAL_MOVES:
+        _tid = brain.get("target_npc")
+        if _tid and not _find_npc(game, _tid):
+            game.session_log[-1].setdefault("warnings", []).append(
+                f"social_target_unresolved:{_tid!r}"
+            )
     # Autonomous clock ticks — world moves forward independent of player rolls
     auto_clock_events = _tick_autonomous_clocks(game)
     if auto_clock_events and game.session_log:
