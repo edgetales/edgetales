@@ -62,7 +62,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.86"
+VERSION = "0.9.87"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -139,6 +139,7 @@ NPC_MENTION_THRESHOLD = 0.3        # Minimum score for NPC name mention
 DIRECTOR_INTERVAL = 3              # Call director every N scenes (when no trigger)
 MEMORY_RECENCY_DECAY = 0.92        # Exponential decay factor for memory recency
 AUTONOMOUS_CLOCK_TICK_CHANCE = 0.20  # Per-scene chance each threat clock ticks autonomously
+WEAK_HIT_CLOCK_TICK_CHANCE  = 0.50  # Chance a threat clock ticks on WEAK_HIT + risky position
 DIRECTOR_MODEL = BRAIN_MODEL       # Director uses same model as Brain (Haiku)
 
 # --- Max output tokens per call ---
@@ -3074,6 +3075,23 @@ def apply_consequences(game: GameState, roll: RollResult, brain: dict) -> tuple[
             if game.supply > old:
                 consequences.append(f"supply +{game.supply - old}")
 
+        # Threat clock pressure on WEAK_HIT — the world moved while you were compromising.
+        # controlled: no tick (you had the situation in hand).
+        # risky:      50% chance of 1 tick (the gap you left may have been exploited).
+        # desperate:  guaranteed 1 tick (even partial success here costs the world forward).
+        if position != "controlled":
+            should_tick = (position == "desperate") or (random.random() < WEAK_HIT_CLOCK_TICK_CHANCE)
+            if should_tick:
+                for clock in game.clocks:
+                    if clock["clock_type"] == "threat" and clock["filled"] < clock["segments"]:
+                        clock["filled"] = min(clock["segments"], clock["filled"] + 1)
+                        if clock["filled"] >= clock["segments"]:
+                            clock["fired"] = True
+                            clock["fired_at_scene"] = game.scene_count
+                            clock_events.append({"clock": clock["name"],
+                                                 "trigger": clock["trigger_description"]})
+                        break
+
     else:  # STRONG_HIT
         effect = brain.get("effect", "standard")
         mom_gain = 3 if effect == "great" else 2
@@ -4720,8 +4738,9 @@ Be SPECIFIC in narrator_guidance. Not "make things interesting" but
 revealing the secret passage."
 
 Clocks represent threats and world events with a fill level (e.g. 3/6).
-They advance when the player fails rolls OR autonomously as the world moves
-forward. When a clock is full, its trigger fires as a hard narrative event —
+They advance on a MISS (guaranteed), on a WEAK_HIT at risky/desperate position
+(probabilistic), and autonomously as the world moves forward. When a clock is
+full, its trigger fires as a hard narrative event —
 not optional, not avoidable. Reference clocks in arc_notes and narrator_guidance
 when they are ≥50% filled or have recently ticked — they signal what is at stake
 and what is coming. A nearly-full clock should create visible narrative pressure.
@@ -4789,10 +4808,13 @@ def build_director_prompt(game: GameState, latest_narration: str,
         log_entries.append(entry)
     log_text = "\n".join(log_entries) or "(start)"
 
-    # NPCs needing reflection
+    # NPCs needing reflection or profile completion (empty agenda/instinct)
     reflection_blocks = []
     for n in game.npcs:
-        if not n.get("_needs_reflection"):
+        needs_profile_flag = (
+            not n.get("agenda", "").strip() or not n.get("instinct", "").strip()
+        )
+        if not n.get("_needs_reflection") and not needs_profile_flag:
             continue
         if n.get("status") not in ("active", "background"):
             continue

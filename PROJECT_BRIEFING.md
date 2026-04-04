@@ -8,7 +8,7 @@
 
 | | |
 |---|---|
-| **Version** | v0.9.86 |
+| **Version** | v0.9.87 |
 | **Codebase** | ~13,600 lines across 5 source files + config |
 | **Stack** | Python 3.11+, NiceGUI, Anthropic SDK (Structured Outputs), reportlab, edge-tts, faster-whisper, wonderwords, stop-words, nameparser, cryptography |
 | **AI Models** | Narrator/Architect: `claude-sonnet-4-6` · Brain/Director/Extractors: `claude-haiku-4-5-20251001` |
@@ -429,11 +429,11 @@ Exponential recency decay (`0.92^scene_gap`). Reflections have floor 0.6 and sto
 
 **Consolidation** `_consolidate_memory()`: Reflections always kept (max 8), observations by budget split (60% recency + 40% importance). Total max 25 entries.
 
-**Reflection trigger**: `importance_accumulator` incremented per memory update. At `REFLECTION_THRESHOLD` (30) → `_needs_reflection = True` → Director generates reflection (importance 8, decays slower). `_should_call_director()` picks the NPC with the **highest accumulator** as the trigger label (v0.9.81 — previously always named the first NPC in the list regardless of accumulator value). `build_director_prompt()` includes ALL `_needs_reflection` NPCs in `<reflect>` blocks regardless of which one the trigger label names. Director receives last reflection in `<reflect>` tag (`last_reflection="..."`, `last_tone="..."`) with instruction not to repeat themes or emotional tone.
+**Reflection trigger**: `importance_accumulator` incremented per memory update. At `REFLECTION_THRESHOLD` (30) → `_needs_reflection = True` → Director generates reflection (importance 8, decays slower). `_should_call_director()` picks the NPC with the **highest accumulator** as the trigger label (v0.9.81 — previously always named the first NPC in the list regardless of accumulator value). `build_director_prompt()` includes NPCs in `<reflect>` blocks under two independent conditions: (1) `_needs_reflection = True` (accumulator threshold reached), or (2) `agenda` or `instinct` is empty (`needs_profile_flag`, v0.9.87). Condition 2 operates independently of the accumulator — a peripheral NPC mentioned once in dialogue with only 1 seed memory is included as long as its profile is incomplete, without needing to reach the threshold. Once both fields are filled the NPC drops out automatically. Director receives last reflection in `<reflect>` tag (`last_reflection="..."`, `last_tone="..."`) with instruction not to repeat themes or emotional tone.
 
 **Stale reflection reset (v0.9.81)**: When the `_bg_director` background task is superseded by a newer turn (`_director_gen` mismatch), `reset_stale_reflection_flags(game)` is called before the early return. This clears `_needs_reflection` and resets `importance_accumulator` to 0 for all pending NPCs — preventing the zombie-reflection loop where `_needs_reflection` stays `True` permanently across every subsequent scene without ever producing output.
 
-Mid-game NPCs without agenda/instinct get `needs_profile="true"` — Director proposes both.
+Mid-game NPCs without agenda/instinct get `needs_profile="true"` in their `<reflect>` tag — Director proposes both fields. The inclusion gate (condition 2 above) guarantees the NPC reaches the Director prompt even if its accumulator is far below threshold.
 
 **Director Dual-Tone**: Two fields: `tone` (1–3 words, narrative compound like `"protective_guilt"`) for story-arc nuance, and `tone_key` (single word enum) for machine classification. `emotional_weight` gets a copy of `tone` for consistent importance scoring.
 
@@ -465,8 +465,9 @@ Mid-game NPCs without agenda/instinct get `needs_profile="true"` — Director pr
 
 **Clocks**: Progress clocks (1–12 segments). When `filled >= segments`, `"fired": true` and `"fired_at_scene": scene_count` are set at all fill points. `_purge_old_fired_clocks(game, keep_scenes=3)` runs at the start of every `process_turn()` — clocks that fired more than 3 scenes ago are removed entirely (short-term narrator context is preserved; long-term noise is eliminated). Sidebar filter: `not fired`. Director `<clocks>` block shows unfired clocks with fill bar, fired clocks as compact "already triggered" list. `load_game()` backfills `fired=True` for fully filled clocks in older saves, and `fired_at_scene=0` for already-fired clocks without the field — they are purged on the next turn.
 
-**Clock advancement — three distinct mechanisms (owner-aware):**
+**Clock advancement — four distinct mechanisms (owner-aware):**
 - **`apply_consequences()` (on MISS)**: Ticks the first available unfilled threat clock by 1 (or 2 on desperate). No owner filter — applies to world and NPC-owned threat clocks alike.
+- **`apply_consequences()` (on WEAK_HIT, v0.9.87)**: Position-scaled probabilistic tick. `controlled` → no tick. `risky` → 50% chance of 1 tick (`WEAK_HIT_CLOCK_TICK_CHANCE = 0.50`). `desperate` → guaranteed 1 tick. Same first-clock-only behaviour as the MISS path. Burn-restore correctly rolls back any tick (snapshot taken before `apply_consequences()`).
 - **`_tick_autonomous_clocks()` (every scene, 20% chance)**: Ticks world-owned threat clocks only (`owner in ("", "world")`). NPC-owned clocks of any type are excluded — `check_npc_agency()` is their sole advancement path. Excluding NPC-owned clocks from autonomous ticking prevents double-ticking on agency scenes (scene % 5 == 0) where both mechanisms would otherwise fire in the same turn.
 - **`check_npc_agency()` (every 5 scenes, deterministic)**: Advances NPC-owned clocks of both `"scheme"` and `"threat"` type by 1 for each active NPC who owns such a clock. Owner matched by normalized NPC name + aliases (v0.9.83). (v0.9.86: extended from scheme-only to scheme+threat — NPC-owned threat clocks were permanently stuck before this fix.)
 
