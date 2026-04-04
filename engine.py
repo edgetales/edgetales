@@ -3121,10 +3121,15 @@ def apply_consequences(game: GameState, roll: RollResult, brain: dict) -> tuple[
 
 
 def _tick_autonomous_clocks(game: GameState) -> list:
-    """Autonomously advance threat clocks by chance each scene.
-    Each unfilled threat clock rolls AUTONOMOUS_CLOCK_TICK_CHANCE independently —
+    """Autonomously advance world threat clocks by chance each scene.
+    Each unfilled world threat clock rolls AUTONOMOUS_CLOCK_TICK_CHANCE independently —
     simulates the world moving forward regardless of player roll results.
-    NPC-owned scheme clocks are excluded (they tick via check_npc_agency instead).
+    NPC-owned clocks (scheme AND threat) are excluded — check_npc_agency() is
+    their sole advancement mechanism (fires every 5 scenes). This prevents
+    double-ticking on agency scenes where both functions would otherwise fire.
+    Note: apply_consequences() already ticks the first available threat clock
+    (regardless of owner) on a MISS, so NPC-owned threat clocks are not frozen
+    on bad rolls — only autonomous random ticking is restricted.
     Returns a list of clock_event dicts (same format as apply_consequences)."""
     ticked = []
     for clock in game.clocks:
@@ -3200,7 +3205,7 @@ def check_npc_agency(game: GameState) -> list[str]:
             npc_norms.update(_normalize_for_match(a) for a in npc.get("aliases", []))
             for clock in game.clocks:
                 clock_owner = clock.get("owner", "")
-                if (clock["clock_type"] == "scheme"
+                if (clock["clock_type"] in ("scheme", "threat")
                         and clock_owner not in ("", "world")
                         and _normalize_for_match(clock_owner) in npc_norms
                         and clock["filled"] < clock["segments"]):
