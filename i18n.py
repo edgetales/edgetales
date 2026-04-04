@@ -401,7 +401,7 @@ _STRINGS = {
         "chapters.chapter_label": "Kapitel {n}",
 
         # Dice Display
-        "dice.action": "**Aktion:** {d1}+{d2}+{stat_value} = **{score}** vs **{c1}|{c2}**",
+        "dice.action": "**Aktion:** {d1}+{d2}+{stat_value} = **{score_display}** vs **{c1}|{c2}**",
         "dice.match": "\u2604\uFE0F **Schicksalswurf!** Beide Herausforderungsw\u00fcrfel zeigen {value}!",
         "dice.match_short": "\u2604\uFE0F Schicksalswurf!",
         "dice.chaos_short": "\u26A1 Chaos!",
@@ -804,7 +804,7 @@ _STRINGS = {
         "chapters.chapter_label": "Chapter {n}",
 
         # Dice Display
-        "dice.action": "**Action:** {d1}+{d2}+{stat_value} = **{score}** vs **{c1}|{c2}**",
+        "dice.action": "**Action:** {d1}+{d2}+{stat_value} = **{score_display}** vs **{c1}|{c2}**",
         "dice.match": "\u2604\uFE0F **Fateful Roll!** Both challenge dice show {value}!",
         "dice.match_short": "\u2604\uFE0F Fateful Roll!",
         "dice.chaos_short": "\u26A1 Chaos!",

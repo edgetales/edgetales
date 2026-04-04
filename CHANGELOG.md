@@ -5,6 +5,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.85]
+
+### Fixed
+- **Roll log cap visibility (`engine.py`):** When `d1 + d2 + stat > 10`, the `roll_action()` cap applies silently. The previous log format `4+6+1=10` looked like an arithmetic error (4+6+1 = 11, not 10). Both roll log sites (normal turn and correction re-roll) now emit `4+6+1=11→10(cap)` when the cap fires, and `4+5+1=10` when it does not. Variables `_raw` / `_score_str` are local to each call site.
+- **UI dice display cap visibility (`app.py`, `i18n.py`):** Same cap-invisibility problem in the Detailed dice display. `build_roll_data()` now computes `score_display` (e.g. `"11→10"` when capped, plain `"10"` when not). `dice.action` i18n key (DE + EN) updated from `{score}` → `{score_display}`. The `app.py` render call updated accordingly. `action_score` (integer) is preserved in the dict for any downstream numeric use.
+
+---
+
 ## [0.9.84]
 
 ### Added

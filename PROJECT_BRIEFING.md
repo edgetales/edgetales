@@ -8,7 +8,7 @@
 
 | | |
 |---|---|
-| **Version** | v0.9.84 |
+| **Version** | v0.9.85 |
 | **Codebase** | ~13,600 lines across 5 source files + config |
 | **Stack** | Python 3.11+, NiceGUI, Anthropic SDK (Structured Outputs), reportlab, edge-tts, faster-whisper, wonderwords, stop-words, nameparser, cryptography |
 | **AI Models** | Narrator/Architect: `claude-sonnet-4-6` · Brain/Director/Extractors: `claude-haiku-4-5-20251001` |
@@ -46,7 +46,7 @@ Auto-install: `_ensure_requirements()` checks and installs 9 mandatory packages 
 ### Mandatory Session-End Steps
 Every session that changes code or architecture **must** end with both of these:
 
-1. **`CHANGELOG.md`**: Add to the existing version entry if the change belongs to the current release. Use the "Keep a Changelog" format (Added / Changed / Fixed). English only. Entries should be self-contained — someone reading the changelog cold should understand the change.
+1. **`CHANGELOG.md`**: Add to the existing version entry if the change belongs to the current release. Use the "Keep a Changelog" format (Added / Changed / Fixed). English only. Entries should be self-contained — someone reading the changelog cold should understand the change. **`elvira/` changes are never logged here** — Elvira is an internal-only test tool, not part of the public GitHub repository, and must not appear in public-facing release notes.
 2. **`PROJECT_BRIEFING.md`**: Reflect any architectural, behavioral, or API changes. Update the version number in Quick Reference.
 
 ### Multi-Language Requirement ⚠️
@@ -120,6 +120,103 @@ class VoiceConfig:
 ```
 
 All AI calls receive `config: EngineConfig`. Voice functions receive `config: VoiceConfig`. The UI creates and manages config objects.
+
+---
+
+## Testing & Diagnostics — Elvira Bot
+
+**Elvira** is a headless AI test player that drives `engine.py` directly, bypassing NiceGUI entirely. It lives in `elvira/elvira.py` and is configured via `elvira/elvira_config.json`. It uses Claude Haiku as the player brain and imports the engine like any other Python module.
+
+**Purpose**: Generate realistic savegames and session logs for bug analysis without manual play. Run before/after engine changes to catch regressions.
+
+> ⚠️ **Internal only.** The `elvira/` directory is excluded from the public GitHub repository and must never appear in `CHANGELOG.md`. Elvira changes are not release notes.
+
+### File layout
+
+```
+elvira/
+├── elvira.py               — Bot entry point
+├── elvira_config.json      — Configuration (style, genre, chapters, logging flags)
+├── logs/
+│   └── elvira_engine_YYYY-MM-DD.log  — Raw engine log (redirected from rpg_engine logger)
+└── elvira_session.json     — Primary diagnostic output (see below)
+```
+
+### Usage
+
+```bash
+python elvira/elvira.py                        # runs with elvira_config.json
+python elvira/elvira.py --auto                 # Claude picks all game parameters freely
+python elvira/elvira.py --turns 30             # override max turns per chapter
+python elvira/elvira.py --config other.json    # custom config
+```
+
+### Bot styles
+
+`explorer`, `aggressor`, `dialogist`, `chaosagent`, `balanced` — set via `bot_behavior.style` in config. Personas are in English with "write in narration language" so the bot respects `narration_lang`. `chaosagent` is best for stress-testing edge cases (one-word inputs, very long inputs, unexpected actions).
+
+### Key config flags
+
+| Key | Default | Effect |
+|---|---|---|
+| `session.max_chapters` | `1` | How many chapters to play through including epilogue + transition |
+| `session.clean_before_run` | `false` | Delete old save + archives before starting — ensures clean diagnostic state |
+| `bot_behavior.burn_momentum` | `"auto"` | `"always"` / `"never"` / `"auto"` (Claude decides per roll) |
+| `logging.print_full_narration` | `false` | Print complete narrator text to stdout |
+| `logging.assert_state_invariants` | `true` | Check health/spirit/supply/chaos/momentum bounds after every turn |
+
+### `elvira_session.json` — primary diagnostic file
+
+This is the authoritative analysis artifact. It contains far more than a regular savegame — it is a complete turn-by-turn audit trail of an entire session. Use this for diagnosis; the savegame is only needed if you want to reload and continue play.
+
+**Top-level fields:**
+- `engine_version` — exact version string when the session ran
+- `config` — full elvira_config.json snapshot (reproducibility)
+- `style`, `auto_mode`, `max_chapters`
+- `character`, `location_start`, `opening_narration`
+- `game_context` — genre, tone, archetype, wishes, all five stats (correctly populated even in auto_mode)
+- `story_blueprint` — the Architect's full narrative plan: structure type, central conflict, antagonist force, thematic thread, all acts with phase/title/goal/mood/scene_range, possible endings
+- `chapters[]` — per-chapter summary: chapter number, started_at_turn, turns_played, ended_reason
+- `violations[]` — all invariant violations across the session
+- `ended_reason` — `story_complete`, `game_over`, `max_turns_reached`, `max_chapters_reached`, `epilogue_error`, `engine_error`, `bot_error`
+
+**Per-turn fields** (`turns[]`):
+- `turn`, `chapter`, `scene`, `location`
+- `action` — what the bot-player typed
+- `narration` — full narrator response (not truncated)
+- `narration_excerpt` — first 300 chars for quick scanning
+- `roll` — stat, **d1** (first action d6), total (min(d1+d2+stat, 10)), c1, c2, result, **match** (bool). Note: `d2` (second action d6) is not stored in the Elvira session JSON — only `d1` and the capped `total` are recorded.
+- `burn_offered`, `burn_taken` — momentum burn decision
+- `director_ran`, `director_error`
+- `state_after` — health, spirit, supply, momentum, chaos, scene, **location**, **time_of_day**, **scene_context**, npc count (active+background only, matches NPC snapshot), active clock count
+- `npcs[]` — snapshot of every active+background NPC: id, name, status, disposition, bond, agenda, instinct, memory_count, last_memory text, aliases
+- `clocks[]` — all clocks (including fired): name, clock_type, filled, segments, owner, fired
+- `director_guidance` — narrator_guidance, pacing, arc_notes (what the Director told the Narrator this turn)
+- `engine_log` — the engine's own session_log entry: rich_summary, move, position, effect, dramatic_question, chaos_interrupt, director_trigger, consequences, clock_events, npc_activation
+- `story_arc` — current act phase/title/goal/mood + story_complete flag. Phase is determined by `_get_current_act(game, bp)`, which mirrors the engine's `get_current_act()`: reads `game.bp_triggered_transitions` first (`len(triggered)` == current act index, each `"act_N"` entry means that act's transition has fired), falls back to `scene_range` only before any transition fires. `story_complete` reads from `game.bp_story_complete` directly (not from the blueprint dict, which may not carry the key after a save/load cycle).
+
+### Action dice
+
+EdgeTales uses **2d6** as the action dice (same as vanilla Ironsworn). The roll mechanic is:
+
+```
+action_score = min(d1 + d2 + stat, 10)   (two d6s, capped at 10)
+vs. two challenge dice (each d10)
+```
+
+When the raw sum exceeds 10, the cap applies silently. Log output (since v0.9.84) shows this explicitly as e.g. `4+6+1=11→10(cap)` to prevent the result from looking like a arithmetic error. The UI dice display (`dice.action` i18n key) uses `score_display` which formats the same way.
+
+Elvira logs `d1` (first action d6, range [1,6]) in the roll record — `d2` is **not** stored in the Elvira session JSON, making full roll reconstruction from JSON alone impossible. Use the engine log text lines (`[Roll] ...`) for complete audit trails.
+- `violations[]` — invariant violations for this specific turn
+
+### When to use which file
+
+| File | Use for |
+|---|---|
+| `elvira_session.json` | Primary analysis — everything in one place |
+| `users/elvira/saves/<name>.json` | Reload in the UI to continue play, or as input for further Elvira runs (`load_existing: true`) |
+| `users/elvira/saves/chapters/<name>/` | Full chat history per completed chapter (multi-chapter runs only) |
+| `elvira/logs/elvira_engine_*.log` | Deep engine internals when session.json shows an error and root cause is unclear |
 
 ---
 
@@ -342,7 +439,7 @@ Mid-game NPCs without agenda/instinct get `needs_profile="true"` — Director pr
 
 **Stats**: edge, iron, wits, shadow, heart (sum = 7, range 0–3)
 
-**Rolling** `roll_action()`: 2d10 (challenge dice c1, c2) + 1d6+stat (action score)
+**Rolling** `roll_action()`: 2d10 (challenge dice c1, c2) vs min(2d6+stat, 10) (action score, capped at 10)
 - Action > both challenge → **STRONG_HIT** (+2 momentum, positive outcome)
 - Action > one challenge → **WEAK_HIT** (+1 momentum, compromise)
 - Action ≤ both challenge → **MISS** (-1 momentum, complication)

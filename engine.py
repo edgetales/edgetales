@@ -62,7 +62,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.84"
+VERSION = "0.9.85"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -7302,8 +7302,10 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
     game.scene_count += 1
     stat_name = brain.get("stat", "wits")
     roll = roll_action(stat_name, game.get_stat(stat_name), brain.get("move", "face_danger"))
+    _raw = roll.d1 + roll.d2 + roll.stat_value
+    _score_str = f"{_raw}→10(cap)" if _raw > 10 else str(roll.action_score)
     log(f"[Roll] {roll.move} ({roll.stat_name}={roll.stat_value}): "
-        f"{roll.d1}+{roll.d2}+{roll.stat_value}={roll.action_score} "
+        f"{roll.d1}+{roll.d2}+{roll.stat_value}={_score_str} "
         f"vs [{roll.c1},{roll.c2}] \u2192 {roll.result}")
     if roll.match:
         log(f"[Turn] MATCH! Both challenge dice show {roll.c1} \u2014 {roll.result}")
@@ -7890,8 +7892,10 @@ def process_correction(client: anthropic.Anthropic, game: GameState,
             game.scene_count += 1
             stat_name = brain.get("stat", "wits")
             roll = roll_action(stat_name, game.get_stat(stat_name), brain.get("move", "face_danger"))
+            _raw = roll.d1 + roll.d2 + roll.stat_value
+            _score_str = f"{_raw}→10(cap)" if _raw > 10 else str(roll.action_score)
             log(f"[Roll] {roll.move} ({roll.stat_name}={roll.stat_value}): "
-                f"{roll.d1}+{roll.d2}+{roll.stat_value}={roll.action_score} "
+                f"{roll.d1}+{roll.d2}+{roll.stat_value}={_score_str} "
                 f"vs [{roll.c1},{roll.c2}] \u2192 {roll.result} (correction re-roll)")
             consequences, clock_events = apply_consequences(game, roll, brain)
             npc_agency = check_npc_agency(game)

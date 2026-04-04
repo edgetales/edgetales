@@ -134,7 +134,7 @@ from engine import (
     get_current_act, setup_file_logging,
     call_setup_brain, start_new_game, start_new_chapter,
     process_turn, process_momentum_burn, process_correction, call_recap,
-    run_deferred_director, reset_stale_reflection_flags, generate_epilogue,
+    run_deferred_director, generate_epilogue,
 )
 from i18n import (
     t, UI_LANGUAGES, DEFAULT_LANG,
@@ -564,6 +564,11 @@ def build_roll_data(roll: RollResult, consequences=None, clock_events=None, brai
         "stat_value": roll.stat_value,
         "d1": roll.d1, "d2": roll.d2, "c1": roll.c1, "c2": roll.c2,
         "action_score": roll.action_score,
+        "score_display": (
+            f"{roll.d1 + roll.d2 + roll.stat_value}\u219210"
+            if roll.d1 + roll.d2 + roll.stat_value > 10
+            else str(roll.action_score)
+        ),
         "result": roll.result, "result_label": result_label,
         "match": getattr(roll, "match", roll.c1 == roll.c2),
         "consequences": consequences or [], "clock_events": clock_events or [],
@@ -1874,7 +1879,7 @@ def render_dice_display(rd: dict) -> None:
         if rd.get("chaos_interrupt"):
             header += f" {E['dot']} {t('dice.chaos_short', lang)}"
         with ui.expansion(header).classes("w-full"):
-            ui.markdown(t("dice.action", lang, d1=rd['d1'], d2=rd['d2'], stat_value=rd['stat_value'], score=rd['action_score'], c1=rd['c1'], c2=rd['c2']))
+            ui.markdown(t("dice.action", lang, d1=rd['d1'], d2=rd['d2'], stat_value=rd['stat_value'], score_display=rd['score_display'], c1=rd['c1'], c2=rd['c2']))
             if is_match:
                 ui.markdown(t("dice.match", lang, value=rd['c1']))
             pl = get_position_labels(lang)
@@ -2464,16 +2469,9 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
             async def _bg_director():
                 try:
                     # Don't even run if a newer turn has already started
-                    # (the game object may be mutated by the new turn's thread).
-                    # Still reset reflection flags so they don't accumulate indefinitely —
-                    # without this, _needs_reflection stays True forever, triggering the
-                    # Director every scene without ever producing output (zombie-reflection loop).
+                    # (the game object may be mutated by the new turn's thread)
                     if _s.get("_director_gen", 0) != _dgen:
                         log("[Director] Skipping — newer turn already started")
-                        reset_stale_reflection_flags(_g)
-                        # Save the reset state if the turn context is still valid
-                        if _s.get("_turn_gen", 0) == _gen:
-                            save_game(_g, _u, _s["messages"], _s.get("active_save", "autosave"))
                         return
                     await asyncio.to_thread(run_deferred_director, client, _g, _dc)
                     # Don't save if user switched to a different game during Director processing
