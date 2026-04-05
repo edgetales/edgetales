@@ -62,7 +62,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.90"
+VERSION = "0.9.91"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -3236,10 +3236,17 @@ def can_burn_momentum(game: "GameState", roll: "RollResult") -> str | None:
     return None
 
 
-def check_npc_agency(game: GameState) -> list[str]:
+def check_npc_agency(game: GameState) -> tuple[list[str], list[dict]]:
+    """Advance NPC-owned clocks on every 5th scene and return prompt strings + clock events.
+
+    Returns a (actions, clock_events) tuple so callers can log agency ticks alongside
+    other clock events in session_log.  clock_events follow the same dict format as
+    apply_consequences() and _tick_autonomous_clocks(), with source="npc_agency".
+    """
     if game.scene_count % 5 != 0:
-        return []
-    actions = []
+        return [], []
+    actions: list[str] = []
+    clock_events: list[dict] = []
     for npc in game.npcs:
         if npc.get("status") == "active" and npc.get("agenda"):
             actions.append(
@@ -3256,11 +3263,23 @@ def check_npc_agency(game: GameState) -> list[str]:
                         and _normalize_for_match(clock_owner) in npc_norms
                         and clock["filled"] < clock["segments"]):
                     clock["filled"] += 1
-                    if clock["filled"] >= clock["segments"]:
+                    triggered = clock["filled"] >= clock["segments"]
+                    if triggered:
                         clock["fired"] = True
                         clock["fired_at_scene"] = game.scene_count
                         actions.append(f'CLOCK FILLED "{clock["name"]}": {clock["trigger_description"]}')
-    return actions
+                    event: dict = {
+                        "clock": clock["name"],
+                        "trigger": clock["trigger_description"],
+                        "source": "npc_agency",
+                        "npc": npc["name"],
+                    }
+                    if triggered:
+                        event["fired"] = True
+                    clock_events.append(event)
+                    status = "TRIGGERED" if triggered else f"{clock['filled']}/{clock['segments']}"
+                    log(f"[Clock] NPC agency tick: '{clock['name']}' by '{npc['name']}' → {status}")
+    return actions, clock_events
 
 
 # ===============================================================
@@ -4443,7 +4462,7 @@ NPCs:
 - NEVER include the player character ({game.player_name}).
 - Each NPC needs: name, a one-sentence PHYSICAL/ROLE description (appearance, occupation — NOT actions), agenda (hidden goal driving their behaviour), instinct (typical reaction when challenged or stressed), secrets (1-2 hidden facts the player doesn't know yet), disposition (neutral|friendly|distrustful|hostile|loyal).
 - For agenda/instinct/secrets: infer plausible values from the narration context, genre ({game.setting_genre}), and tone ({game.setting_tone}). Be specific and narratively interesting.
-- instinct MUST reflect a distinct emotional profile — "calm and calculating" is a known model default, not a personality. Draw from the full spectrum: explosive/confrontational | panicked/losing control | coldly controlled (use sparingly) | resigned/fatalistic | bitterly vengeful | recklessly courageous | paranoid | irrationally loyal | stubbornly refuses to adapt | uses dark humor under pressure | breaks down then recovers. No two NPCs in the same scene should share the same instinct profile.
+- instinct is the NPC's psychological signature under real pressure — what they specifically do when their normal strategy fails, what betrays them, what is slightly irrational but inevitable given who they are. It is NOT job demeanor, genre convention, or generic adult competence. BAD: "stays calm under pressure" / "methodical and efficient" / "evaluates consequences before acting" — these describe a role, not a person. GOOD: "goes very quiet and hyper-precise when cornered — precision as a defense mechanism" / "agrees in the moment, then quietly does exactly what he intended" / "deflects with dark humor until something breaks, then overcorrects with raw honesty". SELF-CHECK before writing each instinct: could this apply to any competent professional in this genre? If yes, go deeper — find the specific human underneath the competence. IMPORTANT: what you see in the narration is situational behavior, not wiring — a character who appears composed in a tense scene may have barely-controlled panic underneath; infer the person, not the performance.
 - Do NOT extract NPCs that are already in the known NPC list below.
 
 Clocks:
@@ -5002,7 +5021,7 @@ Field instructions:
   - updated_arc: The NPC's current narrative trajectory — what the story has made of them so far. 1-2 sentences in {lang}, from an inside perspective (their emotional state and what they have become, not what they will do next). Expected to change every reflection as the story develops. The <reflect> tag shows the current arc if set — build on it, deepen it, or shift it based on what just happened. Distinct from instinct (stable wiring) and npc_guidance (scene instruction). Good: "Has seen enough of Janus's chaos to stop treating him as a variable — now calculating whether trust is a liability or an asset." Bad (scene behavior, not trajectory): "Is nervous and looking for an exit." null only if the NPC has had zero meaningful story interaction.
   - about_npc: If this reflection is primarily about the NPC's feelings toward ANOTHER NPC (not the player), set to that NPC's npc_id. Example: Sophie reflects on her growing attraction to Bruce → about_npc="npc_2". null if the reflection is about the player or general.
   - agenda: NPC's hidden goal (max 8 words, only if needs_profile="true"), null otherwise
-  - instinct: NPC's default behavior pattern (max 8 words, only if needs_profile="true"), null otherwise. MUST reflect a distinct emotional profile — "calm and calculating" is a known model default, not a personality. Draw from the full spectrum: explosive/confrontational | panicked/losing control | coldly controlled (use sparingly) | resigned/fatalistic | bitterly vengeful | recklessly courageous | paranoid | irrationally loyal | stubbornly refuses to adapt | uses dark humor under pressure | breaks down then recovers. Base the choice on the NPC's observations and description. IMPORTANT: instinct is set ONCE (first reflection, needs_profile=true) and never updated — it is the NPC's wiring, not their mood.
+  - instinct: NPC's psychological signature under real pressure (max 8 words, only if needs_profile="true"), null otherwise. NOT job demeanor or genre convention — the specific human underneath: what they do when their strategy fails, what betrays them, what is slightly irrational but inevitable. BAD: "stays calm under pressure" / "methodical and efficient" / "evaluates before acting". GOOD: "goes quiet and hyper-precise when cornered" / "agrees then quietly does what he intended" / "dark humor until something breaks, then overcorrects". Base on this NPC's description and story observations. IMPORTANT: instinct is set ONCE (first reflection, needs_profile=true) and never updated — it is the NPC's wiring, not their mood.
 - arc_notes: Brief story arc progress observation
 - act_transition: Evaluate whether the current act's <transition_trigger> has been fulfilled by recent events. Set to true if:
   (a) the narrative condition described in the trigger has clearly been met, OR
@@ -5078,12 +5097,27 @@ def _apply_director_guidance(game: GameState, guidance: dict):
                     f"(guidance empty — API failure or empty response)")
         return
 
-    # Store guidance for next narrator call
+    # Store guidance for next narrator call.
+    # act_transition and npc_reflections (diagnostic subset) are stored here so
+    # the session log (Elvira) can read them after run_deferred_director() returns.
+    # Only npc_id/tone/tone_key/updated_arc are kept — the prose reflection and
+    # write-back fields (agenda, instinct, updated_description) are already applied
+    # to NPC memory and do not need to travel through director_guidance further.
     game.director_guidance = {
         "narrator_guidance": guidance.get("narrator_guidance", ""),
-        "npc_guidance": guidance.get("npc_guidance", {}),
-        "pacing": guidance.get("pacing", ""),
-        "arc_notes": guidance.get("arc_notes", ""),
+        "npc_guidance":      guidance.get("npc_guidance", {}),
+        "pacing":            guidance.get("pacing", ""),
+        "arc_notes":         guidance.get("arc_notes", ""),
+        "act_transition":    guidance.get("act_transition"),
+        "npc_reflections": [
+            {
+                "npc_id":      r.get("npc_id", ""),
+                "tone":        r.get("tone", ""),
+                "tone_key":    r.get("tone_key", ""),
+                "updated_arc": r.get("updated_arc"),
+            }
+            for r in (guidance.get("npc_reflections") or [])
+        ],
     }
 
     # Handle act transition: Director signals that the current act's
@@ -7437,7 +7471,7 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
             }
 
     consequences, clock_events = apply_consequences(game, roll, brain)
-    npc_agency = check_npc_agency(game)
+    npc_agency, agency_clock_events = check_npc_agency(game)
     prompt = build_action_prompt(game, brain, roll, consequences, clock_events, npc_agency,
                                 player_words=player_message, chaos_interrupt=chaos_interrupt,
                                 activated_npcs=activated_npcs, mentioned_npcs=mentioned_npcs,
@@ -7500,6 +7534,8 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
         }
     # Autonomous clock ticks — world moves forward independent of player rolls
     auto_clock_events = _tick_autonomous_clocks(game)
+    if agency_clock_events and game.session_log:
+        game.session_log[-1]["clock_events"].extend(agency_clock_events)
     if auto_clock_events and game.session_log:
         game.session_log[-1]["clock_events"].extend(auto_clock_events)
     # Check story completion
@@ -8006,6 +8042,7 @@ def process_correction(client: anthropic.Anthropic, game: GameState,
         return game, "(Keine Korrektur möglich — kein letzter Zug im Speicher.)", None
 
     _cfg = config or EngineConfig()
+    agency_clock_events: list[dict] = []  # populated by check_npc_agency() in action sub-paths
 
     # Step 1: Analyse the correction
     analysis = call_correction_brain(client, game, correction_text, _cfg)
@@ -8031,7 +8068,7 @@ def process_correction(client: anthropic.Anthropic, game: GameState,
                 f"{roll.d1}+{roll.d2}+{roll.stat_value}={_score_str} "
                 f"vs [{roll.c1},{roll.c2}] \u2192 {roll.result} (correction re-roll)")
             consequences, clock_events = apply_consequences(game, roll, brain)
-            npc_agency = check_npc_agency(game)
+            npc_agency, agency_clock_events = check_npc_agency(game)
             activated_npcs, mentioned_npcs, _ = activate_npcs_for_prompt(game, brain, corrected_input)
             prompt = build_action_prompt(game, brain, roll, consequences, clock_events, npc_agency,
                                          player_words=corrected_input, config=_cfg,
@@ -8060,7 +8097,7 @@ def process_correction(client: anthropic.Anthropic, game: GameState,
         if roll:
             consequences = _last_log.get("consequences", [])
             clock_events = _last_log.get("clock_events", [])
-            npc_agency = check_npc_agency(game)
+            npc_agency, agency_clock_events = check_npc_agency(game)
             prompt = build_action_prompt(game, brain, roll, consequences, clock_events, npc_agency,
                                          player_words=snap.get("player_input", ""), config=_cfg,
                                          activated_npcs=activated_npcs, mentioned_npcs=mentioned_npcs)
@@ -8125,6 +8162,8 @@ def process_correction(client: anthropic.Anthropic, game: GameState,
         })
         if len(game.session_log) > MAX_SESSION_LOG:
             game.session_log = game.session_log[-MAX_SESSION_LOG:]
+        if agency_clock_events and game.session_log:
+            game.session_log[-1]["clock_events"].extend(agency_clock_events)
     else:
         # state_error: no rollback → chaos/intensity already recorded by original turn.
         # Only update narration text; preserve original consequences/clock_events.
@@ -8146,6 +8185,10 @@ def process_correction(client: anthropic.Anthropic, game: GameState,
                 "chaos_interrupt": None,
                 "npc_activation": "",
             })
+        # Note: agency_clock_events are intentionally NOT extended here.
+        # state_error preserves the original turn's session_log entry, which already
+        # received the agency tick events from the original process_turn() call.
+        # Extending again would produce duplicate clock_events entries.
 
     # Step 6: Director — only when useful and NPC state changed
     director_ctx = None
