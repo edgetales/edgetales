@@ -545,7 +545,7 @@ def load_user_settings(username: str) -> None:
     # Voice sample: "" or missing → no-sample label; filename → keep as-is
     saved_sample = cfg.get("cb_voice_sample", "")
     s["cb_voice_sample"] = get_no_voice_sample_label(lang) if not saved_sample else saved_sample
-    s["narrator_font"] = cfg.get("narrator_font", "sans")
+    s["narrator_font"] = cfg.get("narrator_font", "highlight")
 
 
 # ---------------------------------------------------------------------------
