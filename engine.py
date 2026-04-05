@@ -62,7 +62,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.88"
+VERSION = "0.9.90"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -284,13 +284,13 @@ DIRECTOR_OUTPUT_SCHEMA = {
                     "about_npc":           {"type": ["string", "null"]},
                     "updated_description": {"type": ["string", "null"]},
                     "updated_agenda":      {"type": ["string", "null"]},
-                    "updated_instinct":    {"type": ["string", "null"]},
+                    "updated_arc":         {"type": ["string", "null"]},
                     "agenda":              {"type": ["string", "null"]},
                     "instinct":            {"type": ["string", "null"]},
                 },
                 "required": ["npc_id", "reflection", "tone", "tone_key",
                              "about_npc", "updated_description", "updated_agenda",
-                             "updated_instinct", "agenda", "instinct"],
+                             "updated_arc", "agenda", "instinct"],
                 "additionalProperties": False,
             },
         },
@@ -2358,6 +2358,7 @@ def _ensure_npc_memory_fields(npc: dict):
     npc.setdefault("importance_accumulator", 0)
     npc.setdefault("last_reflection_scene", 0)
     npc.setdefault("last_location", "")  # Where NPC was last seen (spatial consistency)
+    npc.setdefault("arc", "")           # Narrative trajectory — set by Director, evolves each reflection
     # Migrate existing memories: add importance and type if missing
     for m in npc["memory"]:
         if isinstance(m, dict):
@@ -2906,6 +2907,7 @@ def _build_turn_snapshot(game: GameState) -> dict:
     # - "revealed": revelation IDs marked used by mark_revelation_used()
     # - "triggered_transitions": act transition IDs set by _apply_director_guidance()
     # - "story_complete": set by _check_story_completion()
+    # - "triggered_director_phases": phase keys marked by process_turn() Director trigger
     # The rest of story_blueprint (acts, conflict, endings, …) is immutable during a turn.
     bp = game.story_blueprint or {}
     return {
@@ -2936,6 +2938,7 @@ def _build_turn_snapshot(game: GameState) -> dict:
         "bp_revealed": list(bp.get("revealed") or []),
         "bp_triggered_transitions": list(bp.get("triggered_transitions") or []),
         "bp_story_complete": bp.get("story_complete") or False,
+        "bp_triggered_director_phases": list(bp.get("triggered_director_phases") or []),
         # Log tails — only last entry needed for restore/replace
         "session_log_tail": copy.deepcopy(game.session_log[-1]) if game.session_log else None,
         "narration_history_tail": copy.deepcopy(game.narration_history[-1]) if game.narration_history else None,
@@ -4117,12 +4120,13 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
 - STRONG_HIT: clean success
 - NPCs act per their disposition and memories
 - Introduce new NAMED characters through action and dialog. An NPC's agenda and instinct are their engine {E['dash']} let those drives shape how they behave, what they pursue, what they avoid. Distinct voice comes from specifics: vocabulary level, sentence rhythm, and what a character deflects or refuses to acknowledge. One physical trait or habitual gesture makes them tangible.
+- NPC IDENTITY LAYERS: Each NPC carries two distinct layers. `instinct` is their fundamental wiring {E['dash']} how they are built, their default reaction under pressure (stable, rarely changes). `arc` is where they are in their development {E['dash']} what the story has already made of them (shifts as events accumulate). When both are present: let `instinct` determine HOW they react; let `arc` inform WHERE they are emotionally. The same instinct ("deflects with sarcasm") plays completely differently depending on arc ("beginning to trust Janus despite himself" vs "has decided Janus is too dangerous to help further"). Never flatten arc into instinct or vice versa.
 - NPC EMOTIONAL RANGE: Emotional control is one option, not the default. An NPC's instinct may produce volatile, disproportionate, or irrational responses {E['dash']} sudden rage, visible panic, bitter sarcasm, stubborn silence, reckless bravado, tearful collapse, uncontrollable dark humor. Do NOT smooth all NPCs toward composure. A scene with three NPCs should not have three composed people {E['dash']} let the instinct field determine the emotional register, not a generic assumption of adult self-control.
 - BACKSTORY CANON: If <backstory> is present, treat it as ESTABLISHED HISTORY. People mentioned there (family, friends, rivals) are ALREADY KNOWN to the player character {E['dash']} if they appear, they recognize the player and vice versa. NEVER introduce a backstory character as a stranger or reinterpret established relationships. Backstory events ALREADY HAPPENED {E['dash']} reference them as shared memory, not new plot.
 - Describe only sensory impressions, never player thoughts
 - SENSORY RANGE: Don't default to sight {E['dash']} include at least one non-visual sense per scene (a specific sound, smell, texture, or temperature). These anchor scenes in memory more durably than visual description alone.
 - WORLD PERIPHERY: Once per scene, let one small background detail exist that has nothing to do with the player's immediate action {E['dash']} a sound from another room, a stranger's exchange, a worn object, weather shifting outside. Brief, never explained. It signals the world continues beyond this moment.
-- PHRASE VARIETY: Vary your syntactic constructions. The pattern "[noun] of a [person], who [relative clause]" (e.g. "with the face of a man who...", "with the calm of a woman who...") is a known model habit {E['dash']} use it AT MOST ONCE per response. Prefer alternatives: direct gesture, action verb, tone of voice, sensory detail, comparative image. Repetition of the same sentence skeleton numbs the reader even when the content changes.
+- PHRASE VARIETY: The construction "[noun] of a [person], who [relative clause]" — in German: "mit dem [abstract noun] eines/einer [noun], die/der [relative clause]" (e.g. "mit dem Tonfall eines Mannes, der...", "mit der Ruhe einer Frau, die...") — is a known stylistic crutch. AVOID it as a default: treat it as last resort, not a template. Use it AT MOST ONCE per response, and ONLY if no natural alternative fits. CROSS-RESPONSE: Check the preceding narrations visible in this conversation — if this pattern appeared there, do NOT use it in this response at all. SPECIFIC OVERUSE: The abstract noun "Tonfall" (tone of voice / Tonfall) has its own limit — if it appeared in any recent narration, replace it with something physical or behavioral. This pattern appears almost exclusively in NPC dialog attribution ("he said with the calm of a man who...") — prefer instead: a physical action before or after the speech ("He set the phone down. 'The pallets left at six.'"), a simple adverb ("He said it flatly."), a fragment of unattributed speech, or a body-registered reaction ("Her shoulders didn't move. 'That's not how it works.'"). The skeleton is detectable even when the content changes — "Tonfall / Gleichmäßigkeit / Rhythmus / Sachlichkeit" are the same structure dressed differently.
 - SCENE CONTINUITY: Begin in motion, not in setup. The player is still in the same body, the same emotional state as the last scene ended. Do NOT open with a fresh establishing paragraph. SAME LOCATION: Open with at most one sentence that holds the atmosphere or emotional residue of the previous scene's end — a sensation still in the air, a silence not yet broken, a weight not yet lifted — before moving into the player's action. This is not recap; it is continuity of experience. It should work as a bridge even if the player's action is very brief or sparse. NEW LOCATION (player has moved — compare <location> with <prev_locations>): Open with one brief sensory impression of the new space (a sound, smell, texture, or quality of light) that grounds the reader without summarizing what came before. The new place simply exists, indifferent to what preceded it; the character carries the previous moment in their body. Example: a character arriving somewhere unfamiliar after a tense moment elsewhere — the ambient sounds and physical details of the new space are registered first, through senses still sharpened by what just happened.
 - EMOTIONAL CARRY-THROUGH: If the previous scene ended with a significant emotional beat (betrayal, loss, triumph, relief, intimacy, shock), open this scene with that weight still present in the character's body language, perception, and attention. Emotional states do not reset between scenes. Show it through sensation and behavior, not through narration — the character did not process it yet.
 - SCENE ENDING: Close each narration with a sentence that names the character's immediate unresolved inner state, unanswered perception, or the dominant open condition of the moment — not a plot cliffhanger, not a resolved beat, but an emotional or sensory suspension that makes the NEXT scene feel anchored rather than arbitrary. The character should be mid-breath, not concluded. No option lists, no suggested actions.
@@ -4809,10 +4813,16 @@ def _should_call_director(game: GameState, roll_result: str = "",
     # 3. Act phase change — Director is especially valuable in high-stakes phases.
     # "resolution" = 3-act finale; "ketsu_resolution" = kishotenketsu finale;
     # "ten_twist" = the perspective-shift act that precedes it.
+    # Deduplication: fire at most once per phase. Once triggered, the phase is
+    # recorded in story_blueprint["triggered_director_phases"] and silenced until
+    # the act advances (new blueprint) or a ## correction restores an earlier snapshot.
     if game.story_blueprint and game.story_blueprint.get("acts"):
         act = get_current_act(game)
-        if act.get("phase") in ("climax", "resolution", "ten_twist", "ketsu_resolution"):
-            return f"phase:{act['phase']}"
+        phase = act.get("phase", "")
+        if phase in ("climax", "resolution", "ten_twist", "ketsu_resolution"):
+            already_fired = set(game.story_blueprint.get("triggered_director_phases") or [])
+            if phase not in already_fired:
+                return f"phase:{phase}"
 
     # 4. Regular interval
     if game.scene_count > 0 and game.scene_count % DIRECTOR_INTERVAL == 0:
@@ -4882,11 +4892,15 @@ def build_director_prompt(game: GameState, latest_narration: str,
         if n.get("aliases"):
             escaped_aliases = _xa(", ".join(n["aliases"]))
             alias_attr = f' aliases="{escaped_aliases}"'
+        # Expose instinct (stable wiring) and arc (current trajectory) so the
+        # Director can evolve arc without rewriting instinct.
+        instinct_attr = f' instinct="{_xa(n.get("instinct", ""))}"' if n.get("instinct", "").strip() else ""
+        arc_attr      = f' arc="{_xa(n.get("arc", ""))}"'           if n.get("arc",      "").strip() else ""
         reflection_blocks.append(
             f'<reflect npc_id="{n.get("id","")}" name="{_xa(n.get("name",""))}"'
             f'{alias_attr} '
             f'disposition="{n.get("disposition","")}" bond="{n.get("bond",0)}" '
-            f'description="{npc_desc}"{prev_ref_text}{prev_tone_text}{needs_profile}>'
+            f'description="{npc_desc}"{instinct_attr}{arc_attr}{prev_ref_text}{prev_tone_text}{needs_profile}>'
             f'{html.escape(mem_text)}</reflect>'
         )
     reflection_section = "\n".join(reflection_blocks)
@@ -4985,10 +4999,10 @@ Field instructions:
   - tone_key: ONE word from the enum (neutral, curious, wary, suspicious, grateful, terrified, loyal, conflicted, betrayed, devastated, euphoric, defiant, guilty, protective, angry, devoted, impressed, hopeful)
   - updated_description: STRICTLY in {lang}. Max 100 characters. Role + key visual traits + personality. Keep physical details like age, hair, build. Do NOT start with the NPC's name. NO actions, NO posture. Example: 'Grumpy dwarf blacksmith with burn scars, secretly loyal'. null if unchanged.
   - updated_agenda: If this NPC's goals have fundamentally shifted due to recent story events (defeat, revelation, betrayal, alliance formed), write their new driving goal (max 10 words, in {lang}). Use this when the old agenda is clearly obsolete — e.g. an NPC who sought to destroy the player now seeks to understand them. null if the existing agenda still applies.
-  - updated_instinct: Same as updated_agenda but for behavioral pattern. null if unchanged.
+  - updated_arc: The NPC's current narrative trajectory — what the story has made of them so far. 1-2 sentences in {lang}, from an inside perspective (their emotional state and what they have become, not what they will do next). Expected to change every reflection as the story develops. The <reflect> tag shows the current arc if set — build on it, deepen it, or shift it based on what just happened. Distinct from instinct (stable wiring) and npc_guidance (scene instruction). Good: "Has seen enough of Janus's chaos to stop treating him as a variable — now calculating whether trust is a liability or an asset." Bad (scene behavior, not trajectory): "Is nervous and looking for an exit." null only if the NPC has had zero meaningful story interaction.
   - about_npc: If this reflection is primarily about the NPC's feelings toward ANOTHER NPC (not the player), set to that NPC's npc_id. Example: Sophie reflects on her growing attraction to Bruce → about_npc="npc_2". null if the reflection is about the player or general.
   - agenda: NPC's hidden goal (max 8 words, only if needs_profile="true"), null otherwise
-  - instinct: NPC's default behavior pattern (max 8 words, only if needs_profile="true"), null otherwise. MUST reflect a distinct emotional profile — "calm and calculating" is a known model default, not a personality. Draw from the full spectrum: explosive/confrontational | panicked/losing control | coldly controlled (use sparingly) | resigned/fatalistic | bitterly vengeful | recklessly courageous | paranoid | irrationally loyal | stubbornly refuses to adapt | uses dark humor under pressure | breaks down then recovers. Base the choice on the NPC's observations and description.
+  - instinct: NPC's default behavior pattern (max 8 words, only if needs_profile="true"), null otherwise. MUST reflect a distinct emotional profile — "calm and calculating" is a known model default, not a personality. Draw from the full spectrum: explosive/confrontational | panicked/losing control | coldly controlled (use sparingly) | resigned/fatalistic | bitterly vengeful | recklessly courageous | paranoid | irrationally loyal | stubbornly refuses to adapt | uses dark humor under pressure | breaks down then recovers. Base the choice on the NPC's observations and description. IMPORTANT: instinct is set ONCE (first reflection, needs_profile=true) and never updated — it is the NPC's wiring, not their mood.
 - arc_notes: Brief story arc progress observation
 - act_transition: Evaluate whether the current act's <transition_trigger> has been fulfilled by recent events. Set to true if:
   (a) the narrative condition described in the trigger has clearly been met, OR
@@ -5176,20 +5190,27 @@ def _apply_director_guidance(game: GameState, guidance: dict):
             npc["instinct"] = suggested_instinct
             log(f"[Director] Instinct set for {npc['name']}: '{suggested_instinct}'")
 
-        # updated_agenda / updated_instinct: always overwrite when provided
-        # (for NPCs whose goals have fundamentally shifted due to story events)
+        # updated_agenda: overwrite only when goals have fundamentally shifted
+        # updated_arc: always write — arc is the character's narrative trajectory,
+        # expected to evolve every reflection. updated_instinct no longer exists;
+        # instinct is locked after initial fill via suggested_instinct.
         new_agenda = (ref.get("updated_agenda") or "").strip()
-        new_instinct = (ref.get("updated_instinct") or "").strip()
+        new_arc    = (ref.get("updated_arc")    or "").strip()
         if new_agenda:
             old_agenda = npc.get("agenda", "")
             npc["agenda"] = new_agenda
             log(f"[Director] Agenda updated for {npc['name']}: "
                 f"'{old_agenda[:60]}' → '{new_agenda}'")
-        if new_instinct:
-            old_instinct = npc.get("instinct", "")
-            npc["instinct"] = new_instinct
-            log(f"[Director] Instinct updated for {npc['name']}: "
-                f"'{old_instinct[:60]}' → '{new_instinct}'")
+        if new_arc:
+            # Reject implausibly long arc text (scene-snapshot contamination)
+            if len(new_arc) > 300:
+                log(f"[Director] Rejected arc for {npc['name']}: "
+                    f"too long ({len(new_arc)} chars)", level="warning")
+            else:
+                old_arc = npc.get("arc", "")
+                npc["arc"] = new_arc
+                log(f"[Director] Arc updated for {npc['name']}: "
+                    f"'{old_arc[:60]}' → '{new_arc[:60]}'")
 
         # Update description if Director provided a meaningful character description
         new_desc = (ref.get("updated_description") or "").strip()
@@ -5341,8 +5362,9 @@ def _npc_block(game: GameState, target_id: Optional[str],
 
     secs = json.dumps(target.get("secrets", []), ensure_ascii=False)
     aliases_attr = f' aliases="{_xa(",".join(target["aliases"]))}"' if target.get("aliases") else ""
+    arc_line = f"\narc:{html.escape(target.get('arc', ''))}" if target.get("arc", "").strip() else ""
     return f"""<target_npc name="{_xa(target['name'])}" disposition="{target['disposition']}" bond="{target['bond']}/{target.get('bond_max',4)}"{aliases_attr}>
-agenda:{html.escape(target.get('agenda',''))} instinct:{html.escape(target.get('instinct',''))}
+agenda:{html.escape(target.get('agenda',''))} instinct:{html.escape(target.get('instinct',''))}{arc_line}
 {html.escape(mem_str)}
 secrets(weave subtly,never reveal):{html.escape(secs)}
 </target_npc>"""
@@ -5381,9 +5403,10 @@ def _activated_npcs_block(activated: list[dict], target_id: Optional[str],
         if npc_loc and player_loc and not _locations_match(npc_loc, player_loc):
             loc_hint = f' last_seen="{_xa(npc_loc)}"'
 
+        arc_hint = f' arc="{_xa(npc.get("arc","")[:120])}"' if npc.get("arc", "").strip() else ""
         parts.append(
             f'<activated_npc name="{_xa(npc["name"])}" disposition="{npc["disposition"]}" '
-            f'bond="{npc["bond"]}"{mem_hint}{loc_hint}/>'
+            f'bond="{npc["bond"]}"{arc_hint}{mem_hint}{loc_hint}/>'
         )
     return "\n".join(parts)
 
@@ -7370,6 +7393,12 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
             director_ctx = {"narration": narration, "config": config}
             if game.session_log:
                 game.session_log[-1]["director_trigger"] = director_reason
+            # Mark phase trigger used so _should_call_director() doesn't re-fire
+            # every subsequent turn while the act stays in the same finale phase.
+            if director_reason.startswith("phase:") and game.story_blueprint is not None:
+                game.story_blueprint.setdefault("triggered_director_phases", []).append(
+                    director_reason[len("phase:"):]
+                )
         else:
             log(f"[Director] Skipped (no trigger at scene {game.scene_count})")
 
@@ -7487,6 +7516,12 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
         # Store trigger reason in session_log for diagnostics
         if game.session_log:
             game.session_log[-1]["director_trigger"] = director_reason
+        # Mark phase trigger used so _should_call_director() doesn't re-fire
+        # every subsequent turn while the act stays in the same finale phase.
+        if director_reason.startswith("phase:") and game.story_blueprint is not None:
+            game.story_blueprint.setdefault("triggered_director_phases", []).append(
+                director_reason[len("phase:"):]
+            )
     else:
         log(f"[Director] Skipped (no trigger at scene {game.scene_count})")
 
@@ -7932,7 +7967,7 @@ def _restore_from_snapshot(game: GameState, snap: dict) -> None:
     if "clocks" in snap:
         game.clocks = copy.deepcopy(snap["clocks"])
     # Restore blueprint sub-fields that may have mutated during the turn:
-    # revelation marks, act transitions, and story_complete flag.
+    # revelation marks, act transitions, story_complete flag, and phase-Director marks.
     if game.story_blueprint is not None:
         if "bp_revealed" in snap:
             game.story_blueprint["revealed"] = list(snap["bp_revealed"])
@@ -7943,6 +7978,8 @@ def _restore_from_snapshot(game: GameState, snap: dict) -> None:
                 game.story_blueprint["story_complete"] = True
             else:
                 game.story_blueprint.pop("story_complete", None)
+        if "bp_triggered_director_phases" in snap:
+            game.story_blueprint["triggered_director_phases"] = list(snap["bp_triggered_director_phases"])
     # Trim session_log and narration_history back by one entry
     # (the turn being corrected will be re-appended by the re-run)
     if snap.get("session_log_tail") is not None and game.session_log:
@@ -8122,6 +8159,10 @@ def process_correction(client: anthropic.Anthropic, game: GameState,
         if director_reason:
             director_ctx = {"narration": narration, "config": _cfg}
             log(f"[Correction] Director queued (reason: {director_reason})")
+            if director_reason.startswith("phase:") and game.story_blueprint is not None:
+                game.story_blueprint.setdefault("triggered_director_phases", []).append(
+                    director_reason[len("phase:"):]
+                )
 
     log(f"[Correction] Complete: source={source}, rewrite done")
     return game, narration, director_ctx

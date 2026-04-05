@@ -8,7 +8,7 @@
 
 | | |
 |---|---|
-| **Version** | v0.9.88 |
+| **Version** | v0.9.90 |
 | **Codebase** | ~13,600 lines across 5 source files + config |
 | **Stack** | Python 3.11+, NiceGUI, Anthropic SDK (Structured Outputs), reportlab, edge-tts, faster-whisper, wonderwords, stop-words, nameparser, cryptography |
 | **AI Models** | Narrator/Architect: `claude-sonnet-4-6` · Brain/Director/Extractors: `claude-haiku-4-5-20251001` |
@@ -135,12 +135,14 @@ All AI calls receive `config: EngineConfig`. Voice functions receive `config: Vo
 
 ```
 elvira/
-├── elvira.py               — Bot entry point
+├── elvira.py               — Bot entry point and all session logic
 ├── elvira_config.json      — Configuration (style, genre, chapters, logging flags)
 ├── logs/
 │   └── elvira_engine_YYYY-MM-DD.log  — Raw engine log (redirected from rpg_engine logger)
 └── elvira_session.json     — Primary diagnostic output (see below)
 ```
+
+The engine log is redirected to `elvira/logs/` by pre-registering a handler on the `rpg_engine` logger before `engine.py` is imported — this keeps Elvira's output out of the shared project `logs/` directory. Elvira reads the API key from `config.json` at the project root (same file as the main app) — not from an environment variable.
 
 ### Usage
 
@@ -151,49 +153,153 @@ python elvira/elvira.py --turns 30             # override max turns per chapter
 python elvira/elvira.py --config other.json    # custom config
 ```
 
+### Session structure (`run_session()`)
+
+Elvira's main function runs in three sequential phases:
+
+**Phase 1 — Game Setup**: Resolves all config values. In `auto_mode`, calls Haiku once (`decide_auto_setup()`) to freely choose genre/tone/archetype/wishes via `AUTO_SETUP_PROMPT` (JSON-only response). In normal mode, reads parameters from `game` config section. Then calls `start_new_game()` or `load_game()` (when `game.load_existing = true`). When loading an existing save, the last assistant message in `chat_messages` is used as the seed narration for the first turn.
+
+**Phase 2 — Chapter loop**: Outer `for chapter in range(max_chapters)` loop drives multi-chapter runs. Inner turn loop calls the 13-step turn sequence (see below). When a chapter ends with `bp_story_complete = True` and another chapter follows: `generate_epilogue()` → `save_chapter_archive()` → `save_game()` → `start_new_chapter()`. When a chapter ends for any other reason (`max_turns_reached`, `game_over`, error), the outer loop breaks immediately.
+
+**Phase 3 — Wrap-up**: Prints session summary to stdout, writes final save, writes `elvira_session.json`.
+
+### Turn loop (13 steps)
+
+Each turn executes these steps in order:
+
+1. **Bot action** — `ask_claude(persona, context, max_tokens=500)` with the style persona as system prompt and `build_turn_context()` output as user message. Uses `BRAIN_MODEL` (Haiku).
+2. **Engine** — `process_turn(client, game, action, config)` → `(game, narration, roll, burn_info, director_ctx)`.
+3. **Momentum burn** — if `burn_info` is not None and `burn_setting != "never"`: `aggressor` style always burns; all others call `decide_burn_momentum()` (Haiku, max_tokens=10, "yes"/"no"). On burn: `process_momentum_burn()`, replace last `chat_messages` entry, write `turn_record["roll"]["burn_result"]`.
+4. **Director** — `run_deferred_director(client, game, director_ctx)` **called synchronously** — unlike the UI which runs this as an async background task, Elvira blocks until the Director completes. This ensures Director guidance and NPC reflections are always captured in the same save that triggered them.
+5. **State snapshot** — `state_after`: health, spirit, supply, momentum, chaos, scene, location, time_of_day, scene_context, npc count (active+background only), active clock count.
+6. **NPC snapshot** — full state for every active+background NPC: id, name, status, disposition, bond, agenda, instinct, arc, memory_count, last_memory text (100 chars), aliases.
+7. **Clock snapshot** — all clocks including fired: name, clock_type, filled, segments, owner, fired.
+8. **Director guidance** — captured from `game.director_guidance`: narrator_guidance, pacing, arc_notes.
+9. **Engine log** — mirrors `game.session_log[-1]`: rich_summary, move, position, effect, dramatic_question, chaos_interrupt, director_trigger, consequences, clock_events, npc_target, npc_activation. Conditional keys (omitted when empty): `warnings` (engine-level warnings, e.g. unresolved social-move target), `revelation_check` (only when a revelation was pending that turn), `act_transitions` (only when an act transition was recorded that turn).
+10. **Story arc** — current act phase/title/goal/mood + story_complete flag via `_get_current_act(game, bp)`.
+11. **Invariant checks** — `assert_game_state()` verifies: `health` ∈ [0,5], `spirit` ∈ [0,5], `supply` ∈ [0,5], `chaos_factor` ∈ [1,9], `momentum ≤ max_momentum`, `scene_count ≥ 1`, `chapter_number ≥ 1`, `game.npcs` is list, `game.clocks` is list. Violations appended to `session_log["violations"]` and `turn_record["violations"]`.
+12. **Periodic save** — `save_game()` every `save_every_n_turns` turns (default 5). Runs after Director so NPC reflections are included.
+13. **Terminal conditions** — break inner loop on `game.game_over` or `bp_story_complete`.
+
 ### Bot styles
 
-`explorer`, `aggressor`, `dialogist`, `chaosagent`, `balanced` — set via `bot_behavior.style` in config. Personas are in English with "write in narration language" so the bot respects `narration_lang`. `chaosagent` is best for stress-testing edge cases (one-word inputs, very long inputs, unexpected actions).
+`explorer`, `aggressor`, `dialogist`, `chaosagent`, `balanced` — set via `bot_behavior.style` in config. Personas are in English with "write in narration language" so the bot respects `narration_lang`. `chaosagent` is best for stress-testing edge cases (one-word inputs, very long inputs, unexpected actions). The `aggressor` style skips the Haiku burn-decision call and always burns momentum.
 
-### Key config flags
+### What the bot sees each turn (`build_turn_context()`)
 
-| Key | Default | Effect |
-|---|---|---|
-| `session.max_chapters` | `1` | How many chapters to play through including epilogue + transition |
-| `session.clean_before_run` | `false` | Delete old save + archives before starting — ensures clean diagnostic state |
-| `bot_behavior.burn_momentum` | `"auto"` | `"always"` / `"never"` / `"auto"` (Claude decides per roll) |
-| `logging.print_full_narration` | `false` | Print complete narrator text to stdout |
-| `logging.assert_state_invariants` | `true` | Check health/spirit/supply/chaos/momentum bounds after every turn |
+```
+TURN N - Scene N
+
+--- LATEST NARRATION ---
+[full previous narrator response]
+--- END NARRATION ---
+
+CHARACTER : [name]
+Location  : [current_location]
+Time      : [time_of_day]
+
+STATS     : Edge N | Heart N | Iron N | Shadow N | Wits N
+RESOURCES : Health N/5 | Spirit N/5 | Supply N/5 | Momentum N/N
+CHAOS     : N  |  Chapter N
+STORY PHASE : Act N/N - [title] (Scene N-N)   ← only when blueprint exists
+CENTRAL CONFLICT: [first 120 chars]           ← only when blueprint exists
+
+ACTIVE NPCs:
+  - [name] [disposition]
+BACKGROUND NPCs:
+  - [name]
+ACTIVE CLOCKS:
+  - [name]: N/N ticks
+```
+
+### Complete config reference (`elvira_config.json`)
+
+```jsonc
+{
+  "username": "elvira",          // save slot owner — creates users/elvira/ on first run
+
+  "auto_mode": false,            // true → Haiku picks all game parameters freely
+
+  "game": {
+    "load_existing": false,      // true → load save_name instead of creating new game
+    "save_name": "autosave",     // save slot to load (only used when load_existing=true)
+
+    // New-game parameters (ignored when load_existing=true or auto_mode=true):
+    "genre":         "...",      // genre code or free-form string
+    "tone":          "...",      // tone code
+    "archetype":     "...",      // archetype code or "custom"
+    "wishes":        "...",      // 1-2 sentences: desired story moments
+    "content_lines": "",         // content restrictions (passed to engine)
+    "custom_desc":   "..."       // character concept (used when archetype="custom")
+  },
+
+  "session": {
+    "max_chapters":        1,         // chapters to play; each triggers epilogue+transition
+    "max_turns":           15,        // max turns per chapter (overridable via --turns)
+    "narration_lang":      "Deutsch", // narration language passed to EngineConfig
+    "save_every_n_turns":  5,         // periodic save frequency
+    "save_name_output":    "autosave",// save slot for output (can differ from load slot)
+    "clean_before_run":    false      // delete old save + archives before starting
+  },
+
+  "bot_behavior": {
+    "style":          "balanced",     // explorer|aggressor|dialogist|chaosagent|balanced
+    "burn_momentum":  "auto"          // always|never|auto (auto = Haiku decides)
+  },
+
+  "logging": {
+    "log_file":               "elvira_session.json", // output path relative to elvira/
+    "print_full_narration":   false,  // true → full narrator text to stdout
+    "print_roll_details":     true,   // false → suppress [ROLL] lines
+    "assert_state_invariants": true   // false → skip invariant checks (faster runs)
+  }
+}
+```
 
 ### `elvira_session.json` — primary diagnostic file
 
-This is the authoritative analysis artifact. It contains far more than a regular savegame — it is a complete turn-by-turn audit trail of an entire session. Use this for diagnosis; the savegame is only needed if you want to reload and continue play.
+This is the authoritative analysis artifact — a complete turn-by-turn audit trail. Use this for diagnosis; the savegame is only needed to reload and continue play.
 
 **Top-level fields:**
 - `engine_version` — exact version string when the session ran
 - `config` — full elvira_config.json snapshot (reproducibility)
 - `style`, `auto_mode`, `max_chapters`
+- `started_at`, `ended_at`, `total_turns`
 - `character`, `location_start`, `opening_narration`
 - `game_context` — genre, tone, archetype, wishes, all five stats (correctly populated even in auto_mode)
-- `story_blueprint` — the Architect's full narrative plan: structure type, central conflict, antagonist force, thematic thread, all acts with phase/title/goal/mood/scene_range, possible endings
-- `chapters[]` — per-chapter summary: chapter number, started_at_turn, turns_played, ended_reason
-- `violations[]` — all invariant violations across the session
-- `ended_reason` — `story_complete`, `game_over`, `max_turns_reached`, `max_chapters_reached`, `epilogue_error`, `engine_error`, `bot_error`
+- `story_blueprint` — the Architect's full narrative plan: structure_type, central_conflict, antagonist_force, thematic_thread, acts[] (phase/title/goal/mood/scene_range/transition_trigger), possible_endings
+- `chapters[]` — per-chapter summary: chapter, started_at_turn, turns_played, ended_reason
+- `violations[]` — all invariant violations across the session (format: `[TURN N] INVARIANT VIOLATION: ...`)
+- `ended_reason` — one of: `story_complete`, `game_over`, `max_turns_reached`, `max_chapters_reached`, `epilogue_error`, `chapter_transition_error`, `engine_error`, `bot_error`, `complete`
+- `final_state` — character, chapter, location, scene, health, spirit, supply, momentum, chaos, npcs, active_clocks
 
 **Per-turn fields** (`turns[]`):
 - `turn`, `chapter`, `scene`, `location`
 - `action` — what the bot-player typed
 - `narration` — full narrator response (not truncated)
-- `narration_excerpt` — first 300 chars for quick scanning
-- `roll` — stat, **d1** (first action d6), total (min(d1+d2+stat, 10)), c1, c2, result, **match** (bool). Note: `d2` (second action d6) is not stored in the Elvira session JSON — only `d1` and the capped `total` are recorded.
-- `burn_offered`, `burn_taken` — momentum burn decision
-- `director_ran`, `director_error`
-- `state_after` — health, spirit, supply, momentum, chaos, scene, **location**, **time_of_day**, **scene_context**, npc count (active+background only, matches NPC snapshot), active clock count
-- `npcs[]` — snapshot of every active+background NPC: id, name, status, disposition, bond, agenda, instinct, memory_count, last_memory text, aliases
-- `clocks[]` — all clocks (including fired): name, clock_type, filled, segments, owner, fired
-- `director_guidance` — narrator_guidance, pacing, arc_notes (what the Director told the Narrator this turn)
-- `engine_log` — the engine's own session_log entry: rich_summary, move, position, effect, dramatic_question, chaos_interrupt, director_trigger, consequences, clock_events, npc_activation
-- `story_arc` — current act phase/title/goal/mood + story_complete flag. Phase is determined by `_get_current_act(game, bp)`, which mirrors the engine's `get_current_act()`: reads `game.bp_triggered_transitions` first (`len(triggered)` == current act index, each `"act_N"` entry means that act's transition has fired), falls back to `scene_range` only before any transition fires. `story_complete` reads from `game.bp_story_complete` directly (not from the blueprint dict, which may not carry the key after a save/load cycle).
+- `narration_excerpt` — first 300 chars (newlines collapsed) for quick scanning
+- `roll` — stat, **d1** (first action d6), **d2** (second action d6), total (`action_score` = min(d1+d2+stat, 10)), c1, c2, result, match (bool). `burn_result` added when burn was taken (the upgraded result, e.g. `STRONG_HIT`) — `result` keeps the original dice outcome for mechanical accuracy.
+- `burn_offered` — the upgrade result that was available (e.g. `"STRONG_HIT"`), or absent if no burn was possible
+- `burn_taken` — bool; absent if no burn was offered
+- `burn_error` — error string if `process_momentum_burn()` raised
+- `director_ran` — bool; `director_error` present on failure
+- `state_after` — health, spirit, supply, momentum, chaos, scene, location, time_of_day, scene_context, npcs (count of active+background), clocks (count of unfired)
+- `npcs[]` — snapshot of every active+background NPC: id, name, status, disposition, bond, agenda, instinct, arc, memory_count, last_memory (100 chars), aliases
+- `clocks[]` — all clocks including fired: name, clock_type, filled, segments, owner, fired
+- `director_guidance` — narrator_guidance, pacing, arc_notes; absent when Director did not run
+- `engine_log` — mirrors `game.session_log[-1]`: summary (rich_summary or summary), move, position, effect, dramatic_question, chaos_interrupt, director_trigger, consequences[], clock_events[], npc_target, npc_activation. Conditional keys omitted when empty: `warnings` (e.g. unresolved social-move target), `revelation_check` (when a revelation was pending), `act_transitions` (when an act transition fired this turn)
+- `story_arc` — phase, title, goal, mood, story_complete. Phase via `_get_current_act(game, bp)`: reads `bp.triggered_transitions` — `len(triggered)` = current act index; falls back to `scene_range` before any transition fires. `story_complete` from `game.bp_story_complete` directly (not from bp dict, which may lack the key after save/load).
+- `violations[]` — invariant violations for this specific turn
+- `error` — error string if bot or engine raised an unhandled exception this turn
+
+### When to use which file
+
+| File | Use for |
+|---|---|
+| `elvira_session.json` | Primary analysis — everything in one place |
+| `users/elvira/saves/<n>.json` | Reload in the UI to continue play, or as input for further Elvira runs (`load_existing: true`) |
+| `users/elvira/saves/chapters/<n>/` | Full chat history per completed chapter (multi-chapter runs only) |
+| `elvira/logs/elvira_engine_*.log` | Deep engine internals when session.json shows an error and root cause is unclear |
 
 ### Social Moves & Bond Mechanics (v0.9.86)
 
@@ -216,19 +322,7 @@ action_score = min(d1 + d2 + stat, 10)   (two d6s, capped at 10)
 vs. two challenge dice (each d10)
 ```
 
-When the raw sum exceeds 10, the cap applies silently. Log output (since v0.9.84) shows this explicitly as e.g. `4+6+1=11→10(cap)` to prevent the result from looking like a arithmetic error. The UI dice display (`dice.action` i18n key) uses `score_display` which formats the same way.
-
-Elvira logs `d1` (first action d6, range [1,6]) in the roll record — `d2` is **not** stored in the Elvira session JSON, making full roll reconstruction from JSON alone impossible. Use the engine log text lines (`[Roll] ...`) for complete audit trails.
-- `violations[]` — invariant violations for this specific turn
-
-### When to use which file
-
-| File | Use for |
-|---|---|
-| `elvira_session.json` | Primary analysis — everything in one place |
-| `users/elvira/saves/<name>.json` | Reload in the UI to continue play, or as input for further Elvira runs (`load_existing: true`) |
-| `users/elvira/saves/chapters/<name>/` | Full chat history per completed chapter (multi-chapter runs only) |
-| `elvira/logs/elvira_engine_*.log` | Deep engine internals when session.json shows an error and root cause is unclear |
+When the raw sum exceeds 10, the cap applies silently. Log output (since v0.9.84) shows this explicitly as e.g. `4+6+1=11→10(cap)` to prevent the result from looking like an arithmetic error. The UI dice display (`dice.action` i18n key) uses `score_display` which formats the same way.
 
 ---
 
@@ -312,6 +406,8 @@ Returns reason string (`Optional[str]`) or `None`. Reasons: `"miss"`, `"chaos"`,
 
 Phase trigger list: `"climax"`, `"resolution"` (3-act finale), `"ten_twist"` (Kishōtenketsu twist), `"ketsu_resolution"` (Kishōtenketsu finale v0.9.61).
 
+**Phase-trigger deduplication (v0.9.89)**: `phase:` triggers fire at most once per phase per chapter. When `_should_call_director()` would return `phase:X`, it first checks `story_blueprint["triggered_director_phases"]`. If `X` is already listed, the trigger is suppressed and evaluation falls through to the `interval` check. When a `phase:` trigger fires, all three callsites (action path, dialog path, `process_correction()`) immediately append the phase key to `triggered_director_phases`. `_build_turn_snapshot()` captures this list as `bp_triggered_director_phases`; `_restore_from_snapshot()` restores it — so a `##` correction on the trigger turn un-marks the phase, allowing it to re-fire on the corrected turn. Old saves without the key behave correctly: the field defaults to `[]`, and the phase fires once on the next qualifying turn.
+
 **Director Race Condition Guard (v0.9.58)**: `_director_gen` session counter, incremented at each turn start in `process_player_input()`. Background Director task checks twice: (1) before API call — skips if new turn already running; (2) before `save_game()` — prevents overwriting a newer save.
 
 **Director Alias-Awareness (v0.9.46)**: `build_director_prompt()` shows NPC aliases in NPC list (`aka ...`) and in `<reflect>` tags (`aliases="..."` attribute). `DIRECTOR_SYSTEM` instructs: aliases = same person, use primary name consistently.
@@ -324,9 +420,11 @@ Phase trigger list: `"climax"`, `"resolution"` (3-act finale), `"ten_twist"` (Ki
 
 **`_apply_director_guidance()` — Two Agenda/Instinct Paths**:
 - `agenda`/`instinct`: fills **only empty fields** (`needs_profile="true"` NPCs)
-- `updated_agenda`/`updated_instinct` (v0.9.61): **actively overwrites** when non-null — for NPCs whose goals fundamentally changed (defeat, betrayal, revelation). Director prompt explains when to use update vs. leave null.
+- `updated_agenda` (v0.9.61, updated v0.9.90): **actively overwrites** when non-null — for NPCs whose goals fundamentally changed (defeat, betrayal, revelation). Director prompt explains when to use update vs. leave null.
+- `updated_instinct` **removed (v0.9.90)**: was overwritten on nearly every Director call, destroying instinct stability (session analysis: 13 versions in 15 turns for one NPC). Replaced by `updated_arc`. `instinct` field in `npc_reflections` remains for **initial fill only** (`needs_profile="true"` NPCs with empty instinct). After first fill, instinct is never updated — it is the NPC's wiring, not their mood.
+- `updated_arc` **(new v0.9.90)**: narrative trajectory field, expected to evolve each reflection. 1-2 sentences from the NPC's inside perspective — what the story has made of them so far, not what they will do next. Distinct from `instinct` (stable wiring) and `npc_guidance` (ephemeral scene instruction). Exposed in `<reflect>` tag as `arc="..."` attribute. Written to `npc["arc"]` in `_apply_director_guidance()` with 300-char length guard. Shown to Narrator in `<target_npc>` and as attribute on `<activated_npc>` tags.
 
-**Director `instinct` diversity for mid-game NPCs (v0.9.88)**: Mid-game NPCs created via `new_npcs` start with `instinct: ""` and receive their instinct from the Director on the same turn (triggered by `_should_call_director()` reason `"new_npcs"`). The Director task prompt instruction for `instinct` now carries the same full-spectrum diversity mandate as the Opening Extractor — "calm and calculating" named as model default to avoid, concrete profiles enumerated. `updated_instinct` is intentionally left without this constraint — arc-driven changes should follow the story, not a diversity mandate.
+**Director `instinct` diversity for mid-game NPCs (v0.9.88)**: Mid-game NPCs created via `new_npcs` start with `instinct: ""` and receive their instinct from the Director on the same turn (triggered by `_should_call_director()` reason `"new_npcs"`). The Director task prompt instruction for `instinct` carries the full-spectrum diversity mandate — "calm and calculating" named as model default to avoid, concrete profiles enumerated. Note: `updated_instinct` was removed in v0.9.90; instinct is now set once and locked. The diversity mandate applies at initial-fill time via the `instinct` field (only when `needs_profile="true"`).
 
 **act_transitions now logged in session_log (v0.9.88)**: When `_apply_director_guidance()` records a new `act_id` into `story_blueprint["triggered_transitions"]`, it now also appends that act ID to `session_log[-1]["act_transitions"]` (list, via `setdefault`). Back-filled acts (from the back-fill loop) are also logged. Key is omitted entirely on turns without a transition event. Note: `_apply_director_guidance()` runs deferred (called by `run_deferred_director()` from the UI layer after narration rendering) — `session_log[-1]` at that point refers to the turn that triggered the Director, which is correct in normal flow but subject to the same race condition as `rich_summary` if a new turn starts before the Director completes.
 
@@ -488,7 +586,7 @@ Mid-game NPCs without agenda/instinct get `needs_profile="true"` in their `<refl
 
 Players prefix any input with `##` to correct the previous turn. The correction flow analyzes the error type automatically and selects the appropriate repair strategy.
 
-**Turn Snapshot** (`_build_turn_snapshot()`): Created at every `process_turn()` start. Captures all turn-mutable fields: resources, counters, flags, spatial/temporal state, NPCs (deepcopy), clocks (deepcopy), director guidance, scene intensity, and `story_blueprint` sub-fields (`bp_revealed`, `bp_triggered_transitions`, `bp_story_complete`). Both restore paths (`_restore_from_snapshot()` for `##` corrections and `process_momentum_burn()`) use direct key access — snapshot is always authoritative and complete.
+**Turn Snapshot** (`_build_turn_snapshot()`): Created at every `process_turn()` start. Captures all turn-mutable fields: resources, counters, flags, spatial/temporal state, NPCs (deepcopy), clocks (deepcopy), director guidance, scene intensity, and `story_blueprint` sub-fields (`bp_revealed`, `bp_triggered_transitions`, `bp_story_complete`, `bp_triggered_director_phases`). Both restore paths (`_restore_from_snapshot()` for `##` corrections and `process_momentum_burn()`) use direct key access — snapshot is always authoritative and complete.
 
 Since v0.9.62: `last_turn_snapshot` persisted in `SAVE_FIELDS`. `save_game()` converts `snapshot["roll"]` (a `RollResult` dataclass) via `dataclasses.asdict()` before serialization. `load_game()` reconstructs it via `RollResult(**r)`.
 
@@ -580,7 +678,7 @@ Four information layers:
 - **SCENE ENDING (v0.9.86)**: Replaces the old "End scenes OPEN" rule. Each narration must close with a sentence naming the character's immediate unresolved inner state, unanswered perception, or the dominant open condition of the moment — not a plot cliffhanger, not a resolved beat, but an emotional/sensory suspension that gives the next scene's opening something to anchor to. The character is mid-breath, not concluded. Paired with SCENE CONTINUITY: the ending of each scene produces what the opening of the next scene picks up.
 - **Thematic thread**: When `<story_arc>` contains a `thematic_thread`, it surfaces periodically through NPC dialog, reactions, or incidental observations — as a recurring undercurrent, never as lecture.
 - **Act-mood texture** (action + dialog prompts): The current act's mood (from `<story_arc>`) shapes the texture of every outcome — a STRONG_HIT in a desperate phase still carries the surrounding darkness.
-- **PHRASE VARIETY (v0.9.88)**: The pattern `[noun] of a [person], who [relative clause]` (e.g. "with the face of a man who...", "with the calm of a woman who...") is a known Sonnet stylistic habit — savegame analysis confirmed 40 occurrences across 28 scenes in a single session. The rule limits this construction to AT MOST ONCE per response and instructs the Narrator to prefer alternatives: direct gesture, action verb, tone of voice, sensory detail, comparative image.
+- **PHRASE VARIETY (v0.9.88/v0.9.89)**: The pattern `[noun] of a [person], who [relative clause]` — German: `mit dem [abstract noun] eines/einer [noun], die/der [relative clause]` — is a known Sonnet stylistic crutch, appearing almost exclusively in NPC dialog attribution. Rule (v0.9.89 tightening): AVOID as default (last resort, not template); AT MOST ONCE per response; CROSS-RESPONSE: if the pattern appeared in any preceding narration visible in the conversation history (last 3 narrations included), skip it entirely in the current response. "Tonfall" (tone of voice) called out by name as a specific overuse noun with its own per-session limit. Dialog attribution alternatives enumerated: physical action before/after speech, simple adverb, unattributed speech fragment, body-registered reaction.
 - **NPC EMOTIONAL RANGE (v0.9.88)**: Emotional control is one option, not the default. An NPC's `instinct` field may produce volatile, disproportionate, or irrational responses — sudden rage, visible panic, bitter sarcasm, stubborn silence, reckless bravado, tearful collapse, uncontrollable dark humor. The rule explicitly forbids smoothing all NPCs toward composure: "A scene with three NPCs should not have three composed people — let the instinct field determine the emotional register, not a generic assumption of adult self-control."
 
 #### Director Prompt Rules (v0.9.77)
@@ -707,6 +805,7 @@ Chapter archives: `save_chapter_archive()` / `load_chapter_archive()` / `list_ch
 | `importance_accumulator` | int | Triggers reflection when ≥ threshold |
 | `last_reflection_scene` | int | Scene number of last reflection |
 | `last_location` | str | Location string where NPC was last seen (NOT "last_seen_scene") |
+| `arc` | str | Narrative trajectory — what the story has made of this NPC so far (v0.9.90). Set by Director via `updated_arc` on each reflection. Distinct from `instinct` (stable wiring) and `npc_guidance` (ephemeral scene hint). Exposed to Narrator in `<target_npc>` and `<activated_npc>` blocks. Default `""`. |
 
 **Memory entry fields** (each entry in `npc["memory"]`):
 

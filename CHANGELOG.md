@@ -5,6 +5,32 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.90]
+
+### Added
+- **NPC `arc` field — narrative trajectory layer (`engine.py`, `elvira.py`):** Session analysis showed NPC `instinct` being rewritten on nearly every Director call (Chuck: 13 versions in 15 turns; Poncho: 9 versions), collapsing the distinction between stable character wiring and per-scene behavior. Root cause: `updated_instinct` was the only mutable field available, so the Director used it to describe in-scene state instead of deep character change. Fix introduces a two-layer model: `instinct` = fundamental wiring (how this character is built, their default reaction under pressure — stable, set once); `arc` = narrative trajectory (what the story has made of them so far — evolves with each reflection). Specific changes:
+  - `DIRECTOR_OUTPUT_SCHEMA`: `updated_instinct` field removed entirely (was `["string","null"]`, required); `updated_arc` field added (`["string","null"]`, required). `additionalProperties: false` on the schema ensures the model cannot output `updated_instinct` even if prompted. `instinct` (initial-fill for empty profiles, `needs_profile="true"` only) and `agenda`/`updated_agenda` unchanged.
+  - `_apply_director_guidance()`: `updated_instinct` write block removed; `updated_arc` write block added with 300-char length guard (rejects scene-snapshot contamination).
+  - `build_director_prompt()` `<reflect>` block: `instinct` and `arc` now exposed as XML attributes on each `<reflect>` tag, giving the Director a clear anchor to evolve `arc` from without touching `instinct`.
+  - Director task prompt: `updated_instinct` instruction replaced with `updated_arc` semantics (trajectory vs. behavior distinction, good/bad examples). `instinct` field instruction gains explicit lock note: "set ONCE, never updated — it is the NPC's wiring, not their mood."
+  - `_npc_block()` (target NPC for Narrator): `arc` appended as a line below `agenda/instinct`, conditional on non-empty.
+  - `_activated_npcs_block()`: `arc` added as attribute on `<activated_npc>` tags, truncated to 120 chars.
+  - Narrator system prompt: new `NPC IDENTITY LAYERS` rule explains the two-layer model — `instinct` determines HOW an NPC reacts; `arc` informs WHERE they are emotionally; same instinct plays differently depending on arc.
+  - `_ensure_npc_memory_fields()`: `npc.setdefault("arc", "")` added for migration of existing saves.
+  - `elvira.py`: `arc` added to per-turn NPC snapshot dict for session log analysis.
+
+---
+
+## [0.9.89]
+
+### Fixed
+- **`_should_call_director()` phase-trigger deduplication (`engine.py`):** `phase:` triggers (`climax`, `resolution`, `ten_twist`, `ketsu_resolution`) fired on every turn the current act held that phase, with no per-phase deduplication. Session analysis (0.9.88 Elvira run) confirmed `phase:ten_twist` fired 7 times across 15 turns, producing 6 redundant Director calls that each returned `act_transition=false`. Root cause: the check `if act.get("phase") in (...)` had no memory of previous firings. Fix: `_should_call_director()` now reads `story_blueprint["triggered_director_phases"]` before firing; if the phase is already listed, the check is skipped and the interval trigger (or no trigger) applies instead. All three `_should_call_director()` callsites that can produce a `director_ctx` — action path, dialog path, and `process_correction()` — now append the phase key to `triggered_director_phases` immediately after the trigger fires. `_build_turn_snapshot()` captures the list as `bp_triggered_director_phases`; `_restore_from_snapshot()` restores it, so `##` corrections correctly un-mark a phase that was triggered during the corrected turn.
+
+### Changed
+- **`PHRASE VARIETY` rule sharpened (`engine.py`):** Session analysis showed the pattern `mit dem [abstract noun] eines/einer [noun], die/der [relative clause]` appearing in 8 of 15 turns despite the existing ≤1-per-response rule — the model was treating the limit as a quota rather than a deterrent. Three changes: (1) Framing changed from "use AT MOST ONCE" to "AVOID as default — treat as last resort, not a template". (2) Cross-response constraint added: since the Narrator call includes the last 3 narrations as conversation history, the rule now explicitly instructs the model to check preceding narrations and skip the pattern entirely if it appeared there. (3) The abstract noun "Tonfall" (appeared 5× in the session) is called out by name with its own per-session limit. Dialog-attribution alternatives enumerated (physical action, simple adverb, unattributed speech fragment, body-registered reaction) since that is the exclusive context where the pattern fires.
+
+---
+
 ## [0.9.88]
 
 ### Changed
