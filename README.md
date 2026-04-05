@@ -248,7 +248,7 @@ Player types action
 
 **The Metadata Extractor** is a separate Haiku call that runs immediately after the Narrator. It reads the finished prose and extracts all game state changes as structured JSON: NPC memory events, new character introductions, scene context, location and time updates, deaths. This two-step design means the Narrator can focus entirely on storytelling quality, while the Extractor handles the bookkeeping with guaranteed valid JSON (Structured Outputs).
 
-**The Director** runs as a background task after the narration is already displayed and saved — it never adds latency to gameplay. Think of it as the showrunner watching from behind the scenes. It analyses recent scenes, the current story arc, clock fill levels, and NPC states to provide strategic guidance: where should the story go next? Which NPCs have untapped potential? Is the pacing right? When enough has happened to a particular NPC (tracked via an importance accumulator), the Director writes a *reflection* — a higher-level insight about how that character views the player. These reflections surface in future narrator prompts as `insight:` memories, giving NPCs the sense of evolving opinions and growing relationships.
+**The Director** runs as a background task after the narration is already displayed and saved — it never adds latency to gameplay. Think of it as the showrunner watching from behind the scenes. It analyses recent scenes, the current story arc, clock fill levels, and NPC states to provide strategic guidance: where should the story go next? Which NPCs have untapped potential? Is the pacing right? When enough has happened to a particular NPC (tracked via an importance accumulator), the Director writes a *reflection* — a higher-level insight about how that character views the player. Each reflection updates the NPC's `arc` field (their narrative trajectory: where the story has taken them emotionally) while leaving their `instinct` untouched (their fundamental wiring, set once and never changed). The `arc` surfaces in every subsequent narrator prompt, giving NPCs the sense of evolving opinions and growing relationships without losing their core personality.
 
 The Director also generates enriched scene summaries that replace the Brain's bare-bones log entries, giving the narrator richer context about *why* things matter, not just *what* happened. And it evaluates act transition triggers, signalling when the story should advance to the next act based on what actually happened — not a fixed scene count.
 
@@ -261,6 +261,8 @@ The engine guarantees a strict separation: **dice determine outcomes, the AI onl
 ### NPC Memory System
 
 NPCs in EdgeTales don't just exist in the moment — they remember. Every significant interaction is recorded as a memory event with emotional weight and importance scoring. Over time, the Director synthesises accumulated memories into reflections that capture how the NPC's perspective is shifting. A merchant who watched you defend their shop three times will remember that — and their behaviour will change accordingly, not because of a simple friendship counter, but because the AI has a rich history of specific events to draw from.
+
+Each NPC carries two separate identity layers. Their `instinct` is their fundamental psychological wiring — how they react under real pressure, what they do when their strategy fails. It is set once (at introduction or first Director profile) and never changes; it is their character, not their mood. Their `arc` is their narrative trajectory — what the story has made of them so far. The arc evolves with each Director reflection, so the same instinct can read very differently depending on where the character is emotionally. The narrator receives both layers and uses them together: instinct determines *how* an NPC reacts; arc informs *where they are* when they react.
 
 NPCs also form opinions about *each other*. Tell a character that another NPC is trustworthy — or dangerous, or attractive — and that opinion is stored as a tagged memory. When both NPCs are present in the same scene, those inter-NPC memories surface automatically, creating dynamic social situations the player set in motion but no longer controls.
 
@@ -376,6 +378,7 @@ EdgeTales is configured via a single `config.json` file in the project root.
 | `enable_https` | No | `false` | Set to `true` to auto-generate a self-signed TLS certificate |
 | `ssl_certfile` | No | `""` | Path to a custom SSL certificate (PEM). Overrides auto-generation |
 | `ssl_keyfile` | No | `""` | Path to the matching private key |
+| `ssl_extra_sans` | No | `[]` | Additional hostnames or IPs to include in the auto-generated certificate's SAN list (e.g. `["mypi.local", "192.168.1.50"]`). Ignored when using a custom certificate |
 | `storage_secret` | No | `""` | Secret for signing session cookies. Auto-generated if not set |
 | `port` | No | `8080` | Server port |
 | `default_ui_lang` | No | `""` | Default UI language for new users. `"de"` = German, `"en"` = English. Empty = German |
@@ -393,6 +396,7 @@ Every config.json setting can be overridden by environment variables. This is us
 | `ENABLE_HTTPS` | `enable_https` |
 | `SSL_CERTFILE` | `ssl_certfile` |
 | `SSL_KEYFILE` | `ssl_keyfile` |
+| `SSL_EXTRA_SANS` | `ssl_extra_sans` |
 | `STORAGE_SECRET` | `storage_secret` |
 | `PORT` | `port` |
 | `DEFAULT_UI_LANG` | `default_ui_lang` |
