@@ -8,7 +8,7 @@
 
 | | |
 |---|---|
-| **Version** | v0.9.87 |
+| **Version** | v0.9.88 |
 | **Codebase** | ~13,600 lines across 5 source files + config |
 | **Stack** | Python 3.11+, NiceGUI, Anthropic SDK (Structured Outputs), reportlab, edge-tts, faster-whisper, wonderwords, stop-words, nameparser, cryptography |
 | **AI Models** | Narrator/Architect: `claude-sonnet-4-6` · Brain/Director/Extractors: `claude-haiku-4-5-20251001` |
@@ -280,6 +280,7 @@ Player Input
 - `_story_context_block()` surfaces the first pending revelation as `<revelation_ready weight="...">full content</revelation_ready>` — a dedicated XML element with the **full, untruncated** content. Previously was a 80-char-truncated XML attribute, which silently dropped most of the twist.
 - After narration, `call_revelation_check()` (Haiku, `REVELATION_CHECK_SCHEMA`) verifies whether the narrator actually wove the revelation in. Returns `revelation_confirmed: bool + reasoning`. `mark_revelation_used()` is gated on `True`. On extractor failure, defaults `True` (anti-loop safety).
 - `revelation_confirmed` is also forwarded to `_should_call_director()` — Director is only triggered with reason `"revelation"` when the revelation was genuinely confirmed, not merely pending.
+- **`revelation_check` logged in session_log (v0.9.88)**: Both dialog and action paths now write `session_log[-1]["revelation_check"] = {"id": ..., "confirmed": bool}` immediately after the check. Key is omitted entirely on turns where no revelation was pending. After a momentum burn, `process_momentum_burn()` removes this key from `session_log[-1]` — the pre-burn check result is stale (new narration not checked, revelation un-marked by snapshot restore). The revelation remains pending and will be re-checked on the next turn.
 
 **Transition Triggers**: Each act has a `transition_trigger` (narrative condition) alongside `scene_range` (fallback). Director evaluates via `act_transition: true/false`. `get_current_act()` uses dual logic: (1) check `triggered_transitions` from blueprint, (2) fallback to `scene_range`.
 
@@ -324,6 +325,10 @@ Phase trigger list: `"climax"`, `"resolution"` (3-act finale), `"ten_twist"` (Ki
 **`_apply_director_guidance()` — Two Agenda/Instinct Paths**:
 - `agenda`/`instinct`: fills **only empty fields** (`needs_profile="true"` NPCs)
 - `updated_agenda`/`updated_instinct` (v0.9.61): **actively overwrites** when non-null — for NPCs whose goals fundamentally changed (defeat, betrayal, revelation). Director prompt explains when to use update vs. leave null.
+
+**Director `instinct` diversity for mid-game NPCs (v0.9.88)**: Mid-game NPCs created via `new_npcs` start with `instinct: ""` and receive their instinct from the Director on the same turn (triggered by `_should_call_director()` reason `"new_npcs"`). The Director task prompt instruction for `instinct` now carries the same full-spectrum diversity mandate as the Opening Extractor — "calm and calculating" named as model default to avoid, concrete profiles enumerated. `updated_instinct` is intentionally left without this constraint — arc-driven changes should follow the story, not a diversity mandate.
+
+**act_transitions now logged in session_log (v0.9.88)**: When `_apply_director_guidance()` records a new `act_id` into `story_blueprint["triggered_transitions"]`, it now also appends that act ID to `session_log[-1]["act_transitions"]` (list, via `setdefault`). Back-filled acts (from the back-fill loop) are also logged. Key is omitted entirely on turns without a transition event. Note: `_apply_director_guidance()` runs deferred (called by `run_deferred_director()` from the UI layer after narration rendering) — `session_log[-1]` at that point refers to the turn that triggered the Director, which is correct in normal flow but subject to the same race condition as `rich_summary` if a new turn starts before the Director completes.
 
 **Reflection-Truncation Guard & Fallback**: `_apply_director_guidance()` tracks successfully stored reflections in `successfully_reflected_ids` — populated only when a reflection passes all checks (non-empty, ends with sentence-terminating punctuation) and is written to memory. The fallback loop uses this set (not the raw `npc_reflections` list) to identify NPCs whose reflection was rejected or not produced; it resets both `_needs_reflection = False` and `importance_accumulator = 0`. Resetting the accumulator is essential: an accumulator already ≥ `REFLECTION_THRESHOLD` (30) would cause `_apply_memory_updates()` to immediately re-set the flag on the next memory addition, nullifying the fallback. Note: a truncated or empty reflection from the Director counts as "not addressed" — the NPC will re-accumulate and trigger again naturally from new scene observations.
 
@@ -511,6 +516,8 @@ Since v0.9.62: `last_turn_snapshot` persisted in `SAVE_FIELDS`. `save_game()` co
 
 `call_opening_metadata(narration, game, config, known_npcs)` runs in `start_new_game()` and `start_new_chapter()` **instead of** the mid-game extractor. Full schema: agenda, instinct, secrets + clocks, location, scene_context, time_of_day + **deceased_npcs (v0.9.84)**. Own schema `OPENING_METADATA_SCHEMA`. For chapter openings: `known_npcs` parameter ensures only genuinely new NPCs are extracted. Mid-game guard: from scene 2+, `force_npcs=False` — existing NPC list is never overwritten. **`introduced` flag (v0.9.67)**: `_process_game_data()` defaults `introduced=False` (legacy), but `parse_narrator_response()` step 10 — which sets the flag via name-matching — runs *before* `_process_game_data()` when `game.npcs` is still empty. Both `start_new_game()` and `start_new_chapter()` now explicitly set `introduced=True` on all NPCs immediately after `_process_game_data()`, since they were extracted from the narration by definition.
 
+**NPC instinct diversity (v0.9.88)**: The `instinct` instruction in `call_opening_metadata()` now carries an explicit diversity mandate — "calm and calculating" is named as a known model default to avoid. The full spectrum is enumerated with concrete profiles: explosive/confrontational, panicked/losing control, coldly controlled (use sparingly), resigned/fatalistic, bitterly vengeful, recklessly courageous, paranoid, irrationally loyal, stubbornly refuses to adapt, dark humor under pressure, breaks down then recovers. A no-repeat rule prevents two NPCs in the same scene from sharing the same instinct profile. Root cause: savegame analysis of a 28-scene session showed all NPCs exhibiting identical low-arousal/high-dominance emotional profiles (PAD model terminology) — Haiku's unconstrained default.
+
 **Chapter transition NPC merge (v0.9.65, extended v0.9.74)**: `start_new_chapter()` clears `game.npcs = []` then calls `_process_game_data()`, which re-assigns IDs from `npc_1`. The merge loop that re-inserts returning NPCs must **not** use ID-based deduplication — IDs were just recycled and will collide. Two-stage dedup: (1) name-based check — if extractor already created an NPC with the same name, skip; (2) **alias-based check** — if an extractor NPC's name matches any alias of the returning NPC (or vice versa), the returning NPC's history (memories, bond, importance_accumulator, last_reflection_scene, secrets, aliases) is merged into the hollow extractor NPC via `_merge_npc_identity()` rather than creating a duplicate. Alias minimum length 4 chars to exclude spatial/temporal words (e.g. `"westlich"`, `"nächtlich"`) that Brain occasionally appends as parenthetical context. Each truly new returning NPC gets a fresh ID via `_next_npc_id()`. An `id_remap` dict (old→new) is built for both paths (normal insertion and alias-merge) and used in a follow-up pass to rewrite all stale `about_npc` references across every NPC's memories.
 
 **Step 2: Metadata Extractor (Haiku, Structured Outputs) → Game State**
@@ -573,6 +580,8 @@ Four information layers:
 - **SCENE ENDING (v0.9.86)**: Replaces the old "End scenes OPEN" rule. Each narration must close with a sentence naming the character's immediate unresolved inner state, unanswered perception, or the dominant open condition of the moment — not a plot cliffhanger, not a resolved beat, but an emotional/sensory suspension that gives the next scene's opening something to anchor to. The character is mid-breath, not concluded. Paired with SCENE CONTINUITY: the ending of each scene produces what the opening of the next scene picks up.
 - **Thematic thread**: When `<story_arc>` contains a `thematic_thread`, it surfaces periodically through NPC dialog, reactions, or incidental observations — as a recurring undercurrent, never as lecture.
 - **Act-mood texture** (action + dialog prompts): The current act's mood (from `<story_arc>`) shapes the texture of every outcome — a STRONG_HIT in a desperate phase still carries the surrounding darkness.
+- **PHRASE VARIETY (v0.9.88)**: The pattern `[noun] of a [person], who [relative clause]` (e.g. "with the face of a man who...", "with the calm of a woman who...") is a known Sonnet stylistic habit — savegame analysis confirmed 40 occurrences across 28 scenes in a single session. The rule limits this construction to AT MOST ONCE per response and instructs the Narrator to prefer alternatives: direct gesture, action verb, tone of voice, sensory detail, comparative image.
+- **NPC EMOTIONAL RANGE (v0.9.88)**: Emotional control is one option, not the default. An NPC's `instinct` field may produce volatile, disproportionate, or irrational responses — sudden rage, visible panic, bitter sarcasm, stubborn silence, reckless bravado, tearful collapse, uncontrollable dark humor. The rule explicitly forbids smoothing all NPCs toward composure: "A scene with three NPCs should not have three composed people — let the instinct field determine the emotional register, not a generic assumption of adult self-control."
 
 #### Director Prompt Rules (v0.9.77)
 
@@ -659,6 +668,21 @@ Chapter archives: `save_chapter_archive()` / `load_chapter_archive()` / `list_ch
 | `npcs` | list | List of NPC dicts (NOT a dict keyed by name) |
 | `clocks` | list | List of clock dicts |
 | `session_log` | list | Per-scene log entries |
+
+**`session_log` entry fields** (relevant diagnostic keys beyond the basics):
+
+| Key | Present when | Content |
+|---|---|---|
+| `scene` | always | Scene number at time of entry |
+| `move` | always | Brain-determined move name |
+| `result` | always | `"STRONG_HIT"` / `"WEAK_HIT"` / `"MISS"` / `"dialog"` / `"opening"` |
+| `director_trigger` | Director ran | Reason string: `"miss"`, `"new_npcs"`, `"revelation"`, `"reflection:<name>"`, `"interval"`, etc. |
+| `rich_summary` | Director ran | Director's 2–3 sentence scene summary (replaces `summary` in `_recent_events_block`) |
+| `revelation_check` | pending revelation existed | `{"id": "rev_01", "confirmed": bool}` — result of `call_revelation_check()`. Removed by `process_momentum_burn()` if a burn occurs (pre-burn check is stale; new narration not re-checked). |
+| `act_transitions` | act transition recorded | List of `act_id` strings (e.g. `["act_1"]`) — set by `_apply_director_guidance()` when `act_transition=true`. Back-filled acts also included. Key absent on turns without a transition. |
+| `warnings` | error conditions | List of warning strings, e.g. `"social_target_unresolved:'npc_3,npc_4'"` |
+| `clock_events` | always | List of clock tick/fire events (autonomous + roll-triggered) |
+| `npc_activation` | always | Dict of NPC name → activation debug info (score, reasons, status) |
 | `narration_history` | list | Rolling window of recent narrations |
 | `story_blueprint` | dict | Story Architect output |
 | `director_guidance` | dict | Latest Director output |
@@ -864,11 +888,13 @@ Hard-won lessons from real development — read before making changes.
 - `_apply_name_sanitization()` must be called at all four NPC entry points — missing one causes descriptor strings to persist as aliases.
 - `scene_present_ids` must be passed to `_process_deceased_npcs()` — it's the safety gate against false death reports.
 - `_apply_director_guidance()` calls `_apply_name_sanitization(target)` after absorb step in both the organic and correction-flow merge paths — both paths need this.
+- **`_find_npc()` comma-split (v0.9.88)**: Brain occasionally returns `target_npc` as a comma-separated string (e.g. `"npc_3,npc_4"`) when a scene involves multiple NPCs simultaneously. `_find_npc()` now splits on commas and resolves only the first token. An empty-string guard (`if not npc_ref: return None`) follows the split in case of degenerate input like `","`. All ~12 call sites are covered by this single entry-point fix.
 
 ### Persistence
 - **`SAVE_FIELDS`** is the authoritative list — transient fields not in it are silently dropped on save.
 - `RollResult` dataclass in snapshots requires `dataclasses.asdict()` for JSON serialization — `json.dumps` will raise `TypeError`.
 - `load_game()` is the backward-compatibility boundary — new fields must have sane defaults that work with old saves.
+- **`revelation_check` after momentum burn (v0.9.88)**: `process_momentum_burn()` restores blueprint state from the pre-turn snapshot, which un-marks any revelation confirmed during the pre-burn narration. The corresponding `session_log[-1]["revelation_check"]` entry must also be cleared — otherwise the log reports `confirmed: true` while the blueprint treats the revelation as still pending. Fix: `pop("revelation_check", None)` in the `session_log` update block of `process_momentum_burn()`.
 
 ### i18n
 - Every user-visible string through `t(key, lang)` — no hardcoded German or English UI strings in app.py.

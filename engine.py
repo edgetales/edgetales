@@ -62,7 +62,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.87"
+VERSION = "0.9.88"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -1093,6 +1093,13 @@ def _find_npc(game, npc_ref: str) -> Optional[dict]:
     Brain sometimes returns a name string instead of an ID like 'npc_1'."""
     if not npc_ref:
         return None
+    # Brain occasionally returns comma-separated IDs (e.g. "npc_3,npc_4") when a scene
+    # involves multiple NPCs. _find_npc resolves a single target — take the first token.
+    if "," in npc_ref:
+        npc_ref = npc_ref.split(",")[0].strip()
+        log(f"[NPC] _find_npc: multi-value target_npc truncated to first token: '{npc_ref}'")
+        if not npc_ref:
+            return None
     # 1. Try exact ID match
     for n in game.npcs:
         if n.get("id") == npc_ref:
@@ -4110,10 +4117,12 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
 - STRONG_HIT: clean success
 - NPCs act per their disposition and memories
 - Introduce new NAMED characters through action and dialog. An NPC's agenda and instinct are their engine {E['dash']} let those drives shape how they behave, what they pursue, what they avoid. Distinct voice comes from specifics: vocabulary level, sentence rhythm, and what a character deflects or refuses to acknowledge. One physical trait or habitual gesture makes them tangible.
+- NPC EMOTIONAL RANGE: Emotional control is one option, not the default. An NPC's instinct may produce volatile, disproportionate, or irrational responses {E['dash']} sudden rage, visible panic, bitter sarcasm, stubborn silence, reckless bravado, tearful collapse, uncontrollable dark humor. Do NOT smooth all NPCs toward composure. A scene with three NPCs should not have three composed people {E['dash']} let the instinct field determine the emotional register, not a generic assumption of adult self-control.
 - BACKSTORY CANON: If <backstory> is present, treat it as ESTABLISHED HISTORY. People mentioned there (family, friends, rivals) are ALREADY KNOWN to the player character {E['dash']} if they appear, they recognize the player and vice versa. NEVER introduce a backstory character as a stranger or reinterpret established relationships. Backstory events ALREADY HAPPENED {E['dash']} reference them as shared memory, not new plot.
 - Describe only sensory impressions, never player thoughts
 - SENSORY RANGE: Don't default to sight {E['dash']} include at least one non-visual sense per scene (a specific sound, smell, texture, or temperature). These anchor scenes in memory more durably than visual description alone.
 - WORLD PERIPHERY: Once per scene, let one small background detail exist that has nothing to do with the player's immediate action {E['dash']} a sound from another room, a stranger's exchange, a worn object, weather shifting outside. Brief, never explained. It signals the world continues beyond this moment.
+- PHRASE VARIETY: Vary your syntactic constructions. The pattern "[noun] of a [person], who [relative clause]" (e.g. "with the face of a man who...", "with the calm of a woman who...") is a known model habit {E['dash']} use it AT MOST ONCE per response. Prefer alternatives: direct gesture, action verb, tone of voice, sensory detail, comparative image. Repetition of the same sentence skeleton numbs the reader even when the content changes.
 - SCENE CONTINUITY: Begin in motion, not in setup. The player is still in the same body, the same emotional state as the last scene ended. Do NOT open with a fresh establishing paragraph. SAME LOCATION: Open with at most one sentence that holds the atmosphere or emotional residue of the previous scene's end — a sensation still in the air, a silence not yet broken, a weight not yet lifted — before moving into the player's action. This is not recap; it is continuity of experience. It should work as a bridge even if the player's action is very brief or sparse. NEW LOCATION (player has moved — compare <location> with <prev_locations>): Open with one brief sensory impression of the new space (a sound, smell, texture, or quality of light) that grounds the reader without summarizing what came before. The new place simply exists, indifferent to what preceded it; the character carries the previous moment in their body. Example: a character arriving somewhere unfamiliar after a tense moment elsewhere — the ambient sounds and physical details of the new space are registered first, through senses still sharpened by what just happened.
 - EMOTIONAL CARRY-THROUGH: If the previous scene ended with a significant emotional beat (betrayal, loss, triumph, relief, intimacy, shock), open this scene with that weight still present in the character's body language, perception, and attention. Emotional states do not reset between scenes. Show it through sensation and behavior, not through narration — the character did not process it yet.
 - SCENE ENDING: Close each narration with a sentence that names the character's immediate unresolved inner state, unanswered perception, or the dominant open condition of the moment — not a plot cliffhanger, not a resolved beat, but an emotional or sensory suspension that makes the NEXT scene feel anchored rather than arbitrary. The character should be mid-breath, not concluded. No option lists, no suggested actions.
@@ -4430,6 +4439,7 @@ NPCs:
 - NEVER include the player character ({game.player_name}).
 - Each NPC needs: name, a one-sentence PHYSICAL/ROLE description (appearance, occupation — NOT actions), agenda (hidden goal driving their behaviour), instinct (typical reaction when challenged or stressed), secrets (1-2 hidden facts the player doesn't know yet), disposition (neutral|friendly|distrustful|hostile|loyal).
 - For agenda/instinct/secrets: infer plausible values from the narration context, genre ({game.setting_genre}), and tone ({game.setting_tone}). Be specific and narratively interesting.
+- instinct MUST reflect a distinct emotional profile — "calm and calculating" is a known model default, not a personality. Draw from the full spectrum: explosive/confrontational | panicked/losing control | coldly controlled (use sparingly) | resigned/fatalistic | bitterly vengeful | recklessly courageous | paranoid | irrationally loyal | stubbornly refuses to adapt | uses dark humor under pressure | breaks down then recovers. No two NPCs in the same scene should share the same instinct profile.
 - Do NOT extract NPCs that are already in the known NPC list below.
 
 Clocks:
@@ -4978,7 +4988,7 @@ Field instructions:
   - updated_instinct: Same as updated_agenda but for behavioral pattern. null if unchanged.
   - about_npc: If this reflection is primarily about the NPC's feelings toward ANOTHER NPC (not the player), set to that NPC's npc_id. Example: Sophie reflects on her growing attraction to Bruce → about_npc="npc_2". null if the reflection is about the player or general.
   - agenda: NPC's hidden goal (max 8 words, only if needs_profile="true"), null otherwise
-  - instinct: NPC's default behavior pattern (max 8 words, only if needs_profile="true"), null otherwise
+  - instinct: NPC's default behavior pattern (max 8 words, only if needs_profile="true"), null otherwise. MUST reflect a distinct emotional profile — "calm and calculating" is a known model default, not a personality. Draw from the full spectrum: explosive/confrontational | panicked/losing control | coldly controlled (use sparingly) | resigned/fatalistic | bitterly vengeful | recklessly courageous | paranoid | irrationally loyal | stubbornly refuses to adapt | uses dark humor under pressure | breaks down then recovers. Base the choice on the NPC's observations and description.
 - arc_notes: Brief story arc progress observation
 - act_transition: Evaluate whether the current act's <transition_trigger> has been fulfilled by recent events. Set to true if:
   (a) the narrative condition described in the trigger has clearly been met, OR
@@ -5095,6 +5105,8 @@ def _apply_director_guidance(game: GameState, guidance: dict):
                         bp["triggered_transitions"].append(prev_id)
                         log(f"[Director] Back-filled skipped act: {prev_id} "
                             f"(scene {game.scene_count} > range end {sr[1]})")
+                        if game.session_log:
+                            game.session_log[-1].setdefault("act_transitions", []).append(prev_id)
 
             act_id = f"act_{act_idx}"
             if act_id not in bp["triggered_transitions"]:
@@ -5102,7 +5114,9 @@ def _apply_director_guidance(game: GameState, guidance: dict):
                 trigger_text = act.get("transition_trigger", "?")
                 log(f"[Director] Act transition triggered: act {act.get('act_number')} "
                     f"'{act.get('phase')}' → trigger fulfilled: '{trigger_text[:80]}'")
-
+                # Annotate session_log so act transitions are visible in session JSON.
+                if game.session_log:
+                    game.session_log[-1].setdefault("act_transitions", []).append(act_id)
     # Enrich the latest session log entry with Director's summary
     scene_summary = guidance.get("scene_summary", "")
     if scene_summary and game.session_log:
@@ -7332,6 +7346,13 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
                                  "npc_activation": npc_activation_debug})
         if len(game.session_log) > MAX_SESSION_LOG:
             game.session_log = game.session_log[-MAX_SESSION_LOG:]
+        # Log revelation check result so it is visible in session JSON and Elvira output.
+        # Only written when a pending revelation existed — omitted entirely on clean turns.
+        if pending_revs and game.session_log:
+            game.session_log[-1]["revelation_check"] = {
+                "id": pending_revs[0].get("id"),
+                "confirmed": revelation_confirmed,
+            }
         # Autonomous clock ticks — world moves forward independent of player rolls
         auto_clock_events = _tick_autonomous_clocks(game)
         if auto_clock_events and game.session_log:
@@ -7441,6 +7462,13 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
             game.session_log[-1].setdefault("warnings", []).append(
                 f"social_target_unresolved:{_tid!r}"
             )
+    # Log revelation check result so it is visible in session JSON and Elvira output.
+    # Only written when a pending revelation existed — omitted entirely on clean turns.
+    if pending_revs and game.session_log:
+        game.session_log[-1]["revelation_check"] = {
+            "id": pending_revs[0].get("id"),
+            "confirmed": revelation_confirmed,
+        }
     # Autonomous clock ticks — world moves forward independent of player rolls
     auto_clock_events = _tick_autonomous_clocks(game)
     if auto_clock_events and game.session_log:
@@ -8191,6 +8219,12 @@ def process_momentum_burn(client: anthropic.Anthropic, game: GameState,
         game.session_log[-1]["consequences"] = consequences
         game.session_log[-1]["clock_events"] = clock_events
         game.session_log[-1]["chaos_interrupt"] = chaos_interrupt
+        # revelation_check was computed for the pre-burn narration, which is now discarded.
+        # The blueprint restore above already un-marked the revelation (bp_revealed reset to
+        # pre-snapshot). Remove the stale field so the log does not claim a confirmed
+        # revelation that was never checked against the new narration.
+        # The revelation stays pending and will be re-checked on the next turn.
+        game.session_log[-1].pop("revelation_check", None)
 
     # Note: UI layer handles save_game()
     return game, narration

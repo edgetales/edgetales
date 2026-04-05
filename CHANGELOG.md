@@ -5,6 +5,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.88]
+
+### Changed
+- **Narrator PHRASE VARIETY rule added (`engine.py`):** The syntactic pattern "[noun] of a [person], who [relative clause]" (e.g. "with the face of a man who…", "with the calm of a woman who…") is a known Sonnet stylistic habit — savegame analysis confirmed 40 occurrences across 28 scenes in a single session. A new `PHRASE VARIETY` rule in `get_narrator_system()` limits this construction to at most one use per response and instructs the Narrator to prefer alternatives: direct gesture, action verb, tone of voice, sensory detail, comparative image.
+- **Post-review corrections to 0.9.88 fixes (`engine.py`):** A review pass identified three follow-up issues: (1) `PHRASE VARIETY` rule was lost from the output file during the session due to a copy error — re-applied. (2) `_find_npc()` comma-split lacked an empty-string guard: input `","` would produce `""` after split and proceed through all search steps unnecessarily; a `if not npc_ref: return None` guard added after the split. (3) Back-filled act transitions (skipped acts recorded retroactively when a later act triggers) were written to `bp["triggered_transitions"]` and the file logger, but not to `session_log["act_transitions"]` — leaving back-fills invisible in the session JSON. The back-fill loop now also appends each back-filled `act_id` to `session_log[-1]["act_transitions"]`.
+
+
+- **`revelation_check` now logged in `session_log` (`engine.py`):** `call_revelation_check()` determined whether the Narrator wove a pending revelation into the scene, but its result was only used internally (to gate `mark_revelation_used()` and `_should_call_director()`). The outcome was invisible in the session JSON — a confirmed revelation was only detectable indirectly via `director_trigger: "revelation"`, which is absent when the Director doesn't fire. Both the dialog and action paths in `process_turn()` now write `session_log[-1]["revelation_check"] = {"id": ..., "confirmed": bool}` immediately after the check. The key is omitted entirely on turns where no revelation was pending, keeping clean turns diff-free.
+
+- **Act transitions now logged in `session_log` (`engine.py`):** When `_apply_director_guidance()` records a new `act_id` into `story_blueprint["triggered_transitions"]`, it now also annotates `session_log[-1]["act_transitions"]` with that act ID. Uses `setdefault` (list) so multiple transitions in one turn (e.g. back-fill + current) are all captured. Omitted on turns without a transition event.
+- **`_find_npc()` now handles comma-separated `target_npc` values (`engine.py`):** Brain occasionally returns multiple NPC IDs as a comma-separated string (e.g. `"npc_3,npc_4"`) when a scene involves several NPCs simultaneously. `_find_npc()` expects a single reference and returned `None` for the compound string, silently dropping bond/disposition effects on all involved NPCs. Fix: a pre-check at the top of `_find_npc()` splits on commas and resolves only the first token, with a `[NPC]`-prefixed log line for visibility. All ~12 call sites are healed simultaneously without touching any of them individually.
+- **NPC emotional range broadened — `instinct` diversity rules added (`engine.py`):** Savegame analysis and player feedback confirmed that all NPCs across a 28-scene session exhibited the same emotional profile: calm, controlled, and calculating. Root cause: the Opening Metadata Extractor prompt gave no guidance on emotional variance, causing Haiku to fill `instinct` with its training default (low arousal, high dominance — the PAD model quadrant for "cold and composed"). Two fixes: (1) The `instinct` instruction in `call_opening_metadata()` now explicitly names the full emotional spectrum with concrete profiles (explosive/confrontational, panicked/losing control, resigned/fatalistic, bitterly vengeful, recklessly courageous, paranoid, irrationally loyal, dark humor under pressure) and prohibits two NPCs in the same scene from sharing the same instinct profile. (2) A new `NPC EMOTIONAL RANGE` rule in `get_narrator_system()` instructs the Narrator that emotional control is one option, not the default, and that a scene with multiple NPCs should not default to universal composure.
+
+
+
+---
+
 ## [0.9.87]
 
 ### Fixed
