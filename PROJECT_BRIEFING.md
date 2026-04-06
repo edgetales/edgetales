@@ -805,7 +805,7 @@ Chapter archives: `save_chapter_archive()` / `load_chapter_archive()` / `list_ch
 | `importance_accumulator` | int | Triggers reflection when ≥ threshold |
 | `last_reflection_scene` | int | Scene number of last reflection |
 | `last_location` | str | Location string where NPC was last seen (NOT "last_seen_scene") |
-| `arc` | str | Narrative trajectory — what the story has made of this NPC so far (v0.9.90). Set by Director via `updated_arc` on each reflection. Distinct from `instinct` (stable wiring) and `npc_guidance` (ephemeral scene hint). Exposed to Narrator in `<target_npc>` and `<activated_npc>` blocks. Default `""`. |
+| `arc` | str | Narrative trajectory — what the story has made of this NPC so far (v0.9.90). Set by Director via `updated_arc` on each reflection. Distinct from `instinct` (stable wiring) and `npc_guidance` (ephemeral scene hint). Exposed to Narrator in `<target_npc>` and `<activated_npc>` blocks. Default `""`. **(v0.9.92)**: `_process_game_data()` now sets `arc` via `setdefault("arc", "")` on NPC creation — previously lore-status NPCs created mid-game and never memory-updated could be saved without this field. |
 
 **Memory entry fields** (each entry in `npc["memory"]`):
 

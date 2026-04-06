@@ -5806,6 +5806,7 @@ def _process_game_data(game: GameState, data: dict, force_npcs: bool = True):
             nd.setdefault("importance_accumulator", 0)
             nd.setdefault("last_reflection_scene", 0)
             nd.setdefault("last_location", game.current_location or "")
+            nd.setdefault("arc", "")           # Narrative trajectory — set by Director on first reflection
             nd["memory"] = [
                 m if isinstance(m, dict) else {"scene": 0, "event": str(m), "emotional_weight": "neutral"}
                 for m in nd["memory"]
