@@ -6,6 +6,7 @@ config.json
 PROJECT_BRIEFING.md
 start.bat
 install.sh
+ruff.toml
 
 # User Data
 users/

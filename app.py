@@ -544,7 +544,7 @@ def load_user_settings(username: str) -> None:
     s["cb_cfg_weight"] = cfg.get("cb_cfg_weight", 0.5)
     # Voice sample: "" or missing → no-sample label; filename → keep as-is
     saved_sample = cfg.get("cb_voice_sample", "")
-    s["cb_voice_sample"] = get_no_voice_sample_label(lang) if not saved_sample else saved_sample
+    s["cb_voice_sample"] = saved_sample if saved_sample else get_no_voice_sample_label(lang)
     s["narrator_font"] = cfg.get("narrator_font", "highlight")
 
 
@@ -3306,10 +3306,9 @@ async def main_page(client: Client):
                         return
 
                     game = s.get("game"); creation = s.get("creation")
-                    if game is None or creation is not None:
-                        if render_creation_flow(chat_container):
-                            footer.set_value(False)
-                            return
+                    if (game is None or creation is not None) and render_creation_flow(chat_container):
+                        footer.set_value(False)
+                        return
 
         # --- Populate footer (input bar or chapter view bar) ---
         viewing_chapter = s.get("viewing_chapter")

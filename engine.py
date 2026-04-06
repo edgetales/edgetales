@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Edge Tales - Narrative Solo RPG Engine 
+Edge Tales - Narrative Solo RPG Engine
 ========================================
 Core Module (Framework-Independent)
 """
@@ -62,7 +62,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.92"
+VERSION = "0.9.93"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent

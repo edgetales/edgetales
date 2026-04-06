@@ -5,6 +5,24 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.93]
+
+### Changed
+- **Code quality cleanup (`app.py`, `voice.py`) via Ruff static analysis:**
+  - Removed unused variable `s = S()` in `_setup_stt_button()` (dead code from earlier refactor)
+  - Renamed ambiguous parameter `l` → `lbl` in `_pick_genre()`, `_pick_tone()`, `_pick_archetype()` and their lambda call sites
+  - Removed unused import `list_saves` from engine import block (superseded by `list_saves_with_info`)
+  - Removed dead local `import json as _json` inside `render_game_over()`
+  - Removed unused imports `tempfile`, `logging`, and `engine.LANGUAGES` from `voice.py`
+  - Added `from err` to two bare `raise` statements inside `except ImportError` blocks in `voice.py` (B904 — preserves original traceback for debugging)
+  - Replaced two `dict()` constructor calls with dict literals in `voice.py` (C408)
+  - Inverted ternary for `cb_voice_sample` assignment to positive form (SIM212)
+  - Merged two nested `if` statements into single `if` with `and` in page render loop (SIM102)
+  - Replaced if/else block for `final_wav` assembly with ternary operator in `voice.py` (SIM108)
+  - No behavioral changes in any of the above.
+
+---
+
 ## [0.9.92]
 
 ### Changed

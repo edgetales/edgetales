@@ -429,10 +429,7 @@ class ChatterboxBackend:
                 if i < len(chunks) - 1:
                     wav_parts.append(_silence)
 
-            if len(wav_parts) == 1:
-                final_wav = wav_parts[0]
-            else:
-                final_wav = torch.cat(wav_parts, dim=1)
+            final_wav = wav_parts[0] if len(wav_parts) == 1 else torch.cat(wav_parts, dim=1)
 
             del wav_parts
 
