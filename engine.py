@@ -1687,11 +1687,13 @@ def _absorb_duplicate_npc(game, original: dict, merged_name: str):
         break  # Only one duplicate expected
 
 
-def _process_npc_details(game, json_text: str):
+def _process_npc_details(game, json_text: str, world_addition: str = ""):
     """Process NPC detail updates from narrator <npc_details> tag.
     Captures invented surnames, description changes, or other facts the narrator
     established for known NPCs (e.g. giving Randy the surname 'Cho',
     or updating Karla from 'pilot' to 'mechanic' after narrative reveal).
+    world_addition: Brain's world_addition text, used as description fallback when
+    the guard rejects an identity reveal and creates a stub with no description.
 
     Format: [{"npc_id": "npc_3", "full_name": "Randy Cho"}]
     or:     [{"npc_id": "npc_3", "full_name": "Randy Cho", "details": "24, lives in Apt 4B"}]
@@ -1739,9 +1741,66 @@ def _process_npc_details(game, json_text: str):
                 else:
                     # Treat as identity reveal: the extractor provided a valid
                     # npc_id, so we trust the association even when names differ
-                    # completely (e.g. "Der Jungfahrer" → "Finn")
+                    # completely (e.g. "Der Jungfahrer" → "Finn", "Der Fremde" →
+                    # "Heinrich Blum").
+                    #
+                    # Guard: an NPC with existing memories is an established character
+                    # the player already knows.  If the Brain maps such an NPC to a
+                    # completely different name (zero shared words across name + all
+                    # aliases), it has almost certainly confused two distinct characters
+                    # — e.g. background NPC "Theo" (3 memories) mis-mapped to newly
+                    # introduced "Klaus Kinski".
+                    # NPCs with 0 memories are fresh stubs where a rename / reveal is
+                    # plausible regardless of name overlap, so we let those through.
+                    has_memories = bool(npc.get("memory"))
+                    if has_memories:
+                        known_words = set(_normalize_for_match(old_name).split())
+                        for _a in npc.get("aliases", []):
+                            known_words |= set(_normalize_for_match(_a).split())
+                        new_name_words = set(_normalize_for_match(new_name).split())
+                        if not (new_name_words & known_words):
+                            log(f"[NPC] npc_details: REJECTED identity reveal "
+                                f"'{old_name}' → '{new_name}': NPC has memories and "
+                                f"zero word overlap to new name — creating new NPC "
+                                f"stub instead", level="warning")
+                            # Only create stub if _process_new_npcs hasn't already
+                            # added this NPC in the same metadata cycle.
+                            if not _find_npc(game, new_name):
+                                # Use description from npc_details entry if present;
+                                # fall back to world_addition from Brain for new
+                                # characters the Extractor mis-routed here.
+                                stub_desc = d.get("description", "").strip()
+                                if not stub_desc and world_addition:
+                                    # world_addition often reads "Character X, role..."
+                                    # Use it verbatim as a rough description seed.
+                                    stub_desc = world_addition.strip()
+                                    log(f"[NPC] npc_details: using world_addition as "
+                                        f"description fallback for stub '{new_name}'")
+                                _npc_id, _ = _next_npc_id(game)
+                                stub = {
+                                    "id": _npc_id,
+                                    "name": new_name,
+                                    "description": stub_desc,
+                                    "agenda": "", "instinct": "", "secrets": [],
+                                    "disposition": "neutral",
+                                    "bond": 0, "bond_max": 4,
+                                    "status": "active",
+                                    "memory": [],
+                                    "introduced": True,
+                                    "aliases": paren_aliases,
+                                    "importance_accumulator": 0,
+                                    "last_reflection_scene": 0,
+                                    "last_location": game.current_location or "",
+                                }
+                                game.npcs.append(stub)
+                            else:
+                                log(f"[NPC] npc_details: stub skipped — '{new_name}' "
+                                    f"already exists from new_npcs")
+                            continue
+
                     log(f"[NPC] npc_details: treating '{old_name}' → '{new_name}' "
-                        f"as identity reveal (names too different for extension)")
+                        f"as identity reveal "
+                        f"({'has memories, word-overlap confirmed' if has_memories else 'no memories, stub reveal'})")
                     _merge_npc_identity(npc, new_name, game=game)
                     # Check if _process_new_npcs already created a duplicate NPC
                     # with this name earlier in the same metadata cycle
@@ -4319,7 +4378,7 @@ disposition must be ONE of: neutral, friendly, distrustful, hostile, loyal.
 time_update must be ONE of: early_morning, morning, midday, afternoon, evening, late_evening, night, deep_night — or null if no time change.
 location_update: new location name if the character MOVED to a different place, null if they stayed. IMPORTANT: if no movement occurred, always return null — do NOT add city names, qualifiers, or extra words to the existing location. If a move did occur, use the exact place name as it appears in the narration (short and specific, e.g. "Die Kathedrale", not "Die Kathedrale in Lyon").
 npc_renames: for identity REVEALS — when an NPC's true or personal name is established for the first time. Covers: spy unmasked, alias discovered, AND descriptor-named NPCs who receive a real name (e.g. "Die Frau im Wollhut" → "Hanna", "Der unbekannte Mann" → "Klaus", "Die Technikerin" → "Sara Novak"). Use the npc_id of the descriptor NPC from the known list and set new_name to the revealed personal name. NOT for surname additions to an already-named NPC (use npc_details for that).
-npc_details: for newly established facts (surname, role change). full_name if name extended, description if role/situation changed.
+npc_details: for newly established facts about ALREADY KNOWN NPCs only (surname addition, role change). full_name if name extended, description if role/situation changed. NEVER use npc_details to introduce a character who is new to the story — even if they share role similarities with an existing NPC. Characters new to the story always go into new_npcs with a full description.
 new_npcs: ONLY for characters who are PHYSICALLY PRESENT in the scene AND actively interacting (speaking, acting, reacting). They must NOT already be in the known NPC list. NEVER include the player character. NEVER include:
 - Characters who are only MENTIONED in conversation, stories, or memories
 - Deceased persons (people discussed as dead, seen only in photos/flashbacks)
@@ -4561,11 +4620,14 @@ def _resolve_slug_refs(game: GameState, mem_updates: list, fresh_npcs: list):
 
 
 def _apply_narrator_metadata(game: GameState, metadata: dict,
-                              scene_present_ids: set = None):
+                              scene_present_ids: set = None,
+                              world_addition: str = ""):
     """Apply structured metadata from the metadata extractor to game state.
     scene_present_ids: set of NPC IDs that were activated or mentioned in the scene.
     If provided, deceased reports are restricted to present NPCs (prevents
-    false positives from dialog claims like 'Leo ist tot')."""
+    false positives from dialog claims like 'Leo ist tot').
+    world_addition: Brain's world_addition text, threaded to _process_npc_details
+    as a description fallback for stubs created by the identity-reveal guard."""
     # Scene context (always present)
     ctx = metadata.get("scene_context", "").strip()
     if ctx:
@@ -4623,7 +4685,7 @@ def _apply_narrator_metadata(game: GameState, metadata: dict,
                 d["full_name"] = ""
             if d.get("description") is None:
                 d["description"] = ""
-        _process_npc_details(game, json.dumps(details, ensure_ascii=False))
+        _process_npc_details(game, json.dumps(details, ensure_ascii=False), world_addition=world_addition)
 
     # Deceased NPCs — processed before memory updates so status is set first.
     # Note: _apply_memory_updates() intentionally resurrects deceased NPCs when
@@ -7375,7 +7437,8 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
         if game.last_turn_snapshot is not None:
             game.last_turn_snapshot["narration"] = narration
         metadata = call_narrator_metadata(client, narration, game, config)
-        _apply_narrator_metadata(game, metadata, scene_present_ids=_scene_present_ids)
+        _apply_narrator_metadata(game, metadata, scene_present_ids=_scene_present_ids,
+                                  world_addition=brain.get("world_addition", "") or "")
         # Mark first pending revelation as used only if the narrator actually wove it in.
         # Capture the result so the Director knows whether a real revelation occurred.
         revelation_confirmed = False
@@ -7481,7 +7544,8 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
     if game.last_turn_snapshot is not None:
         game.last_turn_snapshot["narration"] = narration
     metadata = call_narrator_metadata(client, narration, game, config)
-    _apply_narrator_metadata(game, metadata, scene_present_ids=_scene_present_ids)
+    _apply_narrator_metadata(game, metadata, scene_present_ids=_scene_present_ids,
+                              world_addition=brain.get("world_addition", "") or "")
     # Update chaos factor based on result
     update_chaos_factor(game, roll.result)
     # Record pacing
@@ -8127,7 +8191,8 @@ def process_correction(client: anthropic.Anthropic, game: GameState,
     # Step 4: Metadata extraction (new NPCs, memories etc. from rewritten scene)
     _scene_present_ids = {n["id"] for n in activated_npcs} | {n["id"] for n in mentioned_npcs}
     metadata = call_narrator_metadata(client, narration, game, _cfg)
-    _apply_narrator_metadata(game, metadata, scene_present_ids=_scene_present_ids)
+    _apply_narrator_metadata(game, metadata, scene_present_ids=_scene_present_ids,
+                              world_addition=brain.get("world_addition", "") or "")
 
     # Step 5: Update session_log / narration_history
     intent = brain.get("player_intent", snap.get("player_input", ""))[:80]
@@ -8284,7 +8349,8 @@ def process_momentum_burn(client: anthropic.Anthropic, game: GameState,
     narration = parse_narrator_response(game, raw)
     metadata = call_narrator_metadata(client, narration, game, config)
     _scene_present_ids = {n["id"] for n in activated_npcs} | {n["id"] for n in mentioned_npcs}
-    _apply_narrator_metadata(game, metadata, scene_present_ids=_scene_present_ids)
+    _apply_narrator_metadata(game, metadata, scene_present_ids=_scene_present_ids,
+                              world_addition=brain_data.get("world_addition", "") or "")
 
     # Update chaos after burn (new result counts)
     update_chaos_factor(game, new_result)
