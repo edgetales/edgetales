@@ -7,6 +7,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.9.93]
 
+### Added
+- **Chat font size slider in Settings**: Players can adjust narrator text size from 0.75× to 1.5× in 0.05 steps. Change applies live via CSS variable `--chat-font-size` without page reload. Value persisted in `settings.json` and restored on next session. All chat elements scale proportionally: narrator text (all three font modes), player input messages, recap messages, scene markers, headings inside chat, momentum burn card, epilogue cards, and game-over card. `correction-badge` and `dice-simple` use `em` units and inherit scaling automatically.
+
 ### Changed
 - **Code quality cleanup (`app.py`, `voice.py`) via Ruff static analysis:**
   - Removed unused variable `s = S()` in `_setup_stt_button()` (dead code from earlier refactor)

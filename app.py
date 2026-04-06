@@ -546,6 +546,7 @@ def load_user_settings(username: str) -> None:
     saved_sample = cfg.get("cb_voice_sample", "")
     s["cb_voice_sample"] = saved_sample if saved_sample else get_no_voice_sample_label(lang)
     s["narrator_font"] = cfg.get("narrator_font", "highlight")
+    s["chat_font_size"] = float(cfg.get("chat_font_size", 1.0))
 
 
 # ---------------------------------------------------------------------------
@@ -1684,6 +1685,17 @@ def render_settings() -> None:
             ui.run_javascript(f"document.body.setAttribute('data-narrator-font', '{code}')")
         font_sel.on("update:model-value", lambda e: _apply_font(e.args))
         ui.separator()
+        # --- Chat font size ---
+        _cur_font_size = s.get("chat_font_size", 1.0)
+        with ui.row().classes("w-full items-center gap-2"):
+            ui.label(t("settings.chat_font_size", lang)).classes("text-sm flex-1")
+            _font_size_label = ui.label(f"{_cur_font_size:.2f}×").classes("text-sm").style("min-width:3rem; text-align:right; color: var(--text-secondary)")
+        font_size_slider = ui.slider(min=0.75, max=1.5, step=0.05, value=_cur_font_size).classes("w-full")
+        def _apply_font_size(val):
+            _font_size_label.set_text(f"{val:.2f}×")
+            ui.run_javascript(f"document.documentElement.style.setProperty('--chat-font-size', '{val:.2f}rem')")
+        font_size_slider.on("update:model-value", lambda e: _apply_font_size(float(e.args)))
+        ui.separator()
         async def save_cfg():
             if not SERVER_API_KEY:
                 s["api_key"]=api_inp.value
@@ -1699,6 +1711,7 @@ def render_settings() -> None:
             new_font = _font_opts.get(font_sel.value, "sans")
             old_font = s.get("narrator_font", "sans")   # lesen VOR dem Überschreiben
             s["narrator_font"]=new_font
+            s["chat_font_size"]=font_size_slider.value
             s["cb_device"]=cb_device_sel.value;s["cb_exaggeration"]=cb_exag_slider.value
             s["cb_cfg_weight"]=cb_cfg_slider.value;s["cb_voice_sample"]=cb_voice_sel.value
             s["whisper_size"]=whisper_map.get(whisper_sel.value, "medium")
@@ -1716,7 +1729,8 @@ def render_settings() -> None:
                          "cb_cfg_weight":cb_cfg_slider.value,"cb_voice_sample":sample_value,
                          "whisper_size":whisper_map.get(whisper_sel.value, "medium"),
                          "sr_chat":sr_chat_sw.value,
-                         "narrator_font":_font_opts.get(font_sel.value, "sans")})
+                         "narrator_font":_font_opts.get(font_sel.value, "sans"),
+                         "chat_font_size":font_size_slider.value})
             save_user_config(username, ucfg)
             # UI language change requires full reload to re-render all labels
             if new_ui_lang != old_ui_lang:
@@ -2712,7 +2726,7 @@ def render_epilogue() -> bool:
 
     # --- Post-epilogue: chapter complete, choose next step ---
     if game.epilogue_shown:
-        with ui.card().classes("w-full p-4").style("background: var(--accent-dim); border: 1px solid var(--accent-border)"):
+        with ui.card().classes("w-full p-4 epilog-card").style("background: var(--accent-dim); border: 1px solid var(--accent-border)"):
             ui.markdown(f"{E['star']} **{t('epilogue.done_title', lang)}**")
             ui.label(t("epilogue.done_text", lang)).classes("text-sm mt-1")
             with ui.row().classes("gap-4 mt-4"):
@@ -2723,7 +2737,7 @@ def render_epilogue() -> bool:
 
     # --- Epilogue offer: story complete but epilogue not yet generated ---
     if bp.get("story_complete") and not game.epilogue_dismissed:
-        with ui.card().classes("w-full p-4").style("background: var(--accent-dim); border: 1px solid var(--accent-border)"):
+        with ui.card().classes("w-full p-4 epilog-card").style("background: var(--accent-dim); border: 1px solid var(--accent-border)"):
             ui.markdown(f"{E['star']} **{t('epilogue.offer_title', lang)}**")
             ui.label(t("epilogue.offer_text", lang)).classes("text-sm mt-1")
             btn_row = ui.row().classes("gap-4 mt-4")
@@ -2787,7 +2801,7 @@ def render_game_over() -> bool:
     ''')
 
     # NiceGUI card — becomes visible once overlay fades (after ~5.2s)
-    with ui.card().classes("w-full p-4").style(
+    with ui.card().classes("w-full p-4 epilog-card").style(
         "background: var(--error-dim); border: 1px solid var(--error-border)"
     ):
         ui.markdown(f"{t('gameover.title', lang)} " + (_sub))
@@ -3170,6 +3184,9 @@ async def main_page(client: Client):
         # Apply saved narrator font preference
         _narrator_font = s.get("narrator_font", "sans")
         ui.run_javascript(f"document.body.setAttribute('data-narrator-font', '{_narrator_font}')")
+        # Apply saved chat font size
+        _chat_font_size = s.get("chat_font_size", 1.0)
+        ui.run_javascript(f"document.documentElement.style.setProperty('--chat-font-size', '{_chat_font_size:.2f}rem')")
         # Re-set skeleton ARIA labels (were set at build time with default language)
         _hamburger_btn.props(f'aria-label="{t("aria.menu_open", _user_lang)}"')
         drawer.props(f'aria-label="{t("aria.sidebar", _user_lang)}"')

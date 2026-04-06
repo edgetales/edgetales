@@ -284,6 +284,7 @@ _STRINGS = {
         "settings.narrator_font_sans": "Serifenlos",
         "settings.narrator_font_serif": "Serifen",
         "settings.narrator_font_highlight": "Visual Effects",
+        "settings.chat_font_size": "Schriftgröße im Chat",
         "settings.save_btn": "Speichern",
         "settings.saved_confirm": "Gespeichert!",
 
@@ -686,6 +687,7 @@ _STRINGS = {
         "settings.narrator_font_sans": "Sans-serif",
         "settings.narrator_font_serif": "Serif",
         "settings.narrator_font_highlight": "Visual Effects",
+        "settings.chat_font_size": "Chat font size",
         "settings.save_btn": "Save",
         "settings.saved_confirm": "Saved!",
 
