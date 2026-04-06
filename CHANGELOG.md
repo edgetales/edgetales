@@ -8,6 +8,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ## [0.9.92]
 
 ### Changed
+- **"Wrap Up Story" button closes sidebar and shows chat loading indicator.** Clicking the button now immediately hides the drawer (via `s["_drawer"]`, stored at drawer creation) so the chat window becomes visible. A `dots` spinner is inserted into the chat as a narrator-style message and the view scrolls to it. The epilogue is then generated async; on reload the existing two-step scroll targets the `✨ Epilog` scene marker as `last_scene_id`. No sidebar spinner. On error, the chat loading element is deleted and a toast is shown — the button remains visible in the sidebar.
+- **Epilogue reload scroll fixed.** `render_epilogue()` returning `True` previously called `_scroll_chat_bottom` and immediately returned, landing the player at the "Kapitel abgeschlossen" card at the very bottom. Now the epilogue branch also runs `_scroll_to_element(last_scene_id)` after the bottom scroll, identical to the main Two-Step-Scroll logic — placing the `✨ Epilog` marker at the top of the viewport so the epilogue text is readable from the start.
 - **Archetype button labels overhauled (`i18n.py`):** Removed all slash-notation (`X / Y`) — each button now shows one clear term. `protector` → "Krieger" (DE) / "Warrior" (EN). `trickster` → "Trickbetrüger" (DE) / "Con Artist" (EN). Internal codes and stat mappings in `engine.py` unchanged.
 - **Genre list overhauled (`i18n.py`):**
   - `horror_mystery` split into two separate genres: `horror` (🌑) and `mystery` (🔮)

@@ -1188,11 +1188,42 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
         # --- Wrap Up Story (re-offer epilogue after dismiss) ---
         _bp = game.story_blueprint or {}
         if _bp.get("story_complete") and game.epilogue_dismissed and not game.epilogue_shown:
-            def wrap_story():
-                game.epilogue_dismissed = False
-                save_game(game, s["current_user"], s["messages"], s.get("active_save", "autosave"))
-                ui.navigate.reload()
-            ui.button(t('actions.wrap_story', lang), on_click=wrap_story, color="primary").props("flat dense").classes("w-full")
+            wrap_row = ui.row().classes("w-full")
+            with wrap_row:
+                async def wrap_story():
+                    # Close sidebar so chat is visible
+                    _drawer = s.get("_drawer")
+                    if _drawer:
+                        _drawer.hide()
+                    # Show loading indicator in chat window
+                    chat_loading_el = None
+                    cc = s.get("_chat_container")
+                    if cc:
+                        with cc:
+                            chat_loading_el = ui.column().classes("chat-msg assistant w-full")
+                            with chat_loading_el:
+                                with ui.row().classes("items-center gap-2"):
+                                    ui.spinner("dots", size="md", color="primary")
+                                    ui.label(t("epilogue.generating", lang)).classes("text-sm").style("color: var(--text-secondary)")
+                        await _scroll_chat_bottom()
+                    try:
+                        game.epilogue_dismissed = False
+                        config = get_engine_config(); username = s["current_user"]
+                        client = anthropic.Anthropic(api_key=s["api_key"])
+                        g, epilogue_text = await asyncio.to_thread(generate_epilogue, client, game, config)
+                        s["game"] = g
+                        s["messages"].append({"scene_marker": f"{E['star']} {t('epilogue.marker', lang)}"})
+                        s["messages"].append({"role": "assistant", "content": epilogue_text})
+                        save_game(g, username, s["messages"], s.get("active_save", "autosave"))
+                        if s.get("tts_enabled", False): s["pending_tts"] = epilogue_text
+                        ui.navigate.reload()
+                    except Exception as e:
+                        game.epilogue_dismissed = True  # Revert on error
+                        if chat_loading_el:
+                            try: chat_loading_el.delete()
+                            except Exception: pass
+                        ui.notify(t("game.error", lang, error=e), type="negative")
+                ui.button(t('actions.wrap_story', lang), on_click=wrap_story, color="primary").props("flat dense").classes("w-full")
         ui.button(f"{E['scroll']} {t('actions.recap', lang)}", on_click=do_recap).props("flat dense").classes("w-full")
         recap_status = ui.label("").classes("text-xs text-center w-full").style("color: var(--text-secondary)")
         recap_status.set_visibility(False)
@@ -2934,6 +2965,7 @@ async def main_page(client: Client):
     # Left drawer (created at page level, hidden initially, populated in main phase)
     with ui.left_drawer(value=False).props(f'width=320 breakpoint=768 aria-label="{t("aria.sidebar", L())}"') as drawer:
         drawer_content = ui.column().classes("w-full")
+    S()["_drawer"] = drawer  # Store for access from sidebar action handlers
 
     # Accessibility: hide main content from screen readers when drawer overlays (mobile < 768px)
     drawer.on('show', lambda: ui.run_javascript('''
@@ -3269,6 +3301,8 @@ async def main_page(client: Client):
                     if render_epilogue():
                         footer.set_value(False)
                         await _scroll_chat_bottom(delay_ms=300)
+                        if last_scene_id:
+                            await _scroll_to_element(last_scene_id)
                         return
 
                     game = s.get("game"); creation = s.get("creation")
