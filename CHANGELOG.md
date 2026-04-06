@@ -7,6 +7,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.9.92]
 
+### Changed
+- **Archetype button labels overhauled (`i18n.py`):** Removed all slash-notation (`X / Y`) — each button now shows one clear term. `protector` → "Krieger" (DE) / "Warrior" (EN). `trickster` → "Trickbetrüger" (DE) / "Con Artist" (EN). Internal codes and stat mappings in `engine.py` unchanged.
+- **Genre list overhauled (`i18n.py`):**
+  - `horror_mystery` split into two separate genres: `horror` (🌑) and `mystery` (🔮)
+  - `historical_roman` renamed to `roman_empire` — display labels "Römisches Reich" (DE) / "Roman Empire" (EN). Eliminates linguistic ambiguity of "roman" in English context
+  - New genre added: `post_apocalyptic` (🌪️ Postapokalypse / Post-Apocalyptic)
+- **Tone codes clarified (`i18n.py`, `engine.py`):**
+  - `serious_balanced` renamed to `grounded_drama` — display labels "Geerdet & Dramatisch" (DE) / "Grounded Drama" (EN). Previous label was too vague for AI interpretation
+  - `tarantino` renamed to `pulp` — display label unchanged (🔥 Pulp). Code now matches the visible button label
+  - `KISHOTENKETSU_PROBABILITY` in `engine.py` updated: `serious_balanced` → `grounded_drama`, `tarantino` → `pulp`
+- **`elvira_config.json`:** `tone` updated from deprecated `horror_mystery` to `mystery`
+
 ### Fixed
 - **New NPCs created via `_process_game_data` missing `arc` field in save file (`engine.py`):** `_process_game_data` sets all standard NPC fields via `setdefault` but did not include `arc`, and did not call `_ensure_npc_memory_fields()`. NPCs that were created mid-game and then became `lore` status (0 memories, never reflected on) would therefore be saved without the `arc` key. At runtime this was harmless — `load_game()` calls `_ensure_npc_memory_fields()` for all NPCs on reload, patching the field. But the on-disk save remained incomplete until the next reload+save cycle. Fix: added `nd.setdefault("arc", "")` to the `_process_game_data` NPC initialisation block, consistent with `_ensure_npc_memory_fields`.
 - **`_process_npc_details` incorrectly merges unrelated NPCs via identity-reveal (`engine.py`):** When the Brain Extractor returned `npc_details` with an existing `npc_id` and a completely different `full_name`, the identity-reveal branch blindly trusted the Brain's mapping and called `_merge_npc_identity()` — even when the old and new names shared zero words (e.g. background NPC "Theo" with 3 memories merged into newly introduced "Klaus Kinski"). Root cause: Brain (Haiku) creatively connected a recurring background character (musician in bar) with a player-introduced character (police officer friend) based on thematic overlap, then returned the wrong `npc_id`. Fix: before merging, the code checks whether the existing NPC has any memories. If it does (= established character the player already knows) and the new name shares zero normalised words with the existing name and all its aliases, the merge is rejected, a fresh NPC stub is created for the new name, and a WARNING is logged. NPCs with 0 memories are fresh stubs where a reveal is plausible regardless of name overlap and pass through unchanged. `npc_renames` is intentionally exempt from this guard — the Narrator is a more reliable source (has seen the full prose) and its renames are always trusted.

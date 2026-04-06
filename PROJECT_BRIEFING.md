@@ -959,6 +959,14 @@ All JSON-delivering AI calls (Brain, Setup Brain, Director, Story Architect, Cha
 | `get_story_phase_labels(lang)` | Story arc phases: `{"setup": "Exposition", ...}` |
 | `translate_consequence(text, lang)` | Consequence keys → target language (word-boundary regex, backward compat) |
 
+**Archetype codes:** `outsider_loner`, `investigator`, `trickster`, `protector`, `hardboiled`, `scholar`, `healer`, `inventor`, `artist` — codes are stable (used as Dict keys in `_ARCHETYPE_PRIMARY_STAT` / `_ARCHETYPE_STAT_DEFAULTS`). Button labels (v0.9.92): single clear terms, no slash notation. `protector` displays as "Krieger"/"Warrior"; `trickster` displays as "Trickbetrüger"/"Con Artist".
+
+**Genre codes (v0.9.92):** `dark_fantasy`, `high_fantasy`, `science_fiction`, `horror`, `mystery`, `steampunk`, `cyberpunk`, `urban_fantasy`, `victorian_crime`, `roman_empire`, `fairy_tale`, `slice_of_life_90s`, `outdoor_survival`, `post_apocalyptic`
+
+**Tone codes (v0.9.92):** `dark_gritty`, `grounded_drama`, `melancholic`, `absurd_grotesque`, `slow_burn_horror`, `cheerful_funny`, `romantic`, `slapstick`, `epic_heroic`, `pulp`, `cozy`, `tragicomic`
+
+Note: `horror_mystery` → split into `horror` + `mystery`; `historical_roman` → `roman_empire`; `serious_balanced` → `grounded_drama`; `tarantino` → `pulp`. Old codes may appear in legacy save files — `get_genre_label()`/`get_tone_label()` will fall back to the raw code string.
+
 ---
 
 ## Known Pitfalls & Anti-Patterns

@@ -2578,13 +2578,13 @@ KISHOTENKETSU_PROBABILITY = {
     "fairy_tale": 0.70,
     # Neutral (40%)
     "tragicomic": 0.40,
-    "serious_balanced": 0.40,
+    "grounded_drama": 0.40,
     "absurd_grotesque": 0.40,
     # 3-Act preferred (15%)
     "dark_gritty": 0.15,
     "epic_heroic": 0.15,
     "slow_burn_horror": 0.15,
-    "tarantino": 0.15,
+    "pulp": 0.15,
     "slapstick": 0.15,
 }
 KISHOTENKETSU_DEFAULT_PROBABILITY = 0.50  # For custom tones and "surprise"
