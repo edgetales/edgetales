@@ -62,7 +62,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.93"
+VERSION = "0.9.94"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -466,10 +466,17 @@ NARRATOR_METADATA_SCHEMA = {
                 "additionalProperties": False,
             },
         },
+        "exited_npc_ids": {
+            # npc_ids of NPCs who physically departed the scene (walked out, left through a
+            # door, were escorted away). Used by the activation system to suppress
+            # phantom-presence re-activation in the immediately following scene.
+            "type": "array",
+            "items": {"type": "string"},
+        },
     },
     "required": ["scene_context", "location_update", "time_update",
                   "memory_updates", "new_npcs", "npc_renames", "npc_details",
-                  "deceased_npcs", "lore_npcs"],
+                  "deceased_npcs", "lore_npcs", "exited_npc_ids"],
     "additionalProperties": False,
 }
 
@@ -2418,6 +2425,7 @@ def _ensure_npc_memory_fields(npc: dict):
     npc.setdefault("last_reflection_scene", 0)
     npc.setdefault("last_location", "")  # Where NPC was last seen (spatial consistency)
     npc.setdefault("arc", "")           # Narrative trajectory — set by Director, evolves each reflection
+    npc.setdefault("absent_until_scene", 0)  # Scene until which activation is suppressed (exit tracking)
     # Migrate existing memories: add importance and type if missing
     for m in npc["memory"]:
         if isinstance(m, dict):
@@ -2515,6 +2523,41 @@ def activate_npcs_for_prompt(game, brain: dict, player_input: str) -> tuple[list
             score += 0.2
             reasons.append("recent")
 
+        # 7. Exit suppression: NPC physically departed the previous scene.
+        # Suppress activation unless the player explicitly references them by name
+        # (in player_input or brain intent — not in session_log summaries which always
+        # contain NPC names and would otherwise cancel the suppression every turn).
+        absent_until = npc.get("absent_until_scene", 0)
+        if absent_until > game.scene_count:
+            # Check for explicit reference in player input + brain intent only.
+            # Name-parts check mirrors step-2 part: logic but uses min-length 4 (not 3)
+            # to avoid common articles/prepositions ("der", "die", "von") clearing the flag.
+            explicit_text = (player_input + " " + (brain.get("player_intent") or "")).lower()
+            # is_target mirrors step-1 scoring: accepts both npc_id AND name string,
+            # because Brain may return either format in the target_npc field.
+            is_target = bool(target_id and (
+                npc.get("id") == target_id
+                or npc_name_lower == target_id.lower()
+            ))
+            explicitly_named = (
+                npc_name_lower in explicit_text
+                or any(len(part) >= 4 and part in explicit_text
+                       for part in npc_name_lower.split())
+                or any(alias.lower() in explicit_text
+                       for alias in npc.get("aliases", []))
+            )
+            if is_target or explicitly_named:
+                # NPC has returned — clear suppression flag
+                npc["absent_until_scene"] = 0
+                reasons.append("returned")
+            else:
+                # Hard suppression: force score to 0 so the NPC is neither
+                # activated nor mentioned. A score > 0 could still land at
+                # NPC_MENTION_THRESHOLD (0.3), putting the NPC in _scene_present_ids
+                # and allowing the Extractor to write phantom memories.
+                score = 0.0
+                reasons.append("suppressed:absent")
+
         # Classify
         if score >= NPC_ACTIVATION_THRESHOLD:
             activated.append(npc)
@@ -2549,6 +2592,9 @@ def activate_npcs_for_prompt(game, brain: dict, player_input: str) -> tuple[list
                 if other in activated or other in mentioned or other in secondary_activated:
                     continue
                 if other.get("status") not in ("active", "background"):
+                    continue
+                # Respect exit suppression — don't resurrect a departed NPC via agenda references
+                if other.get("absent_until_scene", 0) > game.scene_count:
                     continue
                 other_name = other.get("name", "").lower()
                 if other_name and other_name in ref_text.lower():
@@ -4392,7 +4438,8 @@ about_npc (in memory_updates): If the memory is primarily ABOUT ANOTHER NPC (not
 IMPORTANT: If the player directly tells an NPC something about another NPC (gossip, warning, lie, compliment, romantic suggestion), this MUST be captured as its own memory_update with about_npc set — even if other events also happened to that NPC in the same scene. An NPC can have multiple memories per scene if distinctly different events occurred.
 deceased_npcs: list NPCs (by npc_id) whose death is DEPICTED BY THE NARRATOR as it happens. This includes BOTH explicit deaths AND deaths described through physical sensation or literary language. Qualifying descriptions include: they collapse / are killed / stop breathing / go limp / their movement stops and does not resume / resistance ceases permanently / consumed by fire / destroyed / pulled under with no return described / body goes still / the struggle ended. LITERARY deaths count: e.g. "the legs kicked twice and then were still" or "the resistance left them" or "they ceased" — if the prose makes clear that a living character has become permanently non-living, mark them deceased. The death does not need to use the words "dead" or "died" — physical cessation described as final qualifies.
 CRITICAL: Do NOT mark an NPC as deceased if their death is only CLAIMED, REPORTED, or ALLEGED by another character in dialog (e.g. someone says "Leo ist tot"). Dialog claims about death are unreliable information — characters lie, bluff, or may be wrong. Only narrator-described, physically-witnessed deaths count. Never include NPCs already marked [DECEASED].
-lore_npcs: ONLY for named persons established in this scene as historically or narratively significant, but who have NEVER been and are NOT NOW physically present. Use this for dead mentors whose legacy drives the story, missing persons whose fate is central, historical figures whose past actions echo into the present. Rules: (1) They must be NAMED and clearly significant — not just mentioned in passing. (2) Do NOT use for corpses or physically present characters — use new_npcs for those, even if dead. (3) Do NOT include NPCs already marked [LORE] or any other marker in the known_npcs list — they are already tracked. (4) Only add when the narration establishes them as relevant to the ongoing story. NPCs marked [LORE] in known_npcs can receive memory_updates using their npc_id."""
+lore_npcs: ONLY for named persons established in this scene as historically or narratively significant, but who have NEVER been and are NOT NOW physically present. Use this for dead mentors whose legacy drives the story, missing persons whose fate is central, historical figures whose past actions echo into the present. Rules: (1) They must be NAMED and clearly significant — not just mentioned in passing. (2) Do NOT use for corpses or physically present characters — use new_npcs for those, even if dead. (3) Do NOT include NPCs already marked [LORE] or any other marker in the known_npcs list — they are already tracked. (4) Only add when the narration establishes them as relevant to the ongoing story. NPCs marked [LORE] in known_npcs can receive memory_updates using their npc_id.
+exited_npc_ids: list the npc_id of each NPC whose PHYSICAL DEPARTURE from the scene was explicitly described in this narration — they walked out, left through a door, were escorted away, said goodbye and left. Use their npc_id from the known_npcs list. Do NOT include: NPCs who are merely mentioned or talked about; NPCs who were never present; NPCs who only paused at a door but the narration ends with them still present. Empty list if no explicit departures occurred."""
 
     prompt = f"""<narration>{narration}</narration>
 <player_character>{html.escape(game.player_name)}</player_character>
@@ -4417,13 +4464,14 @@ Extract all metadata from the narration above. Remember: {html.escape(game.playe
             f"{len(metadata.get('new_npcs', []))} new NPCs, "
             f"{len(metadata.get('lore_npcs', []))} lore figures, "
             f"{len(metadata.get('deceased_npcs', []))} deceased, "
+            f"{len(metadata.get('exited_npc_ids', []))} exited, "
             f"loc={metadata.get('location_update')}, time={metadata.get('time_update')}")
         return metadata
     except Exception as e:
         log(f"[Metadata] Extraction failed: {e}", level="warning")
         return {"scene_context": "", "location_update": None, "time_update": None,
                 "memory_updates": [], "new_npcs": [], "npc_renames": [], "npc_details": [],
-                "deceased_npcs": [], "lore_npcs": []}
+                "deceased_npcs": [], "lore_npcs": [], "exited_npc_ids": []}
 
 
 def call_revelation_check(client: anthropic.Anthropic, narration: str,
@@ -4693,6 +4741,17 @@ def _apply_narrator_metadata(game: GameState, metadata: dict,
     deceased = metadata.get("deceased_npcs", [])
     if deceased:
         _process_deceased_npcs(game, deceased, scene_present_ids=scene_present_ids)
+
+    # Exit tracking: mark NPCs who physically departed the scene as suppressed for
+    # the next scene. activate_npcs_for_prompt() will skip 'recent' re-activation
+    # for these NPCs unless the player explicitly references them.
+    exited_ids = metadata.get("exited_npc_ids", [])
+    for npc_id in exited_ids:
+        npc = _find_npc(game, npc_id)
+        if npc and npc.get("status") in ("active", "background"):
+            npc["absent_until_scene"] = game.scene_count + 1
+            log(f"[Metadata] NPC '{npc['name']}' exited scene — "
+                f"activation suppressed until scene {npc['absent_until_scene']}")
 
     # Memory updates (mem_updates was already read above for slug resolution;
     # same list reference — _resolve_slug_refs may have patched npc_ids in-place)
@@ -5807,6 +5866,7 @@ def _process_game_data(game: GameState, data: dict, force_npcs: bool = True):
             nd.setdefault("last_reflection_scene", 0)
             nd.setdefault("last_location", game.current_location or "")
             nd.setdefault("arc", "")           # Narrative trajectory — set by Director on first reflection
+            nd.setdefault("absent_until_scene", 0)  # Exit suppression — always 0 for opening NPCs
             nd["memory"] = [
                 m if isinstance(m, dict) else {"scene": 0, "event": str(m), "emotional_weight": "neutral"}
                 for m in nd["memory"]
@@ -6342,6 +6402,9 @@ def load_game(username: str, name: str = "autosave") -> tuple[Optional[GameState
     # Clean up legacy 'last_seen' field (replaced by 'last_location' in v0.9.14+)
     for npc in game.npcs:
         npc.pop("last_seen", None)
+    # Backward compatibility: older saves don't have 'absent_until_scene' field
+    for npc in game.npcs:
+        npc.setdefault("absent_until_scene", 0)
     # Repair: generate seed memory for NPCs that have none (older saves, data loss)
     for npc in game.npcs:
         if (npc.get("status") in ("active", "background")
@@ -7164,6 +7227,12 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
     game.time_of_day = ""      # Reset -- new chapter, new time context
     game.location_history = []  # Reset -- new chapter, fresh location tracking
     game.director_guidance = {}  # Reset -- old pacing/guidance shouldn't carry over
+
+    # Reset exit-suppression flags: scene_count resets to 1 at chapter start, so any
+    # absent_until_scene value from the previous chapter (e.g. 21) would be > 1..20
+    # throughout the entire new chapter — permanently suppressing NPCs. Clear all flags.
+    for npc in game.npcs:
+        npc["absent_until_scene"] = 0
 
     # Retire dead or irrelevant NPCs to background before new chapter
     for npc in game.npcs:

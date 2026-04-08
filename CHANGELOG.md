@@ -5,6 +5,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [0.9.94]
+
+### Added
+- **NPC exit tracking — `absent_until_scene` field + Extractor `exited_npc_ids`**: Fixes phantom-presence inconsistency where NPCs who physically departed a scene were re-injected into the Narrator prompt the next scene via the `recent` activation bonus, causing them to reappear without narrative justification. New flow: (1) Metadata Extractor reports `exited_npc_ids` — list of `npc_id`s whose physical departure was described in the narration (walked out, said goodbye and left, escorted away). (2) `_apply_narrator_metadata()` sets `npc["absent_until_scene"] = scene_count + 1` for each exited NPC. (3) `activate_npcs_for_prompt()` applies **hard score = 0** when `absent_until_scene > scene_count`, ensuring the NPC is fully silent — neither activated nor mentioned, and excluded from `_scene_present_ids` (preventing phantom memory writes by the Extractor). Suppression is cleared when the player explicitly references the NPC by name or name-part in their input, or Brain sets them as `target_npc` — both check `player_input + brain.player_intent` only, not session_log summaries. Name-part matching (e.g. "Bernhard" matches "Bernhard Kirchl") mirrors the existing `part:` scoring logic. `start_new_chapter()` resets `absent_until_scene = 0` for all NPCs — without this, a chapter-1 exit value of e.g. 21 would suppress the NPC throughout all of chapter 2 (scene_count restarts at 1). New field `absent_until_scene` (int, default 0) added to `_ensure_npc_memory_fields()`, `_process_game_data()`, and backward-compat `setdefault` in `load_game()`. `NARRATOR_METADATA_SCHEMA` extended with `exited_npc_ids` array field (required). Extractor fallback return and log line updated.
+
+---
+
 ## [0.9.93]
 
 ### Added

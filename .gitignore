@@ -7,6 +7,7 @@ PROJECT_BRIEFING.md
 start.bat
 install.sh
 ruff.toml
+coopgm.md
 
 # User Data
 users/

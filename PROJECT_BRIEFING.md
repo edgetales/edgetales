@@ -8,7 +8,7 @@
 
 | | |
 |---|---|
-| **Version** | v0.9.91 |
+| **Version** | v0.9.94 |
 | **Codebase** | ~13,600 lines across 5 source files + config |
 | **Stack** | Python 3.11+, NiceGUI, Anthropic SDK (Structured Outputs), reportlab, edge-tts, faster-whisper, wonderwords, stop-words, nameparser, cryptography |
 | **AI Models** | Narrator/Architect: `claude-sonnet-4-6` · Brain/Director/Extractors: `claude-haiku-4-5-20251001` |
@@ -490,6 +490,8 @@ Both paths set `last_location = game.current_location`. Updated in `_apply_memor
 
 Every NPC has `last_location` (string, default `""`). Set on creation, updated in `_apply_memory_updates()` — **only for NPCs in `scene_present_ids`** (physically activated) or `pre_turn_lore_ids` (lore→active transitions). NPCs receiving memory updates without physical presence keep their existing `last_location`. Prompt builders inject spatial hints when NPC location differs from player location: `last_seen="..."` (activated NPCs) and `[at:Location]` (known NPCs). **SPATIAL CONSISTENCY** rule in Narrator prompt: NPCs at other locations cannot physically interact — they must first plausibly travel to the player.
 
+**Exit tracking (`absent_until_scene`, v0.9.94)**: Complements `last_location` for scenes where the player doesn't move but an NPC departs. The Metadata Extractor reports `exited_npc_ids` (array of `npc_id` strings) for NPCs whose physical departure was described in the narration. `_apply_narrator_metadata()` sets `npc["absent_until_scene"] = scene_count + 1`. `activate_npcs_for_prompt()` checks this field: if `absent_until_scene > scene_count` (activation runs before `scene_count++`, so the check fires correctly for exactly the one scene after the exit) and the NPC is not explicitly referenced in player input or set as `target_npc` by Brain, score is forced to 0 — suppressing `recent`+`part:name` co-activation that previously caused phantom-presence. Explicit reference (full name or name-part) clears the flag immediately. `start_new_chapter()` resets `absent_until_scene = 0` for all NPCs — required because `scene_count` restarts at 1, which would otherwise make old chapter-1 values permanently suppress NPCs in chapter 2.
+
 **Fuzzy location match** (`_locations_match()`, v0.9.61): multi-word uses word-set-subset after stopword filtering; single-word uses prefix check. Applied in `_description_match_existing_npc()`, `_activated_npcs_string()`, `_known_npcs_string()`, `update_location()`.
 
 #### NPC Name Sanitization
@@ -730,7 +732,6 @@ Implemented via `custom_head.html` + server-side Python in `app.py`:
 - **Chaos ambient glow**: `.et-chaos` class triggers `chaos-interrupt-pulse` keyframe (one-shot red box-shadow flash, 3.5s, v0.9.62) on `msg_col` for any chaos interrupt. Separate `data-chaos-high` attribute for ambient glow at `chaos >= 7`.
 - **Dialog highlight**: Quoted speech wrapped in `***bold-italic***` Markdown by `_highlight_dialog()` — 7 quote-style variants (DE standard `„"`, EN curly `""`, guillemets `«»`/`»«`, straight ASCII `"`, EN single curly `''`, French single `‹›`). Quote characters placed **outside** `***` delimiters (`»***content***«`) — guillemets and curly quotes are Unicode punctuation (Ps/Pe), placing them inside breaks CommonMark left-flanking detection. Both guillemet directions in a single combined regex pass. CSS on `em strong`: `margin-left: -0.5em` covers the opening quote; `padding-right: 0.75em` covers the closing quote — both visually inside the marker box without any HTML injection.
 - **Narrator quote style**: `get_narrator_system()` injects a language-specific `DIALOG QUOTES` rule. German: `„Text."` (U+201E/U+201C, lower-9 open, upper-6 close). English: `"Text."` (U+201C/U+201D). Guillemets and straight ASCII `"` explicitly forbidden. Prevents model drift to ASCII fallback quotes which fail `_highlight_dialog` matching.
-- **Chat font size**: CSS variable `--chat-font-size` (default `1rem`) controls font size across all chat elements: `.chat-msg.assistant` (all three narrator-font modes), `.chat-msg.user`, `.chat-msg.recap`, `.scene-marker` (`calc * 0.85`), `.chat-msg h1/h2/h3` (`calc * 1.1`), `.burn-card`, `.epilog-card` (used on both epilogue cards and game-over card). Adjustable via Settings slider (0.75×–1.50×, step 0.05). Applied on page load via `ui.run_javascript`; persisted as `chat_font_size` (float) in `settings.json`. `correction-badge` and `dice-simple` use `em` units — inherit automatically.
 
 ---
 
@@ -807,6 +808,7 @@ Chapter archives: `save_chapter_archive()` / `load_chapter_archive()` / `list_ch
 | `last_reflection_scene` | int | Scene number of last reflection |
 | `last_location` | str | Location string where NPC was last seen (NOT "last_seen_scene") |
 | `arc` | str | Narrative trajectory — what the story has made of this NPC so far (v0.9.90). Set by Director via `updated_arc` on each reflection. Distinct from `instinct` (stable wiring) and `npc_guidance` (ephemeral scene hint). Exposed to Narrator in `<target_npc>` and `<activated_npc>` blocks. Default `""`. **(v0.9.92)**: `_process_game_data()` now sets `arc` via `setdefault("arc", "")` on NPC creation — previously lore-status NPCs created mid-game and never memory-updated could be saved without this field. |
+| `absent_until_scene` | int | Exit suppression gate (v0.9.93). Set to `scene_count + 1` by `_apply_narrator_metadata()` when Extractor reports the NPC in `exited_npc_ids`. While `absent_until_scene > scene_count`, `activate_npcs_for_prompt()` applies a −0.5 score penalty, driving the NPC below both activation thresholds. Cleared to 0 when the player explicitly names the NPC in their input or Brain sets them as `target_npc`. Default 0. |
 
 **Memory entry fields** (each entry in `npc["memory"]`):
 
