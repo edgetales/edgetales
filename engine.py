@@ -62,7 +62,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.94"
+VERSION = "0.9.96"
 BRAIN_MODEL = "claude-haiku-4-5-20251001"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -126,6 +126,8 @@ _ARCHETYPE_STAT_DEFAULTS: dict[str, dict] = {
 }
 
 MAX_ACTIVE_NPCS = 12               # Soft limit; excess NPCs get retired
+MAX_ACTIVE_CLOCKS = 6              # Hard cap; Director cannot add clocks beyond this
+NPC_STALE_SCENES = 8               # Scenes without any memory update before retirement-eligible
 MAX_NPC_MEMORY_ENTRIES = 25        # Per NPC (total: observations + reflections)
 MAX_NPC_OBSERVATIONS = 15          # Max observation memories per NPC
 MAX_NPC_REFLECTIONS = 8            # Max reflection memories per NPC
@@ -136,7 +138,7 @@ REFLECTION_THRESHOLD = 30          # Importance accumulator threshold for reflec
 MAX_ACTIVATED_NPCS = 4             # Max NPCs with full context in narrator prompt
 NPC_ACTIVATION_THRESHOLD = 0.7     # Minimum score for full NPC activation
 NPC_MENTION_THRESHOLD = 0.3        # Minimum score for NPC name mention
-DIRECTOR_INTERVAL = 3              # Call director every N scenes (when no trigger)
+DIRECTOR_INTERVAL = 2              # Call director every N scenes (when no trigger)
 MEMORY_RECENCY_DECAY = 0.92        # Exponential decay factor for memory recency
 AUTONOMOUS_CLOCK_TICK_CHANCE = 0.20  # Per-scene chance each threat clock ticks autonomously
 WEAK_HIT_CLOCK_TICK_CHANCE  = 0.50  # Chance a threat clock ticks on WEAK_HIT + risky position
@@ -287,18 +289,47 @@ DIRECTOR_OUTPUT_SCHEMA = {
                     "updated_arc":         {"type": ["string", "null"]},
                     "agenda":              {"type": ["string", "null"]},
                     "instinct":            {"type": ["string", "null"]},
+                    # Organic disposition shift driven by accumulated story development.
+                    # "improve": one step toward loyal (hostile→distrustful→neutral→friendly→loyal)
+                    # "worsen":  one step toward hostile
+                    # null: no change (default — shifts are rare, not every reflection)
+                    "disposition_shift":   {"type": ["string", "null"]},
                 },
                 "required": ["npc_id", "reflection", "tone", "tone_key",
                              "about_npc", "updated_description", "updated_agenda",
-                             "updated_arc", "agenda", "instinct"],
+                             "updated_arc", "agenda", "instinct",
+                             "disposition_shift"],
                 "additionalProperties": False,
             },
         },
         "arc_notes": {"type": "string"},
         "act_transition": {"type": "boolean"},
+        "new_clocks": {
+            # Director-proposed threat clocks for genuinely new mid-game dangers.
+            # Only populated when a concrete new threat has emerged that no existing
+            # clock already tracks. Empty array is the default; clock spam is avoided
+            # by the strict instruction in build_director_prompt.
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name":                {"type": "string"},
+                    "clock_type":          {"type": "string",
+                                           "enum": ["threat", "scheme"]},
+                    "segments":            {"type": "integer"},
+                    "filled":              {"type": "integer"},
+                    "trigger_description": {"type": "string"},
+                    "owner":               {"type": "string"},
+                },
+                "required": ["name", "clock_type", "segments", "filled",
+                             "trigger_description", "owner"],
+                "additionalProperties": False,
+            },
+        },
     },
     "required": ["scene_summary", "narrator_guidance", "npc_guidance",
-                  "pacing", "npc_reflections", "arc_notes", "act_transition"],
+                  "pacing", "npc_reflections", "arc_notes", "act_transition",
+                  "new_clocks"],
     "additionalProperties": False,
 }
 
@@ -342,6 +373,7 @@ STORY_ARCHITECT_OUTPUT_SCHEMA = {
         },
         "possible_endings": {
             "type": "array",
+            "minItems": 1,
             "items": {
                 "type": "object",
                 "properties": {
@@ -388,7 +420,7 @@ CHAPTER_SUMMARY_OUTPUT_SCHEMA = {
 NARRATOR_METADATA_SCHEMA = {
     "type": "object",
     "properties": {
-        "scene_context": {"type": "string"},
+        "scene_context": {"type": "string", "minLength": 1},
         "location_update": {"type": ["string", "null"]},
         "time_update": {"type": ["string", "null"]},
         "memory_updates": {
@@ -400,8 +432,14 @@ NARRATOR_METADATA_SCHEMA = {
                     "event":            {"type": "string"},
                     "emotional_weight": {"type": "string"},
                     "about_npc":        {"type": ["string", "null"]},
+                    # absent=true: NPC is NOT physically present but was explicitly
+                    # named in the narration with narratively significant off-screen
+                    # development (e.g. confirmed transported, known to be in danger).
+                    # Produces a low-importance "mention" memory; does not reactivate
+                    # background NPCs or update last_location.
+                    "absent":           {"type": ["boolean", "null"]},
                 },
-                "required": ["npc_id", "event", "emotional_weight", "about_npc"],
+                "required": ["npc_id", "event", "emotional_weight", "about_npc", "absent"],
                 "additionalProperties": False,
             },
         },
@@ -413,6 +451,7 @@ NARRATOR_METADATA_SCHEMA = {
                     "name":        {"type": "string"},
                     "description": {"type": "string"},
                     "disposition": {"type": "string"},
+                    "deceased":    {"type": "boolean"},
                 },
                 "required": ["name", "description", "disposition"],
                 "additionalProperties": False,
@@ -543,7 +582,7 @@ OPENING_METADATA_SCHEMA = {
             },
         },
         "location":      {"type": "string"},
-        "scene_context":  {"type": "string"},
+        "scene_context":  {"type": "string", "minLength": 1},
         "time_of_day":    {"type": ["string", "null"]},
         "deceased_npcs": {
             "type": "array",
@@ -1121,6 +1160,31 @@ def _find_npc(game, npc_ref: str) -> Optional[dict]:
         for alias in n.get("aliases", []):
             if _normalize_for_match(alias) == ref_norm:
                 return n
+    # 3b. Title-aware core match: finds "Eva" when stored as "Dr. Eva", and vice versa.
+    #     Strips _NAME_TITLES from both sides and compares the remaining name cores.
+    #     Only fires when there is exactly ONE unambiguous match — if two NPCs share
+    #     the same untitled core (e.g. two different "Smith"s with different titles),
+    #     falls through to the substring check to avoid false positives.
+    ref_core = " ".join(w for w in ref_norm.split() if w.rstrip(".") not in _NAME_TITLES)
+    if ref_core:
+        title_matches = []
+        for n in game.npcs:
+            name_norm = _normalize_for_match(n.get("name", ""))
+            name_core = " ".join(w for w in name_norm.split() if w.rstrip(".") not in _NAME_TITLES)
+            if name_core and name_core == ref_core and ref_norm != name_norm:
+                title_matches.append(n)
+                continue
+            for alias in n.get("aliases", []):
+                alias_norm = _normalize_for_match(alias)
+                alias_core = " ".join(
+                    w for w in alias_norm.split() if w.rstrip(".") not in _NAME_TITLES
+                )
+                if alias_core and alias_core == ref_core and ref_norm != alias_norm:
+                    title_matches.append(n)
+                    break
+        if len(title_matches) == 1:
+            log(f"[NPC] Title-aware match: '{npc_ref}' → '{title_matches[0]['name']}'")
+            return title_matches[0]
     # 4. Substring fallback — ref is part of name or name is part of ref
     #    (handles "Krahe" matching "Hauptmann Krahe" and vice versa)
     #    v0.9.29: raised from 4→5 chars, title-only references rejected
@@ -1538,6 +1602,49 @@ def _description_match_existing_npc(game, new_desc: str, new_name_norm: str) -> 
     return best_match
 
 
+def _is_descriptor_name(name: str) -> bool:
+    """Return True if 'name' is a descriptor/placeholder rather than a proper name.
+    Descriptors start with a definite/indefinite article or a generic unknown-marker.
+    These NPCs are placeholders awaiting a real identity reveal, so rename guards
+    should not block them.
+    Examples that return True:  "The Stranger", "A Hooded Figure", "Unknown Man"
+    Examples that return False: "John Hartley", "Captain Reade", "Prita Vasudeva"
+    """
+    if not name:
+        return False
+    first = name.strip().split()[0].lower().rstrip(".,")
+    return first in {
+        # English articles / markers
+        "the", "a", "an", "unknown", "unidentified",
+        # German articles (all cases)
+        "der", "die", "das", "des", "dem", "den",
+        "ein", "eine", "eines", "einem", "einen",
+        # French / Spanish (cover multilingual campaigns)
+        "le", "la", "les", "un", "une", "el", "los", "las",
+    }
+
+
+def _is_title_only_difference(old_norm: str, new_norm: str) -> bool:
+    """Return True if old_norm and new_norm share an identical non-title core —
+    i.e. they differ only by title/honorific words such as Dr., Prof., Captain.
+    Uses the engine-wide _NAME_TITLES set, which covers academic, military, nobility,
+    and RPG-specific titles in English, German, French, and Spanish.
+
+    When this returns True the two name variants refer to the same character and
+    the difference is purely stylistic — the Extractor either added or omitted a
+    title prefix.  The caller should keep whichever form is more complete (more
+    total words) as primary and register the other as an alias.
+
+    Both arguments must already be normalised via _normalize_for_match().
+    """
+    def _core(norm: str) -> str:
+        return " ".join(w for w in norm.split() if w.rstrip(".") not in _NAME_TITLES)
+
+    old_core = _core(old_norm)
+    new_core = _core(new_norm)
+    return bool(old_core and new_core and old_core == new_core)
+
+
 def _process_npc_renames(game, json_text: str):
     """Process NPC rename/identity-reveal metadata from narrator <npc_rename> tag.
     Format: [{"npc_id": "npc_2", "new_name": "Hauptmann Krahe"}]"""
@@ -1566,6 +1673,81 @@ def _process_npc_renames(game, json_text: str):
             if new_norm == player_norm or (set(new_norm.split()) & set(player_norm.split())):
                 log(f"[NPC] Rename rejected: '{new_name}' matches player character")
                 continue
+
+            # Guard: reject renames that confuse two distinct established characters.
+            # Trigger condition: NPC is established (has memories OR agenda set) AND its
+            # current name is a proper name (not a descriptor placeholder like
+            # "The Stranger" or "An Unknown Figure") AND the new name shares zero words
+            # with the current name + all aliases.
+            # When all three conditions hold, the Extractor has almost certainly
+            # mis-mapped an NPC reference to the wrong slot — e.g. targeting an
+            # established character because a different person was mentioned nearby.
+            # In that case: reject the rename and create a new NPC stub instead so
+            # the referenced character still enters the world correctly.
+            # Descriptor-named NPCs (placeholders) are always allowed through because
+            # they exist specifically to receive identity reveals.
+            old_name = npc["name"]
+            old_norm = _normalize_for_match(old_name)
+            if old_norm != new_norm:
+                is_established = bool(npc.get("memory")) or bool(npc.get("agenda"))
+                if is_established and not _is_descriptor_name(old_name):
+                    known_words = set(old_norm.split())
+                    for _a in npc.get("aliases", []):
+                        known_words |= set(_normalize_for_match(_a).split())
+                    new_name_words = set(new_norm.split())
+                    if not (new_name_words & known_words):
+                        log(f"[NPC] npc_renames: REJECTED rename '{old_name}' → '{new_name}': "
+                            f"established proper-named NPC with zero word overlap to new name "
+                            f"— creating new NPC stub instead", level="warning")
+                        if not _find_npc(game, new_name):
+                            stub_desc = r.get("description", "").strip()
+                            _npc_id, _ = _next_npc_id(game)
+                            stub = {
+                                "id": _npc_id,
+                                "name": new_name,
+                                "description": stub_desc,
+                                "agenda": "", "instinct": "", "secrets": [],
+                                "disposition": "neutral",
+                                "bond": 0, "bond_max": 4,
+                                "status": "active",
+                                "memory": [],
+                                "introduced": True,
+                                "aliases": [],
+                                "importance_accumulator": 0,
+                                "last_reflection_scene": 0,
+                                "last_memory_scene": 0,
+                                "last_location": game.current_location or "",
+                            }
+                            game.npcs.append(stub)
+                            log(f"[NPC] Created stub NPC '{new_name}' ({_npc_id}) "
+                                f"from rejected rename")
+                        else:
+                            log(f"[NPC] npc_renames: stub skipped — '{new_name}' "
+                                f"already exists")
+                        continue
+
+            # Title-only variant: names share the same non-title core but differ
+            # only by a leading honorific (e.g. "Dr. Vasudeva" ↔ "Vasudeva",
+            # or "Captain Reade" ↔ "Doktor Reade").  _merge_npc_identity would
+            # silently overwrite the stored name even though both forms refer to
+            # the same person.  Instead: keep the more complete form (more total
+            # words) as primary and register the other as an alias.
+            if old_norm != new_norm and _is_title_only_difference(old_norm, new_norm):
+                titled = new_name if len(new_norm.split()) >= len(old_norm.split()) else old_name
+                bare   = old_name if titled == new_name else new_name
+                npc["name"] = titled
+                npc.setdefault("aliases", [])
+                bare_norm = _normalize_for_match(bare)
+                existing_norms = {_normalize_for_match(a) for a in npc["aliases"]}
+                if (bare_norm not in existing_norms
+                        and bare_norm != _normalize_for_match(titled)):
+                    npc["aliases"].append(bare)
+                if npc.get("status") in ("background", "lore"):
+                    _reactivate_npc(npc, reason="title variant reappeared")
+                log(f"[NPC] npc_renames: title variant '{old_name}' ↔ '{new_name}' "
+                    f"— primary='{titled}', alias='{bare}'")
+                continue
+
             _merge_npc_identity(npc, new_name, r.get("description", ""), game=game)
             # Absorb any NPC whose name or alias matches the renamed-to name.
             # Alias matching is intentional: if another NPC already carries this name
@@ -1728,11 +1910,14 @@ def _process_npc_details(game, json_text: str, world_addition: str = ""):
                 paren_aliases = []
             if new_name and _normalize_for_match(new_name) != _normalize_for_match(npc["name"]):
                 old_name = npc["name"]
-                # Only update if the new name is an EXTENSION of the old name
-                # (e.g. "Randy" → "Randy Cho"), not a completely different name
+                # Only update if the new name genuinely EXTENDS the old name
+                # (old_norm is a substring of new_norm, e.g. "Randy" → "Randy Cho").
+                # The reverse direction (new_norm in old_norm) was intentionally removed:
+                # it would allow title-stripping ("Dr. Prita Vasudeva" → "Prita Vasudeva")
+                # which is a name shortening, not an extension.
                 old_norm = _normalize_for_match(old_name)
                 new_norm = _normalize_for_match(new_name)
-                if old_norm in new_norm or new_norm in old_norm:
+                if old_norm in new_norm:
                     npc.setdefault("aliases", [])
                     if old_name and _normalize_for_match(old_name) not in {_normalize_for_match(a) for a in npc["aliases"]}:
                         npc["aliases"].append(old_name)
@@ -1746,72 +1931,106 @@ def _process_npc_details(game, json_text: str, world_addition: str = ""):
                     log(f"[NPC] Details update: '{old_name}' → '{new_name}' "
                         f"(surname established)")
                 else:
-                    # Treat as identity reveal: the extractor provided a valid
-                    # npc_id, so we trust the association even when names differ
-                    # completely (e.g. "Der Jungfahrer" → "Finn", "Der Fremde" →
-                    # "Heinrich Blum").
-                    #
-                    # Guard: an NPC with existing memories is an established character
-                    # the player already knows.  If the Brain maps such an NPC to a
-                    # completely different name (zero shared words across name + all
-                    # aliases), it has almost certainly confused two distinct characters
-                    # — e.g. background NPC "Theo" (3 memories) mis-mapped to newly
-                    # introduced "Klaus Kinski".
-                    # NPCs with 0 memories are fresh stubs where a rename / reveal is
-                    # plausible regardless of name overlap, so we let those through.
-                    has_memories = bool(npc.get("memory"))
-                    if has_memories:
-                        known_words = set(_normalize_for_match(old_name).split())
-                        for _a in npc.get("aliases", []):
-                            known_words |= set(_normalize_for_match(_a).split())
-                        new_name_words = set(_normalize_for_match(new_name).split())
-                        if not (new_name_words & known_words):
-                            log(f"[NPC] npc_details: REJECTED identity reveal "
-                                f"'{old_name}' → '{new_name}': NPC has memories and "
-                                f"zero word overlap to new name — creating new NPC "
-                                f"stub instead", level="warning")
-                            # Only create stub if _process_new_npcs hasn't already
-                            # added this NPC in the same metadata cycle.
-                            if not _find_npc(game, new_name):
-                                # Use description from npc_details entry if present;
-                                # fall back to world_addition from Brain for new
-                                # characters the Extractor mis-routed here.
-                                stub_desc = d.get("description", "").strip()
-                                if not stub_desc and world_addition:
-                                    # world_addition often reads "Character X, role..."
-                                    # Use it verbatim as a rough description seed.
-                                    stub_desc = world_addition.strip()
-                                    log(f"[NPC] npc_details: using world_addition as "
-                                        f"description fallback for stub '{new_name}'")
-                                _npc_id, _ = _next_npc_id(game)
-                                stub = {
-                                    "id": _npc_id,
-                                    "name": new_name,
-                                    "description": stub_desc,
-                                    "agenda": "", "instinct": "", "secrets": [],
-                                    "disposition": "neutral",
-                                    "bond": 0, "bond_max": 4,
-                                    "status": "active",
-                                    "memory": [],
-                                    "introduced": True,
-                                    "aliases": paren_aliases,
-                                    "importance_accumulator": 0,
-                                    "last_reflection_scene": 0,
-                                    "last_location": game.current_location or "",
-                                }
-                                game.npcs.append(stub)
-                            else:
-                                log(f"[NPC] npc_details: stub skipped — '{new_name}' "
-                                    f"already exists from new_npcs")
-                            continue
+                    # Title-only variant: names share the same non-title core but
+                    # differ by a leading honorific.  _merge_npc_identity would
+                    # overwrite the stored name even though both forms refer to
+                    # the same person.  Keep the more complete form as primary
+                    # and register the other as an alias.  This runs before the
+                    # identity-reveal guard because title words produce partial
+                    # word overlap which would otherwise let the guard pass and
+                    # allow silent title-stripping.
+                    if _is_title_only_difference(old_norm, new_norm):
+                        titled = new_name if len(new_norm.split()) >= len(old_norm.split()) else old_name
+                        bare   = old_name if titled == new_name else new_name
+                        npc["name"] = titled
+                        npc.setdefault("aliases", [])
+                        bare_norm = _normalize_for_match(bare)
+                        existing_norms = {_normalize_for_match(a) for a in npc["aliases"]}
+                        if (bare_norm not in existing_norms
+                                and bare_norm != _normalize_for_match(titled)):
+                            npc["aliases"].append(bare)
+                        # Also register any aliases extracted from parenthetical annotation
+                        # in the incoming name (e.g. "Dr. Eva (auch: Doktorin Eva)")
+                        titled_norm = _normalize_for_match(titled)
+                        for alias in paren_aliases:
+                            alias_pn = _normalize_for_match(alias)
+                            if alias_pn not in existing_norms and alias_pn != titled_norm:
+                                npc["aliases"].append(alias)
+                        if npc.get("status") in ("background", "lore"):
+                            _reactivate_npc(npc, reason="title variant reappeared")
+                        log(f"[NPC] Details update: title variant '{old_name}' ↔ '{new_name}' "
+                            f"— primary='{titled}', alias='{bare}'")
+                    else:
+                        # Treat as identity reveal: the extractor provided a valid
+                        # npc_id, so we trust the association even when names differ
+                        # completely (e.g. "Der Jungfahrer" → "Finn", "Der Fremde" →
+                        # "Heinrich Blum").
+                        #
+                        # Guard: an NPC with existing memories or a set agenda is an
+                        # established character the player already knows.  If the Brain
+                        # maps such an NPC to a completely different name (zero shared
+                        # words across name + all aliases), it has almost certainly
+                        # confused two distinct characters — e.g. background NPC "Theo"
+                        # (3 memories) mis-mapped to newly introduced "Klaus".
+                        # NPCs with 0 memories AND no agenda are fresh stubs where a
+                        # rename / reveal is plausible regardless of name overlap.
+                        # Agenda check catches Opening Extractor NPCs: they are created
+                        # with agenda/instinct set but may have no memories yet on the
+                        # first turn of a chapter.
+                        is_established = bool(npc.get("memory")) or bool(npc.get("agenda"))
+                        if is_established:
+                            known_words = set(_normalize_for_match(old_name).split())
+                            for _a in npc.get("aliases", []):
+                                known_words |= set(_normalize_for_match(_a).split())
+                            new_name_words = set(_normalize_for_match(new_name).split())
+                            if not (new_name_words & known_words):
+                                log(f"[NPC] npc_details: REJECTED identity reveal "
+                                    f"'{old_name}' → '{new_name}': NPC has memories and "
+                                    f"zero word overlap to new name — creating new NPC "
+                                    f"stub instead", level="warning")
+                                # Only create stub if _process_new_npcs hasn't already
+                                # added this NPC in the same metadata cycle.
+                                if not _find_npc(game, new_name):
+                                    # Use description from npc_details entry if present;
+                                    # fall back to world_addition from Brain for new
+                                    # characters the Extractor mis-routed here.
+                                    stub_desc = d.get("description", "").strip()
+                                    if not stub_desc and world_addition:
+                                        # world_addition often reads "Character X, role..."
+                                        # Use it verbatim as a rough description seed.
+                                        stub_desc = world_addition.strip()
+                                        log(f"[NPC] npc_details: using world_addition as "
+                                            f"description fallback for stub '{new_name}'")
+                                    _npc_id, _ = _next_npc_id(game)
+                                    stub = {
+                                        "id": _npc_id,
+                                        "name": new_name,
+                                        "description": stub_desc,
+                                        "agenda": "", "instinct": "", "secrets": [],
+                                        "disposition": "neutral",
+                                        "bond": 0, "bond_max": 4,
+                                        "status": "active",
+                                        "memory": [],
+                                        "introduced": True,
+                                        "aliases": paren_aliases,
+                                        "importance_accumulator": 0,
+                                        "last_reflection_scene": 0,
+                                        "last_memory_scene": 0,
+                                        "last_location": game.current_location or "",
+                                    }
+                                    game.npcs.append(stub)
+                                else:
+                                    log(f"[NPC] npc_details: stub skipped — '{new_name}' "
+                                        f"already exists from new_npcs")
+                                continue
 
-                    log(f"[NPC] npc_details: treating '{old_name}' → '{new_name}' "
-                        f"as identity reveal "
-                        f"({'has memories, word-overlap confirmed' if has_memories else 'no memories, stub reveal'})")
-                    _merge_npc_identity(npc, new_name, game=game)
-                    # Check if _process_new_npcs already created a duplicate NPC
-                    # with this name earlier in the same metadata cycle
-                    _absorb_duplicate_npc(game, npc, new_name)
+                        log(f"[NPC] npc_details: treating '{old_name}' → '{new_name}' "
+                            f"as identity reveal "
+                            f"({'established, word-overlap confirmed' if is_established else 'no memories/agenda, stub reveal'})")
+                        _merge_npc_identity(npc, new_name, game=game)
+                        # Check if _process_new_npcs already created a duplicate NPC
+                        # with this name earlier in the same metadata cycle
+                        _absorb_duplicate_npc(game, npc, new_name)
 
             # Replace description if provided (for significant narrative changes,
             # e.g. "combat pilot" → "retired mechanic" after character reveal)
@@ -1895,6 +2114,25 @@ def _process_new_npcs(game, json_text: str):
                             log(f"[NPC] Added STT variant as alias: '{variant}' → '{fuzzy_hit['name']}'")
                         if fuzzy_hit.get("status") in ("background", "lore"):
                             _reactivate_npc(fuzzy_hit, reason="STT variant reappeared")
+                    elif _is_title_only_difference(
+                            _normalize_for_match(fuzzy_hit["name"]),
+                            _normalize_for_match(nd["name"])):
+                        # Title-only variant (e.g. "Dr. Eva" ↔ "Eva"): do NOT rename.
+                        # Keep the more complete form as primary; add the other as alias.
+                        hit_norm = _normalize_for_match(fuzzy_hit["name"])
+                        inc_norm = _normalize_for_match(nd["name"])
+                        titled = nd["name"] if len(inc_norm.split()) >= len(hit_norm.split()) else fuzzy_hit["name"]
+                        bare   = fuzzy_hit["name"] if titled == nd["name"] else nd["name"]
+                        fuzzy_hit["name"] = titled
+                        fuzzy_hit.setdefault("aliases", [])
+                        bare_norm = _normalize_for_match(bare)
+                        existing_alias_norms = {_normalize_for_match(a) for a in fuzzy_hit["aliases"]}
+                        if (bare_norm not in existing_alias_norms
+                                and bare_norm != _normalize_for_match(titled)):
+                            fuzzy_hit["aliases"].append(bare)
+                        if fuzzy_hit.get("status") in ("background", "lore"):
+                            _reactivate_npc(fuzzy_hit, reason="title variant reappeared")
+                        log(f"[NPC] Title variant via fuzzy: primary='{titled}', alias='{bare}'")
                     else:
                         _merge_npc_identity(fuzzy_hit, nd["name"], nd.get("description", ""), game=game)
                     existing_names.add(name_norm)
@@ -1942,6 +2180,7 @@ def _process_new_npcs(game, json_text: str):
                 "aliases": paren_aliases,
                 "importance_accumulator": 0,
                 "last_reflection_scene": 0,
+                "last_memory_scene": 0,
                 "last_location": game.current_location or "",
             }
 
@@ -1970,9 +2209,6 @@ def _process_new_npcs(game, json_text: str):
                 "type": "observation",
                 "_score_debug": f"auto-seed from new_npcs | {seed_debug}",
             })
-
-        # Check if active NPC count exceeds soft limit
-        _retire_distant_npcs(game)
 
     except (json.JSONDecodeError, KeyError, TypeError) as e:
         log(f"[NPC] Failed to process new NPCs: {e}", level="warning")
@@ -2028,6 +2264,7 @@ def _process_lore_npcs(game, lore_list: list):
             "aliases": paren_aliases,
             "importance_accumulator": 0,
             "last_reflection_scene": 0,
+            "last_memory_scene": 0,
             "last_location": "",
         }
         game.npcs.append(npc)
@@ -2035,13 +2272,56 @@ def _process_lore_npcs(game, lore_list: list):
 
 
 def _retire_distant_npcs(game, max_active: int = MAX_ACTIVE_NPCS):
-    """Demote NPCs to 'background' if the active list exceeds the threshold.
+    """Demote NPCs to 'background' if the active list exceeds the threshold,
+    OR if they have been silent (no memory updates) for NPC_STALE_SCENES scenes
+    and have no bond with the player.
+
     Background NPCs remain visible in the sidebar but are excluded from
     AI prompts and NPC agency checks to keep token budgets manageable."""
     active = [n for n in game.npcs if n.get("status") == "active"]
+
+    # Staleness path: retire NPCs that have been narratively silent for too long,
+    # independent of the active-count threshold. Guards:
+    #   - bond == 0 (bonded NPCs may return; don't prematurely background them)
+    #   - not introduced this scene or the previous one (grace period for new NPCs)
+    #   - last_memory_scene tracked (NPCs without it are legacy saves — skip)
+    #   - scene_count > NPC_STALE_SCENES (can't be stale in early game)
+    if game.scene_count > NPC_STALE_SCENES:
+        for npc in active:
+            if npc.get("bond", 0) > 0:
+                continue
+            last_mem = npc.get("last_memory_scene")
+            if last_mem is None:
+                # Legacy NPC without tracking — fall back to last memory entry
+                last_mem = max(
+                    (m.get("scene") or 0 for m in npc.get("memory", [])
+                     if isinstance(m, dict)),
+                    default=0
+                ) or 0
+            if last_mem == 0:
+                continue  # No memories yet — newly introduced, protect
+            # Protect NPCs who received any memory this scene — covers both
+            # freshly-created NPCs (seed memories from _process_new_npcs bypass
+            # last_memory_scene) and NPCs just reactivated by activate_npcs_for_prompt
+            # that got an Extractor memory update this turn.
+            has_current_scene_memory = any(
+                isinstance(m, dict) and m.get("scene") == game.scene_count
+                for m in npc.get("memory", [])
+            )
+            if has_current_scene_memory:
+                continue
+            scenes_silent = game.scene_count - last_mem
+            if scenes_silent >= NPC_STALE_SCENES:
+                npc["status"] = "background"
+                log(f"[NPC] Demoted to background (stale): {npc['name']} "
+                    f"({scenes_silent} scenes without memory update)")
+        # Refresh active list after staleness demotions
+        active = [n for n in game.npcs if n.get("status") == "active"]
+
     if len(active) <= max_active:
         return
 
+    # Count-based path: if still over threshold, score and demote least relevant.
     # Score: last memory scene (recency) + bond weight + current-scene bonus
     def relevance(npc):
         last_scene = max(
@@ -2423,6 +2703,7 @@ def _ensure_npc_memory_fields(npc: dict):
     npc.setdefault("memory", [])
     npc.setdefault("importance_accumulator", 0)
     npc.setdefault("last_reflection_scene", 0)
+    npc.setdefault("last_memory_scene", 0)   # Scene of last memory update (staleness tracking)
     npc.setdefault("last_location", "")  # Where NPC was last seen (spatial consistency)
     npc.setdefault("arc", "")           # Narrative trajectory — set by Director, evolves each reflection
     npc.setdefault("absent_until_scene", 0)  # Scene until which activation is suppressed (exit tracking)
@@ -2491,8 +2772,11 @@ def activate_npcs_for_prompt(game, brain: dict, player_input: str) -> tuple[list
             reasons.append("name")
         else:
             # Check name parts (e.g. "Borin" in "Ich frage Borin")
+            # Min-length 4 matches the exit-suppression check (line ~2570) and
+            # avoids German articles/prepositions of length 3 ("der", "die", "von")
+            # producing spurious activation scores.
             for part in npc_name_lower.split():
-                if len(part) >= 3 and part in scan_text:
+                if len(part) >= 4 and part in scan_text:
                     score += 0.6
                     reasons.append(f"part:{part}")
                     break
@@ -2818,6 +3102,7 @@ class GameState:
     content_lines: str = ""    # Per-game: hard content exclusions (Lines)
     # v5.8: Temporal & spatial consistency
     time_of_day: str = ""      # Coarse time: "early_morning","morning","midday","afternoon","evening","late_evening","night","deep_night"
+    time_unchanged_scenes: int = 0   # Transient: scenes elapsed without a time_of_day change (not persisted)
     location_history: list = field(default_factory=list)  # Last 3 locations for continuity
     # v5.9: Epilogue system
     epilogue_shown: bool = False      # True after epilogue has been generated
@@ -2878,6 +3163,11 @@ def check_chaos_interrupt(game: GameState) -> Optional[str]:
 TIME_PHASES = ["early_morning", "morning", "midday", "afternoon",
                "evening", "late_evening", "night", "deep_night"]
 
+# Scenes without a time_of_day change before stale-time nudges activate in the
+# Narrator prompt and Director context.  Chosen to be earlier than the Elvira
+# violation threshold (10) so the engine self-corrects before the warning fires.
+TIME_STALE_THRESHOLD = 5
+
 # TIME_LABELS (display) are now in i18n.py
 
 
@@ -2897,6 +3187,7 @@ def advance_time(game: GameState, progression: str):
         if new_idx >= len(TIME_PHASES):
             new_idx = new_idx - len(TIME_PHASES)
         game.time_of_day = TIME_PHASES[new_idx]
+        game.time_unchanged_scenes = 0  # Brain-driven time advance counts as a reset
 
 
 def _locations_match(loc_a: str, loc_b: str) -> bool:
@@ -3186,6 +3477,16 @@ def apply_consequences(game: GameState, roll: RollResult, brain: dict) -> tuple[
         game.momentum = min(game.max_momentum, game.momentum + 1)
         if roll.move in {"make_connection"} and target:
             target["bond"] = min(target.get("bond_max", 4), target["bond"] + 1)
+        # Combat moves: partial success still costs — you land the blow but take one too.
+        # desperate: -2 (a brutal exchange); risky: -1 (standard cost of engagement);
+        # controlled: no damage (you had the situation in hand — a graze at worst).
+        if roll.move in COMBAT_MOVES and position != "controlled":
+            dmg = 2 if position == "desperate" else 1
+            old = game.health
+            game.health = max(0, game.health - dmg)
+            if game.health < old:
+                consequences.append(f"health -{old - game.health}")
+
         # Recovery moves: partial restore on WEAK_HIT
         if roll.move == "endure_harm":
             old = game.health
@@ -3229,12 +3530,12 @@ def apply_consequences(game: GameState, roll: RollResult, brain: dict) -> tuple[
         effect = brain.get("effect", "standard")
         mom_gain = 3 if effect == "great" else 2
         game.momentum = min(game.max_momentum, game.momentum + mom_gain)
-        if roll.move in {"make_connection", "compel", "test_bond"} and target:
-            target["bond"] = min(target.get("bond_max", 4), target["bond"] + 1)
         if roll.move in {"make_connection", "test_bond"} and target:
-            # Disposition shifts only for relationship-focused moves, not transactional compel.
+            # Bond + disposition shifts only for relationship-focused moves, not transactional compel.
+            # compel is a negotiation/coercion — succeeding does not deepen the relationship.
             # test_bond: surviving a crisis together deepens the bond the same way as
             # make_connection, but organically rather than intentionally.
+            target["bond"] = min(target.get("bond_max", 4), target["bond"] + 1)
             shifts = {"hostile": "distrustful", "distrustful": "neutral",
                       "neutral": "friendly", "friendly": "loyal"}
             target["disposition"] = shifts.get(target["disposition"], target["disposition"])
@@ -3458,6 +3759,89 @@ def _recent_events_block(game: GameState) -> str:
     if not lines:
         return ""
     return f"\n<recent_events>\n" + "\n".join(lines) + "\n</recent_events>"
+
+
+def _narrator_clocks_block(game: GameState) -> str:
+    """Compact active-threat block for Narrator prompts.
+    Gives the Narrator awareness of active clocks and their urgency so that
+    scene tone naturally reflects mounting pressure — without the Narrator
+    needing to reference clocks explicitly.
+    Only clocks with at least one filled segment are shown — unfilled clocks
+    have no pressure value and would add noise."""
+    active = [c for c in game.clocks
+              if not c.get("fired") and c.get("segments", 0) > 0 and c.get("filled", 0) > 0]
+    if not active:
+        return ""
+    lines = []
+    for c in active:
+        filled = c.get("filled", 0)
+        segs   = c.get("segments", 6)
+        pct    = filled / segs if segs else 0
+        bar    = "●" * filled + "○" * (segs - filled)
+        urgency = (
+            "critical — trigger imminent" if pct >= 0.85 else
+            "high — pressure is building"  if pct >= 0.65 else
+            "moderate"                     if pct >= 0.40 else
+            "low"
+        )
+        lines.append(f'- "{html.escape(c.get("name", "?"))}" {bar} {filled}/{segs} — {urgency}')
+    return (
+        "\n<active_threats>\n"
+        "Let fill level shape atmospheric pressure — a nearly-full threat should feel imminent "
+        "even if not directly addressed. Do NOT mention clocks, fill levels, or game terms.\n"
+        + "\n".join(lines)
+        + "\n</active_threats>"
+    )
+
+
+def _npc_relations_block(game: GameState, present_npc_ids: set) -> str:
+    """Cross-relationship hints between NPCs present in this scene.
+    Mines about_npc memories across all present NPCs (including the target NPC)
+    to surface dynamics (alliances, tensions, history) the Narrator should reflect
+    in how NPCs interact with each other — not just with the player.
+    Note: target NPC's cross-relations also appear in _npc_block npc_views (TF-IDF
+    scored); here they are selected by recency. Minor overlap, different angle."""
+    if not present_npc_ids or len(present_npc_ids) < 2:
+        return ""
+    relations = []
+    seen_pairs: set = set()
+    for npc in game.npcs:
+        npc_id = npc.get("id")
+        if npc_id not in present_npc_ids:
+            continue
+        npc_name = npc.get("name", "?")
+        _ensure_npc_memory_fields(npc)
+        for m in reversed(npc.get("memory", [])):   # most recent first
+            about = m.get("about_npc")
+            if not about or about not in present_npc_ids or about == npc_id:
+                continue
+            pair_key = tuple(sorted((npc_id, about)))
+            if pair_key in seen_pairs:
+                continue                            # one entry per pair
+            other = _find_npc(game, about)
+            if not other:
+                continue
+            other_name = other.get("name", "?")
+            event = m.get("event", "")[:90]
+            ew    = m.get("emotional_weight", "")
+            relations.append(
+                f'- {html.escape(npc_name)} → {html.escape(other_name)}: '
+                f'{html.escape(event)} ({ew})'
+            )
+            seen_pairs.add(pair_key)
+            if len(relations) >= 6:                 # cap total entries
+                break
+        if len(relations) >= 6:
+            break
+    if not relations:
+        return ""
+    return (
+        "\n<npc_dynamics>\n"
+        "Relationship history between NPCs present — let this shape how they interact "
+        "with each other, not only with the player.\n"
+        + "\n".join(relations)
+        + "\n</npc_dynamics>"
+    )
 
 
 def _api_create_with_retry(client: anthropic.Anthropic, max_retries: int = 2, **kwargs):
@@ -3861,6 +4245,15 @@ npcs:{npc_text}{campaign_ctx}{backstory_text}"""
         blueprint = json.loads(response.content[0].text)
         blueprint["revealed"] = []  # Track which revelations have fired
         blueprint["structure_type"] = structure_type
+
+        # Validate act count: schema can no longer enforce minItems ≥ 3 (API restriction).
+        # A blueprint with too few acts breaks story logic silently — fall through to fallback.
+        expected_acts = 4 if structure_type == "kishotenketsu" else 3
+        if len(blueprint.get("acts", [])) < expected_acts:
+            log(f"[Story] Architect returned {len(blueprint.get('acts', []))} acts "
+                f"(expected {expected_acts}) — using context-aware fallback", level="warning")
+            raise ValueError("insufficient_acts")
+
         log(f"[Story] Architect succeeded: "
             f"conflict={blueprint['central_conflict'][:80]}, "
             f"acts={len(blueprint['acts'])}, "
@@ -3969,6 +4362,19 @@ npcs:{npc_text}{campaign_ctx}{backstory_text}"""
         }
 
 
+def _safe_sr(act: dict, fallback_start: int = 1) -> list:
+    """Return a guaranteed 2-element [start, end] scene_range from an act dict.
+    Guards against missing key, None, or a 1-element array — all possible when
+    the Story Architect returns a malformed scene_range (schema can no longer
+    enforce minItems: 2 / maxItems: 2 due to Anthropic API restrictions)."""
+    sr = act.get("scene_range") or []
+    if len(sr) >= 2:
+        return [sr[0], sr[1]]
+    if len(sr) == 1:
+        return [sr[0], sr[0] + 5]
+    return [fallback_start, fallback_start + 5]
+
+
 def get_current_act(game: GameState) -> dict:
     """Determine which act the story is in based on transition triggers and scene count.
     Dual logic: (1) Check if Director has signaled an act transition via trigger fulfillment,
@@ -4011,7 +4417,7 @@ def get_current_act(game: GameState) -> dict:
 
     for i, act in enumerate(acts[:-1]):  # Last act has no transition_trigger
         trigger = act.get("transition_trigger", "")
-        sr = act.get("scene_range", [1, 20])
+        sr = _safe_sr(act, fallback_start=i * 5 + 1)
         act_id = f"act_{i}"
 
         # Act is complete if trigger was fulfilled OR we're past its scene_range
@@ -4027,7 +4433,7 @@ def get_current_act(game: GameState) -> dict:
             break
 
     # Estimate progress within act
-    sr = current.get("scene_range", [1, 20])
+    sr = _safe_sr(current, fallback_start=1)
     act_len = max(sr[1] - sr[0] + 1, 1)
     scenes_in = scene - sr[0] + 1
     if scenes_in <= act_len * 0.3:
@@ -4207,12 +4613,14 @@ def _status_context_block(game: Optional[GameState] = None) -> str:
 
 
 def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) -> str:
-    """Build narrator system prompt with configured language."""
+    """Build narrator system prompt with configured language.
+    NOTE: _status_context_block (character H/Sp/Su state) is intentionally excluded here
+    and injected into each user prompt instead, so this system prompt stays fully static
+    per session and qualifies for Anthropic prompt caching."""
     lang = get_narration_lang(config)
     kf = _kid_friendly_block(config)
     cb = _content_boundaries_block(game)
     bs = _backstory_block(game)
-    sc = _status_context_block(game)
     # Tone authority block — makes the player's chosen tone the dominant stylistic register.
     # Injected as a first-class element before <rules> so it outranks generic style defaults.
     tone_block = ""
@@ -4235,9 +4643,10 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
         "Pattern: \u201cText.\u201d \u2014 NEVER use guillemets, straight ASCII quotes (\"), or any other style."
     )
     return f"""<role>Narrator of an immersive RPG. All output in {lang}, second person singular.</role>
-{kf}{cb}{bs}{sc}{tone_block}
+{kf}{cb}{bs}{tone_block}
 <rules>
 - NEVER mention dice, stats, numbers, or game mechanics
+- NEVER use internal clock names in prose (e.g. "Mob Clock", "Betrayal Clock"). Threat pressure from clocks must be expressed through atmosphere, NPC behavior, and sensation — never by naming the clock.
 {_quote_rule}
 - MISS: concrete failure, situation worsens, NO silver linings
 - WEAK_HIT: success at tangible cost
@@ -4246,16 +4655,17 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
 - Introduce new NAMED characters through action and dialog. An NPC's agenda and instinct are their engine {E['dash']} let those drives shape how they behave, what they pursue, what they avoid. Distinct voice comes from specifics: vocabulary level, sentence rhythm, and what a character deflects or refuses to acknowledge. One physical trait or habitual gesture makes them tangible.
 - NPC IDENTITY LAYERS: Each NPC carries two distinct layers. `instinct` is their fundamental wiring {E['dash']} how they are built, their default reaction under pressure (stable, rarely changes). `arc` is where they are in their development {E['dash']} what the story has already made of them (shifts as events accumulate). When both are present: let `instinct` determine HOW they react; let `arc` inform WHERE they are emotionally. The same instinct ("deflects with sarcasm") plays completely differently depending on arc ("beginning to trust Janus despite himself" vs "has decided Janus is too dangerous to help further"). Never flatten arc into instinct or vice versa.
 - NPC EMOTIONAL RANGE: Emotional control is one option, not the default. An NPC's instinct may produce volatile, disproportionate, or irrational responses {E['dash']} sudden rage, visible panic, bitter sarcasm, stubborn silence, reckless bravado, tearful collapse, uncontrollable dark humor. Do NOT smooth all NPCs toward composure. A scene with three NPCs should not have three composed people {E['dash']} let the instinct field determine the emotional register, not a generic assumption of adult self-control.
-- BACKSTORY CANON: If <backstory> is present, treat it as ESTABLISHED HISTORY. People mentioned there (family, friends, rivals) are ALREADY KNOWN to the player character {E['dash']} if they appear, they recognize the player and vice versa. NEVER introduce a backstory character as a stranger or reinterpret established relationships. Backstory events ALREADY HAPPENED {E['dash']} reference them as shared memory, not new plot.
+- BACKSTORY CANON: If <backstory> is present, treat it as ESTABLISHED HISTORY. People mentioned there (family, friends, rivals) are ALREADY KNOWN to the player character {E['dash']} if they appear, they recognize the player and vice versa. NEVER introduce a backstory character as a stranger or reinterpret established relationships. Backstory events ALREADY HAPPENED {E['dash']} reference them as shared memory, not new plot. GRAMMATICAL GENDER: If the backstory uses gendered language for the player character (e.g. feminine "Spezialistin", "sie", "ihre" in German), that establishes the player character's gender for ALL narration — use consistent gendered forms throughout, regardless of any gender signal in the character_concept or player input. Backstory gender takes absolute priority over character_concept gender when they conflict.
+- NPC BACKSTORY: An NPC may only reference people, events, or relationships that appear in their description, agenda, arc, or a prior scene. Do NOT invent family members, past colleagues, formative events, or personal history for an NPC that was not established anywhere in the story. If an NPC's profile is sparse, let that sparseness show — give them presence through behavior and reaction, not through newly invented biography.
 - Describe only sensory impressions, never player thoughts
 - SENSORY RANGE: Don't default to sight {E['dash']} include at least one non-visual sense per scene (a specific sound, smell, texture, or temperature). These anchor scenes in memory more durably than visual description alone.
 - WORLD PERIPHERY: Once per scene, let one small background detail exist that has nothing to do with the player's immediate action {E['dash']} a sound from another room, a stranger's exchange, a worn object, weather shifting outside. Brief, never explained. It signals the world continues beyond this moment.
-- PHRASE VARIETY: The construction "[noun] of a [person], who [relative clause]" — in German: "mit dem [abstract noun] eines/einer [noun], die/der [relative clause]" (e.g. "mit dem Tonfall eines Mannes, der...", "mit der Ruhe einer Frau, die...") — is a known stylistic crutch. AVOID it as a default: treat it as last resort, not a template. Use it AT MOST ONCE per response, and ONLY if no natural alternative fits. CROSS-RESPONSE: Check the preceding narrations visible in this conversation — if this pattern appeared there, do NOT use it in this response at all. SPECIFIC OVERUSE: The abstract noun "Tonfall" (tone of voice / Tonfall) has its own limit — if it appeared in any recent narration, replace it with something physical or behavioral. This pattern appears almost exclusively in NPC dialog attribution ("he said with the calm of a man who...") — prefer instead: a physical action before or after the speech ("He set the phone down. 'The pallets left at six.'"), a simple adverb ("He said it flatly."), a fragment of unattributed speech, or a body-registered reaction ("Her shoulders didn't move. 'That's not how it works.'"). The skeleton is detectable even when the content changes — "Tonfall / Gleichmäßigkeit / Rhythmus / Sachlichkeit" are the same structure dressed differently.
+- PHRASE VARIETY: The construction "[noun] of a [person], who [relative clause]" — in German: "mit dem [abstract noun] eines/einer [noun], die/der [relative clause]" (e.g. "with the calm of a man who...", "with the stillness of a woman who...") — is a known stylistic crutch. AVOID it as a default: treat it as last resort, not a template. Use it AT MOST ONCE per response, and ONLY if no natural alternative fits. CROSS-RESPONSE: Check the preceding narrations visible in this conversation — if this pattern appeared there, do NOT use it in this response at all. SPECIFIC OVERUSE: The abstract noun "Tonfall" (tone of voice) has its own limit — if it appeared in any recent narration, replace it with something physical or behavioral. This pattern appears almost exclusively in NPC dialog attribution ("he said with the calm of a man who...") — prefer instead: a physical action before or after the speech ("He set the phone down. 'The pallets left at six.'"), a simple adverb ("He said it flatly."), a fragment of unattributed speech, or a body-registered reaction ("Her shoulders didn't move. 'That's not how it works.'"). The skeleton is detectable even when the content changes — "tone of voice / evenness / rhythm / matter-of-factness" are the same structure dressed differently. ATMOSPHERIC MOTIFS: The same risk applies to recurring sensory or mood anchors. A single dominant motif — silence, darkness, cold, a specific sound — can become the atmospheric default when it fits the tone too well. CROSS-RESPONSE: Scan the preceding narrations. If the same motif (e.g. "Stille", "Dunkelheit", "Kälte") has anchored the last two or more scenes, it is now a crutch. Replace it with a different sensory dimension: if silence has dominated, anchor the next scene in temperature, texture, or smell instead. The tone does not require the same motif every time — it requires SPECIFICITY. A horror scene built on heat and the smell of machine oil is more unsettling than the tenth scene ending in a new kind of silence.
 - SCENE CONTINUITY: Begin in motion, not in setup. The player is still in the same body, the same emotional state as the last scene ended. Do NOT open with a fresh establishing paragraph. SAME LOCATION: Open with at most one sentence that holds the atmosphere or emotional residue of the previous scene's end — a sensation still in the air, a silence not yet broken, a weight not yet lifted — before moving into the player's action. This is not recap; it is continuity of experience. It should work as a bridge even if the player's action is very brief or sparse. NEW LOCATION (player has moved — compare <location> with <prev_locations>): Open with one brief sensory impression of the new space (a sound, smell, texture, or quality of light) that grounds the reader without summarizing what came before. The new place simply exists, indifferent to what preceded it; the character carries the previous moment in their body. Example: a character arriving somewhere unfamiliar after a tense moment elsewhere — the ambient sounds and physical details of the new space are registered first, through senses still sharpened by what just happened.
 - EMOTIONAL CARRY-THROUGH: If the previous scene ended with a significant emotional beat (betrayal, loss, triumph, relief, intimacy, shock), open this scene with that weight still present in the character's body language, perception, and attention. Emotional states do not reset between scenes. Show it through sensation and behavior, not through narration — the character did not process it yet.
 - SCENE ENDING: Close each narration with a sentence that names the character's immediate unresolved inner state, unanswered perception, or the dominant open condition of the moment — not a plot cliffhanger, not a resolved beat, but an emotional or sensory suspension that makes the NEXT scene feel anchored rather than arbitrary. The character should be mid-breath, not concluded. No option lists, no suggested actions.
 - 2-4 paragraphs
-- TEMPORAL CONSISTENCY: If <time> is provided, maintain that time period. Time only moves FORWARD (never backward). If you mention specific times, they must be later than any previously mentioned time. Do NOT invent specific clock times unless narratively important {E['dash']} prefer atmospheric time cues (moonlight, sunset glow, morning mist). CRITICAL: Each scene transition represents minutes to hours of in-world time, NOT days or years. Events from recent scenes just happened {E['dash']} signs don't weather, wounds are fresh, sent NPCs are still en route or just arrived. Never describe recent events or objects as aged, decayed, or long-past unless the player explicitly time-skips.
+- TEMPORAL CONSISTENCY: If <time> is provided, maintain that time period. Time only moves FORWARD (never backward). If you mention specific times, they must be later than any previously mentioned time. Do NOT invent specific clock times unless narratively important {E['dash']} prefer atmospheric time cues (moonlight, sunset glow, morning mist). CRITICAL: Each scene transition represents minutes to hours of in-world time, NOT days or years. Events from recent scenes just happened {E['dash']} signs don't weather, wounds are fresh, sent NPCs are still en route or just arrived. Never describe recent events or objects as aged, decayed, or long-past unless the player explicitly time-skips. TEMPORAL TEXTURE: Even in a static location where nothing moves (a besieged trench, a locked room, a stakeout), time still passes through the world. Every 2–3 scenes, anchor one detail to the shifting day: a quality of light changing (afternoon glare giving way to a cooler, flatter grey), a temperature shift (the ground cooling under your hands), a change in ambient sound (fewer birds, different distant guns, the quality of silence shifting). These do not need to be prominent — a single phrase suffices. They exist so the story does not feel frozen.
 - SPATIAL CONSISTENCY: The <location> tag shows where the player currently IS. If <prev_locations> is provided, the player has LEFT those places. NEVER place the player back at a previous location unless they explicitly travel there. If an NPC has a last_seen attribute showing a DIFFERENT location than the player's current <location>, that NPC is NOT physically present {E['dash']} they cannot be heard through walls, seen, or interact directly. They can only appear if they plausibly traveled to the player's location (and the narration should describe their arrival). NPCs without last_seen or with last_seen matching <location> ARE present and can interact normally.
 - If <story_arc> is present, steer scenes toward the act goal and mood. If <story_arc> contains a thematic_thread, let it surface periodically through NPC dialog, character reactions, or incidental observations {E['dash']} not as lecture or internal monologue, but as a question the world keeps quietly asking. Not every scene, but it should feel like a recurring undercurrent.
 - If revelation_ready is set, weave it into the scene naturally (through NPC dialog, discovered evidence, or environmental storytelling) {E['dash']} NEVER dump exposition
@@ -4270,7 +4680,12 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
 - If <chaos_interrupt> is present, weave the specified disruption naturally into the scene. For type="dilemma", present the forced choice clearly so the player must decide next turn. For type="ticking_clock", establish the deadline or urgency so it shapes future actions. For type="positive_windfall", make it feel earned by the world, not a gift from nowhere.
 - If <dramatic_question> is present, the scene should address this question (resolve or deepen it)
 - If story_arc structure="kishotenketsu" and phase="ten_twist": focus on perspective SHIFT, not conflict escalation. Something seemingly unrelated recontextualizes everything.
+- If story_arc structure="kishotenketsu" and phase="ketsu_resolution": the ten_twist's perspective shift has already landed — this act is CONSEQUENCE, not continued reflection. The player has absorbed the recontextualization. Each narration must now move toward something irreversible: a choice made, a system changed, a relationship permanently altered, a door closed. Do NOT keep circling the same existential insight. If the previous scene ended on reflection, this scene ends on action or consequence. The world should be visibly different by the end of this act than it was at the start of it.
 - If <recent_events> is present, treat it as ESTABLISHED FACTS. These events already happened in previous scenes. NEVER contradict them {E['dash']} if an NPC was seen alive, they are alive; if a box was empty, it was empty; if a character said something, they said it. You may add new revelations or reinterpretations, but the physical facts of past scenes are canon.
+- If <active_threats> is present, let the urgency level shape the atmospheric pressure of the scene. A "critical" threat should make the air feel close and time scarce. Do NOT name clocks, fill bars, or game mechanics {E['dash']} translate pressure into sensation, behavior, and detail.
+- If <arc_notes> is present, use it as background awareness of where the story stands. Let it inform emotional undertone without quoting or summarizing it directly.
+- If <npc_dynamics> is present, let the relationship history between NPCs shape how they speak to and about each other {E['dash']} eye contact, tone, small avoidances, or unspoken tension. Do not narrate the relationship directly; let it surface through behavior.
+- PRECISION: Every sentence must earn its place {E['dash']} carry new information, advance tension, reveal character, or deepen atmosphere. Cut filler. A shorter scene with density beats a longer scene with padding. Avoid generic atmospheric throat-clearing ("The air hung heavy", "Silence stretched between them") unless it is doing specific work.
 - PURE PROSE ONLY: Output ONLY narrative text. No JSON, no XML tags, no metadata, no code blocks, no markdown formatting (no *italics*, no **bold**, no # headings). Do NOT prefix your response with role labels like "Narrator:" or any heading. Do NOT append game mechanic annotations like [CLOCK CREATED: ...], [THREAT: ...], [SCENE CONTEXT: ...], or any bracketed labels — these are handled internally. Begin immediately with narrative text. Your entire response is visible to the player.
 </rules>
 <player_authorship>
@@ -4288,7 +4703,11 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
 def call_narrator(client: anthropic.Anthropic, prompt: str,
                   game: Optional[GameState] = None,
                   config: Optional[EngineConfig] = None) -> str:
-    """Narrator call with conversation memory for style consistency."""
+    """Narrator call with conversation memory for style consistency.
+    The system prompt is sent as a cacheable content block (cache_control: ephemeral).
+    Since _status_context_block is injected into user prompts instead, the system prompt
+    is fully static per session — same text on every turn, maximising cache hit rate.
+    Cache lifetime: 5 minutes, refreshed on each hit. Break-even at the 2nd hit."""
     log(f"[Narrator] Calling narrator (prompt: {len(prompt)} chars)")
     messages = []
 
@@ -4307,10 +4726,18 @@ def call_narrator(client: anthropic.Anthropic, prompt: str,
     # Current prompt
     messages.append({"role": "user", "content": prompt})
 
+    # System prompt as cacheable content block.
+    # cache_control: ephemeral = 5-minute server-side cache, refreshed on each hit.
+    # Requires the system text to be identical across calls — guaranteed because
+    # _status_context_block was moved to user prompts, leaving system fully static.
+    system_text = get_narrator_system(config or EngineConfig(), game)
+    system = [{"type": "text", "text": system_text,
+               "cache_control": {"type": "ephemeral"}}]
+
     response = _api_create_with_retry(
         client, max_retries=5,
         model=NARRATOR_MODEL, max_tokens=NARRATOR_MAX_TOKENS,
-        system=get_narrator_system(config or EngineConfig(), game),
+        system=system,
         messages=messages,
     )
     raw = response.content[0].text
@@ -4421,9 +4848,9 @@ All text fields (event, description, scene_context) MUST be in {lang}.
 scene_context: 1 sentence capturing current situation AND dominant mood/tension — not just where/who, but the atmosphere. Example: "Negotiations at a standstill, the guard's suspicion barely concealed." Extract from the narration; do not invent.
 emotional_weight must be ONE of: neutral, curious, wary, angry, grateful, suspicious, terrified, loyal, conflicted, betrayed, devastated, euphoric.
 disposition must be ONE of: neutral, friendly, distrustful, hostile, loyal.
-time_update must be ONE of: early_morning, morning, midday, afternoon, evening, late_evening, night, deep_night — or null if no time change.
-location_update: new location name if the character MOVED to a different place, null if they stayed. IMPORTANT: if no movement occurred, always return null — do NOT add city names, qualifiers, or extra words to the existing location. If a move did occur, use the exact place name as it appears in the narration (short and specific, e.g. "Die Kathedrale", not "Die Kathedrale in Lyon").
-npc_renames: for identity REVEALS — when an NPC's true or personal name is established for the first time. Covers: spy unmasked, alias discovered, AND descriptor-named NPCs who receive a real name (e.g. "Die Frau im Wollhut" → "Hanna", "Der unbekannte Mann" → "Klaus", "Die Technikerin" → "Sara Novak"). Use the npc_id of the descriptor NPC from the known list and set new_name to the revealed personal name. NOT for surname additions to an already-named NPC (use npc_details for that).
+time_update must be ONE of: early_morning, morning, midday, afternoon, evening, late_evening, night, deep_night — or null if no time change. Detect time shifts from ANY atmospheric cue in the narration, not only explicit clock references. Qualifying signals include: light quality changing (dimming, brightening, lengthening shadows, flat grey replacing direct sunlight), temperature shift (air cooling, ground still warm from earlier sun), ambient sound changing (different insect or bird pattern, silence taking on a different character, guns sounding farther or nearer), or a character noticing the time implicitly ("it had grown darker", "the cold was settling in"). Do NOT require the words "evening" or "night" — sensory evidence is sufficient. Return null only when the scene is explicitly immediate (seconds after the last scene) with no environmental time signal at all.
+location_update: new location name if the character MOVED to a different place, null if they stayed. IMPORTANT: if no movement occurred, always return null — do NOT add city names, qualifiers, or extra words to the existing location. If a move did occur, use the exact place name as it appears in the narration (short and specific, e.g. "The Cathedral", not "The Cathedral in Lyon").
+npc_renames: for identity REVEALS — when an NPC's true or personal name is established for the first time. Covers: spy unmasked, alias discovered, AND descriptor-named NPCs who receive a real name (e.g. "The Woman in the Wool Hat" → "Hanna", "The Unknown Man" → "Klaus", "The Engineer" → "Sara Novak"). Use the npc_id of the descriptor NPC from the known list and set new_name to the revealed personal name. NOT for surname additions to an already-named NPC (use npc_details for that).
 npc_details: for newly established facts about ALREADY KNOWN NPCs only (surname addition, role change). full_name if name extended, description if role/situation changed. NEVER use npc_details to introduce a character who is new to the story — even if they share role similarities with an existing NPC. Characters new to the story always go into new_npcs with a full description.
 new_npcs: ONLY for characters who are PHYSICALLY PRESENT in the scene AND actively interacting (speaking, acting, reacting). They must NOT already be in the known NPC list. NEVER include the player character. NEVER include:
 - Characters who are only MENTIONED in conversation, stories, or memories
@@ -4432,14 +4859,16 @@ new_npcs: ONLY for characters who are PHYSICALLY PRESENT in the scene AND active
 - Unnamed characters described only by role ("a waiter", "some guard") unless they speak or interact meaningfully
 If a NAMED person is mentioned in dialog but a DIFFERENT unnamed person is physically present, create the NPC for the PHYSICAL person with their own appropriate name/description — do NOT assign the mentioned person's name to the physical person's description.
 description must be a PHYSICAL/ROLE description (appearance, occupation, species), NOT what they did in this scene.
-memory_updates: for EACH NPC who participated in or witnessed this scene. Use their npc_id from the known list. NEVER create memory_updates for the player character. NEVER create memory_updates for NPCs marked [DECEASED] or for absent characters — only for NPCs physically present and alive in the scene.
+deceased (in new_npcs): set to true if this newly introduced NPC dies in the same scene they first appear. They cannot be added to deceased_npcs by npc_id (no ID has been assigned yet), so this flag is the only way to record an introduction-and-death in the same scene. Omit or set false if they survive.
+memory_updates: for EACH NPC who participated in or witnessed this scene. Use their npc_id from the known list. NEVER create memory_updates for the player character. NEVER create memory_updates for NPCs marked [DECEASED]. For NPCs physically present and alive in the scene, use absent=false (the default case). EXCEPTION — absent=true: You MAY add a single memory_update with absent=true for an off-screen NPC if ALL of the following apply: (1) the narration EXPLICITLY names them, (2) their off-screen situation changed in a narratively significant way (e.g. confirmed transported, captured, endangered, made a decision that affects the story), (3) they are a named NPC already tracked in the known list — lore NPCs are excluded (they have their own tracking system); do not use for unnamed or vaguely-described characters. Limit: at most 2 absent=true entries per scene. Absent memories must describe what happened TO or ABOUT the NPC, not the player's reaction to it. Do NOT use absent=true for NPCs who are merely mentioned in passing conversation.
 NPC DISAMBIGUATION: The known_npcs list shows each NPC's last known location [at:...] and a short description. When the narration uses a name or descriptor that could match multiple NPCs, prefer the NPC whose location matches <current_location> or who is described as being physically present. An NPC [at:FarAwayPlace] is unlikely to appear at <current_location> without the narration explicitly describing their arrival.
 about_npc (in memory_updates): If the memory is primarily ABOUT ANOTHER NPC (not the player), set about_npc to that other NPC's npc_id. Examples: NPC A is told something about NPC B → memory on A with about_npc=B's id. NPC A witnesses NPC B doing something → memory on A with about_npc=B's id. If the memory is about the player or a general event, set about_npc to null.
 IMPORTANT: If the player directly tells an NPC something about another NPC (gossip, warning, lie, compliment, romantic suggestion), this MUST be captured as its own memory_update with about_npc set — even if other events also happened to that NPC in the same scene. An NPC can have multiple memories per scene if distinctly different events occurred.
 deceased_npcs: list NPCs (by npc_id) whose death is DEPICTED BY THE NARRATOR as it happens. This includes BOTH explicit deaths AND deaths described through physical sensation or literary language. Qualifying descriptions include: they collapse / are killed / stop breathing / go limp / their movement stops and does not resume / resistance ceases permanently / consumed by fire / destroyed / pulled under with no return described / body goes still / the struggle ended. LITERARY deaths count: e.g. "the legs kicked twice and then were still" or "the resistance left them" or "they ceased" — if the prose makes clear that a living character has become permanently non-living, mark them deceased. The death does not need to use the words "dead" or "died" — physical cessation described as final qualifies.
-CRITICAL: Do NOT mark an NPC as deceased if their death is only CLAIMED, REPORTED, or ALLEGED by another character in dialog (e.g. someone says "Leo ist tot"). Dialog claims about death are unreliable information — characters lie, bluff, or may be wrong. Only narrator-described, physically-witnessed deaths count. Never include NPCs already marked [DECEASED].
+CRITICAL: Do NOT mark an NPC as deceased if their death is only CLAIMED, REPORTED, or ALLEGED by another character in dialog (e.g. someone says "Leo is dead"). Dialog claims about death are unreliable — characters lie, bluff, or may be wrong. Only narrator-confirmed deaths count — the player character need not have directly witnessed the death; it suffices that the narrator depicts or unambiguously confirms the outcome (e.g. an NPC goes permanently silent after a lethal event at their location, the narrator describes the absence of a presence that was there before). Never include NPCs already marked [DECEASED].
 lore_npcs: ONLY for named persons established in this scene as historically or narratively significant, but who have NEVER been and are NOT NOW physically present. Use this for dead mentors whose legacy drives the story, missing persons whose fate is central, historical figures whose past actions echo into the present. Rules: (1) They must be NAMED and clearly significant — not just mentioned in passing. (2) Do NOT use for corpses or physically present characters — use new_npcs for those, even if dead. (3) Do NOT include NPCs already marked [LORE] or any other marker in the known_npcs list — they are already tracked. (4) Only add when the narration establishes them as relevant to the ongoing story. NPCs marked [LORE] in known_npcs can receive memory_updates using their npc_id.
-exited_npc_ids: list the npc_id of each NPC whose PHYSICAL DEPARTURE from the scene was explicitly described in this narration — they walked out, left through a door, were escorted away, said goodbye and left. Use their npc_id from the known_npcs list. Do NOT include: NPCs who are merely mentioned or talked about; NPCs who were never present; NPCs who only paused at a door but the narration ends with them still present. Empty list if no explicit departures occurred."""
+exited_npc_ids: list the npc_id of each NPC whose PHYSICAL DEPARTURE from the scene was explicitly described in this narration — they walked out, left through a door, were escorted away, said goodbye and left. Use their npc_id from the known_npcs list. Do NOT include: NPCs who are merely mentioned or talked about; NPCs who were never present; NPCs who only paused at a door but the narration ends with them still present. Empty list if no explicit departures occurred.
+CROSS-FIELD CONSISTENCY — check before submitting: If your scene_context describes an NPC as dying or dead (e.g. "while X dies", "X's last breath", "X stirbt", "während X stirbt", "X ist tot", "X's breathing stops", "X ceased", "X's struggle ended"), that NPC MUST appear in deceased_npcs. Your own scene_context is authoritative evidence — if you wrote that someone is in the act of dying there, they belong in deceased_npcs. This catches slow or literary deaths that span multiple scenes: even if the character was only "dying" last turn, once the final cessation is depicted (breathing stops, body stills, the transition completes), mark them deceased now."""
 
     prompt = f"""<narration>{narration}</narration>
 <player_character>{html.escape(game.player_name)}</player_character>
@@ -4460,6 +4889,28 @@ Extract all metadata from the narration above. Remember: {html.escape(game.playe
             }},
         )
         metadata = json.loads(response.content[0].text)
+        # Guard: schema minLength:1 is not enforced server-side when the model
+        # returns an empty string due to a transient glitch.  One retry is
+        # sufficient — if it fails again the exception fallback below handles it.
+        if not metadata.get("scene_context", "").strip():
+            log("[Metadata] scene_context empty on first attempt — retrying", level="warning")
+            response2 = _api_create_with_retry(
+                client, max_retries=1,
+                model=BRAIN_MODEL, max_tokens=METADATA_MAX_TOKENS,
+                system=system,
+                messages=[{"role": "user", "content": prompt}],
+                output_config={"format": {
+                    "type": "json_schema",
+                    "schema": NARRATOR_METADATA_SCHEMA,
+                }},
+            )
+            metadata2 = json.loads(response2.content[0].text)
+            if metadata2.get("scene_context", "").strip():
+                metadata = metadata2
+                log("[Metadata] scene_context recovered on retry")
+            else:
+                log("[Metadata] scene_context still empty after retry — keeping first result",
+                    level="warning")
         log(f"[Metadata] Extracted: {len(metadata.get('memory_updates', []))} memories, "
             f"{len(metadata.get('new_npcs', []))} new NPCs, "
             f"{len(metadata.get('lore_npcs', []))} lore figures, "
@@ -4680,6 +5131,8 @@ def _apply_narrator_metadata(game: GameState, metadata: dict,
     ctx = metadata.get("scene_context", "").strip()
     if ctx:
         game.current_scene_context = ctx
+    else:
+        log("[Metadata] scene_context empty — current_scene_context unchanged", level="warning")
 
     # Location update
     new_loc = metadata.get("location_update")
@@ -4690,6 +5143,9 @@ def _apply_narrator_metadata(game: GameState, metadata: dict,
     new_time = metadata.get("time_update")
     if new_time and new_time.strip().lower().replace(" ", "_") in TIME_PHASES:
         game.time_of_day = new_time.strip().lower().replace(" ", "_")
+        game.time_unchanged_scenes = 0
+    else:
+        game.time_unchanged_scenes += 1
 
     # NPC renames (delegate to existing logic via JSON roundtrip)
     renames = metadata.get("npc_renames", [])
@@ -4708,6 +5164,26 @@ def _apply_narrator_metadata(game: GameState, metadata: dict,
     # Snapshot after new_npcs but before lore so slug resolution only matches
     # freshly-created physical NPCs, not lore figures added afterward.
     post_new_npc_ids = {n["id"] for n in game.npcs}
+
+    # Resolve the intro_deceased list early (name-matching window is valid here),
+    # but the actual _process_deceased_npcs call is deferred until AFTER
+    # _apply_memory_updates(). Reason: _apply_memory_updates() resurrects any
+    # NPC marked deceased if the extractor wrote memories for them (force=True).
+    # An NPC that was created and killed in the same scene legitimately has
+    # memories — they should be stored, but the NPC must end up deceased.
+    intro_deceased = []
+    for nd in new_npcs:
+        if nd.get("deceased"):
+            matched = next(
+                (n for n in game.npcs
+                 if n["id"] not in pre_npc_ids
+                 and n["id"] in post_new_npc_ids
+                 and _normalize_for_match(n["name"]) == _normalize_for_match(nd["name"])),
+                None,
+            )
+            if matched:
+                intro_deceased.append({"npc_id": matched["id"]})
+                log(f"[NPC] New NPC '{matched['name']}' flagged deceased=true in same scene")
 
     # Lore figures (historically significant, never physically present)
     lore_npcs = metadata.get("lore_npcs", [])
@@ -4761,11 +5237,26 @@ def _apply_narrator_metadata(game: GameState, metadata: dict,
                               pre_turn_npc_ids=pre_npc_ids,
                               pre_turn_lore_ids=pre_lore_ids)
 
+    # Deferred: mark NPCs created AND killed in the same scene as deceased.
+    # Must run after _apply_memory_updates() — that function resurrects any
+    # deceased NPC it finds memories for (force=True). Running before it would
+    # have our marking silently undone. The memories ARE valid (the NPC acted
+    # in the scene); we just want them to end up deceased afterward.
+    if intro_deceased:
+        _process_deceased_npcs(game, intro_deceased, scene_present_ids=scene_present_ids)
+
     # Fallback death detection: catches off-screen deaths that the extractor's
     # physically-witnessed rule would miss (e.g. death heard but not seen by the
     # player character). Runs after all memories are stored so cross-NPC signals
     # are complete. See _check_death_corroboration() for threshold logic.
     _check_death_corroboration(game)
+
+    # Staleness retirement: demote NPCs that have been narratively silent for
+    # NPC_STALE_SCENES scenes regardless of active count. Runs here so that
+    # last_memory_scene is fully updated for this turn before the check fires.
+    # Also serves as the primary hook for sessions that rarely add new NPCs
+    # (the _process_new_npcs call-site would miss most turns without this).
+    _retire_distant_npcs(game)
 
 
 def _process_deceased_npcs(game: GameState, deceased_list: list,
@@ -4916,6 +5407,11 @@ full, its trigger fires as a hard narrative event —
 not optional, not avoidable. Reference clocks in arc_notes and narrator_guidance
 when they are ≥50% filled or have recently ticked — they signal what is at stake
 and what is coming. A nearly-full clock should create visible narrative pressure.
+CRITICAL: When referencing clocks in narrator_guidance or arc_notes, NEVER use
+the clock's internal name (e.g. "Mob Clock", "Betrayal Clock"). Describe the
+threat or consequence in narrative terms instead — "the mob is getting closer",
+"betrayal feels imminent" — so the Narrator can translate this into atmosphere
+without leaking game-mechanical labels into prose.
 
 When phase="aftermath": the planned story arc has concluded and the player chose
 to keep playing. Do NOT suggest wrapping up or pushing toward a final scene.
@@ -4997,8 +5493,12 @@ def build_director_prompt(game: GameState, latest_narration: str,
         if n.get("status") not in ("active", "background"):
             continue
         _ensure_npc_memory_fields(n)
+        # Include both observations and absent-mention memories so the Director
+        # can reflect on off-screen NPC developments (e.g. Eli confirmed transported).
+        # Mentions have low importance (3) and are visually distinct — the Director
+        # prompt already shows emotional_weight which signals the memory origin.
         recent_obs = [m for m in n.get("memory", [])
-                      if m.get("type") == "observation"][-8:]
+                      if m.get("type") in ("observation", "mention")][-8:]
         mem_text = "; ".join(
             f'{m.get("event", "")}({m.get("emotional_weight", "")})' for m in recent_obs
         )
@@ -5053,7 +5553,7 @@ def build_director_prompt(game: GameState, latest_narration: str,
         bp = game.story_blueprint
         transition_trigger = act.get("transition_trigger", "")
         thematic = bp.get("thematic_thread", "")
-        scene_range = act.get("scene_range", [1, 20])
+        scene_range = _safe_sr(act, fallback_start=1)
         past_range = game.scene_count > scene_range[1]
         past_range_attr = ' PAST_RANGE="true"' if past_range else ""
         story_info = (
@@ -5089,6 +5589,8 @@ def build_director_prompt(game: GameState, latest_narration: str,
     active_clocks = [c for c in game.clocks if not c.get("fired")]
     fired_clocks  = [c for c in game.clocks if c.get("fired")]
     clocks_lines = []
+    clock_cap_note = (f"({len(active_clocks)}/{MAX_ACTIVE_CLOCKS} active — "
+                      f"{'cap reached, do NOT add new clocks' if len(active_clocks) >= MAX_ACTIVE_CLOCKS else f'{MAX_ACTIVE_CLOCKS - len(active_clocks)} slot(s) remaining'})")
     for c in active_clocks:
         filled  = c.get("filled", 0)
         segs    = c.get("segments", 6)
@@ -5101,9 +5603,18 @@ def build_director_prompt(game: GameState, latest_narration: str,
         clocks_lines.append("fired (already triggered, no longer active):")
         for c in fired_clocks:
             clocks_lines.append(f'  - {c["name"]}: {c.get("trigger_description", "")}')
-    clocks_block = "<clocks>\n" + "\n".join(clocks_lines) + "\n</clocks>" if clocks_lines else ""
+    clocks_block = (f"<clocks {clock_cap_note}>\n" + "\n".join(clocks_lines) + "\n</clocks>"
+                    if clocks_lines else "")
 
-    return f"""<setting genre="{_xa(game.setting_genre)}" tone="{_xa(game.setting_tone)}"/>
+    # Current time context for Director — includes stale counter when frozen
+    _stale = game.time_unchanged_scenes
+    if game.time_of_day:
+        _stale_attr = f' stale_scenes="{_stale}"' if _stale >= TIME_STALE_THRESHOLD else ""
+        _time_block = f'\n<current_time{_stale_attr}>{html.escape(game.time_of_day)}</current_time>'
+    else:
+        _time_block = ""
+
+    return f"""<setting genre="{_xa(game.setting_genre)}" tone="{_xa(game.setting_tone)}"/>{_time_block}
 
 <scene_history>
 {log_text}
@@ -5129,10 +5640,10 @@ TONE RULE: narrator_guidance and npc_guidance MUST honor the story's tone ("{_xa
 
 Field instructions:
 - scene_summary: 2-3 sentence summary of what happened and WHY it matters (in {lang})
-- narrator_guidance: Specific direction for the next 1-2 scenes (in {lang}). When relevant, anchor the guidance to the thematic_thread from <story_arc> — surface the aspect of it most alive in the current moment.
+- narrator_guidance: Specific direction for the next 1-2 scenes (in {lang}). When relevant, anchor the guidance to the thematic_thread from <story_arc> — surface the aspect of it most alive in the current moment. TIME RULE: If <current_time stale_scenes> is present in context, time of day has not visibly advanced for that many scenes — your narrator_guidance MUST include a directive to anchor the next scene with at least one concrete atmospheric time cue (a shift in light quality, temperature, or ambient sound). FINAL ACT RULE: When phase is "ketsu_resolution" or "resolution", the insight and revelation phase is over. narrator_guidance MUST push toward a concrete, irreversible action or choice — not toward further reflection on what has already been established. Each scene in the final act should change something permanently: a decision made, a door closed, a relationship transformed. If the player has been circling the same existential question for two or more scenes, name that directly in your guidance and force a new variable into the scene.
 - npc_guidance: Array of {{"npc_id": "npc_1", "guidance": "what this NPC should do/feel next"}} — guidance text in {lang}
 - pacing: one of tension_rising, building, climax, breather, resolution
-- npc_reflections: Only for NPCs listed in <reflect> tags. Each object has:
+- npc_reflections: Only for NPCs listed in <reflect> tags. NPCs with status=lore or status=deceased appear in the overview for context only — NEVER include them in npc_reflections. Each object has:
   - npc_id: the NPC's ID from the <reflect> tag
   - reflection: 1-2 sentence higher-level insight (in {lang})
   - tone: 1-3 lowercase English words, underscore-separated, capturing the emotional shift (e.g. 'protective_guilt', 'reluctant_trust')
@@ -5143,11 +5654,13 @@ Field instructions:
   - about_npc: If this reflection is primarily about the NPC's feelings toward ANOTHER NPC (not the player), set to that NPC's npc_id. Example: Sophie reflects on her growing attraction to Bruce → about_npc="npc_2". null if the reflection is about the player or general.
   - agenda: NPC's hidden goal (max 8 words, only if needs_profile="true"), null otherwise
   - instinct: NPC's psychological signature under real pressure (max 8 words, only if needs_profile="true"), null otherwise. NOT job demeanor or genre convention — the specific human underneath: what they do when their strategy fails, what betrays them, what is slightly irrational but inevitable. BAD: "stays calm under pressure" / "methodical and efficient" / "evaluates before acting". GOOD: "goes quiet and hyper-precise when cornered" / "agrees then quietly does what he intended" / "dark humor until something breaks, then overcorrects". Base on this NPC's description and story observations. IMPORTANT: instinct is set ONCE (first reflection, needs_profile=true) and never updated — it is the NPC's wiring, not their mood.
+  - disposition_shift: Set to "improve" or "worsen" ONLY when the NPC's accumulated story arc clearly justifies a one-step organic change in their relationship to the player — e.g. an NPC who has consistently helped and trusted over many scenes should shift from neutral to friendly, or a betrayal should shift from friendly to neutral. This is NOT a reward for a single good roll; it reflects a relationship that has genuinely changed through narrative accumulation. Leave null in the vast majority of cases. One step only per reflection. The direction must match the tone of the reflection.
 - arc_notes: Brief story arc progress observation
 - act_transition: Evaluate whether the current act's <transition_trigger> has been fulfilled by recent events. Set to true if:
   (a) the narrative condition described in the trigger has clearly been met, OR
   (b) the story has moved PAST the act's scene_range (PAST_RANGE="true") and the trigger's spirit has been approximately met.
   Set to false only if the trigger condition is clearly unmet AND we are still within scene_range. The scene_range is a fallback — content-driven transitions via this flag produce better pacing.
+- new_clocks: Propose new threat clocks ONLY when ALL conditions are met: (1) a concrete new danger has emerged in the last 1-2 scenes that is NOT already tracked by an existing clock in <clocks>, (2) the threat is specific enough to have a concrete, narratively meaningful trigger_description (what happens when the clock fills), (3) the threat is genuinely new — not a re-framing of an existing one. Leave this array EMPTY when any condition is unmet. When creating a clock: name (short, evocative), clock_type ("threat" or "scheme"), segments (4–8 based on urgency — 4 for imminent, 6 for medium, 8 for slow-burn), filled (1 to show the threat has already begun, 0 only if it is entirely latent), trigger_description (the concrete consequence when filled), owner ("world" or the NPC name driving this threat). Maximum 2 new clocks per Director run — default is empty array.
 
 If a <reflect> tag has a last_reflection attribute, write a NEW insight that builds on, deepens, or contradicts it. Do NOT repeat the same theme or emotional tone. If last_tone is present, use it as the emotional register to evolve from — the texture and arc direction of the previous state. If last_tone_key is present, use it as the enum category to move away from when choosing the new tone_key (avoid repeating the identical value unless deliberate stagnation is the point).
 </task>"""
@@ -5232,13 +5745,17 @@ def _apply_director_guidance(game: GameState, guidance: dict):
         "act_transition":    guidance.get("act_transition"),
         "npc_reflections": [
             {
-                "npc_id":      r.get("npc_id", ""),
-                "tone":        r.get("tone", ""),
-                "tone_key":    r.get("tone_key", ""),
-                "updated_arc": r.get("updated_arc"),
+                "npc_id":           r.get("npc_id", ""),
+                "tone":             r.get("tone", ""),
+                "tone_key":         r.get("tone_key", ""),
+                "updated_arc":      r.get("updated_arc"),
+                "disposition_shift": r.get("disposition_shift"),
             }
             for r in (guidance.get("npc_reflections") or [])
         ],
+        # Diagnostic only — actual clock objects are appended to game.clocks below.
+        # Stored here so Elvira session log can record which clocks were created.
+        "new_clocks": guidance.get("new_clocks") or [],
     }
 
     # Handle act transition: Director signals that the current act's
@@ -5269,7 +5786,7 @@ def _apply_director_guidance(game: GameState, guidance: dict):
             for i in range(act_idx):
                 prev_id = f"act_{i}"
                 if prev_id not in bp["triggered_transitions"]:
-                    sr = acts[i].get("scene_range", [1, 20]) if i < len(acts) else [1, 20]
+                    sr = _safe_sr(acts[i], fallback_start=i * 5 + 1) if i < len(acts) else [1, 20]
                     if game.scene_count > sr[1]:
                         bp["triggered_transitions"].append(prev_id)
                         log(f"[Director] Back-filled skipped act: {prev_id} "
@@ -5303,11 +5820,28 @@ def _apply_director_guidance(game: GameState, guidance: dict):
     # Only NPCs whose reflection was actually stored count as "addressed" for the fallback below.
     # Reflections rejected as empty or truncated must NOT count — otherwise the fallback skips
     # them and _needs_reflection stays True permanently (infinite Director loop).
+    # Duplicate-entry guard: check successfully_reflected_ids at loop entry — a duplicate entry
+    # is only skipped once the first entry has been successfully stored. This allows a second
+    # duplicate entry to be tried if the first was rejected (empty/truncated reflection), which
+    # is strictly safer than the alternative (blocking on first seen, even if first failed).
     successfully_reflected_ids: set = set()
     for ref in guidance.get("npc_reflections", []):
         npc_id = ref.get("npc_id", "")
+        if npc_id in successfully_reflected_ids:
+            log(f"[Director] Skipped duplicate reflection entry for {npc_id} "
+                f"(already successfully stored in this Director run)", level="warning")
+            continue
         npc = _find_npc(game, npc_id)
         if not npc:
+            continue
+        # Guard: only active/background NPCs may receive Director reflections.
+        # Lore and deceased NPCs appear in the Director's npc_overview but have
+        # no <reflect> tags — if the Director hallucinates a reflection entry for
+        # them anyway (e.g. tone="absent", arc=null), discard it here.
+        if npc.get("status") not in ("active", "background"):
+            log(f"[Director] Skipped reflection for '{npc.get('name', '?')}' "
+                f"— status='{npc.get('status', '?')}' not eligible for reflections",
+                level="warning")
             continue
         _ensure_npc_memory_fields(npc)
 
@@ -5333,6 +5867,7 @@ def _apply_director_guidance(game: GameState, guidance: dict):
         npc["_needs_reflection"] = False
         npc["importance_accumulator"] = 0
         npc["last_reflection_scene"] = game.scene_count
+        npc["last_memory_scene"] = game.scene_count
         successfully_reflected_ids.add(npc_id)
 
         # Fill empty agenda/instinct if Director suggested them
@@ -5395,6 +5930,30 @@ def _apply_director_guidance(game: GameState, guidance: dict):
                 log(f"[Director] Description updated for {npc['name']}: "
                     f"'{old_desc[:60]}' → '{new_desc[:60]}'")
 
+        # Apply organic disposition shift when Director signals it.
+        # Shifts are rare — only when the accumulated arc genuinely warrants a step
+        # change. Guards: only valid shift values accepted; cannot exceed the poles
+        # (hostile can only worsen to itself, loyal can only improve to itself).
+        disp_shift = (ref.get("disposition_shift") or "").strip().lower()
+        if disp_shift in ("improve", "worsen"):
+            improve_steps = {
+                "hostile": "distrustful", "distrustful": "neutral",
+                "neutral": "friendly", "friendly": "loyal",
+            }
+            worsen_steps = {v: k for k, v in improve_steps.items()}
+            old_disp = npc.get("disposition", "neutral")
+            if disp_shift == "improve":
+                new_disp = improve_steps.get(old_disp)
+            else:
+                new_disp = worsen_steps.get(old_disp)
+            if new_disp and new_disp != old_disp:
+                npc["disposition"] = new_disp
+                log(f"[Director] Disposition shift for {npc['name']}: "
+                    f"{old_disp} → {new_disp} (Director: {disp_shift})")
+            else:
+                log(f"[Director] Disposition shift '{disp_shift}' for "
+                    f"{npc['name']} skipped — already at pole ({old_disp})")
+
         # Consolidate after adding reflection
         _consolidate_memory(npc)
 
@@ -5413,6 +5972,60 @@ def _apply_director_guidance(game: GameState, guidance: dict):
             npc["importance_accumulator"] = 0
             log(f"[Director] Reset stale _needs_reflection for {npc.get('name','?')} "
                 f"(reflection not produced or rejected)")
+
+    # New clocks proposed by the Director.
+    # Deduplicate by normalised name to prevent the Director from re-creating a
+    # clock that was already added by call_opening_metadata or a previous Director run.
+    # ID assignment mirrors _process_game_data so clock IDs stay consistent.
+    new_clocks = guidance.get("new_clocks") or []
+    if new_clocks:
+        active_clock_count = sum(1 for c in game.clocks if not c.get("fired"))
+        if active_clock_count >= MAX_ACTIVE_CLOCKS:
+            log(f"[Director] Clock cap reached ({active_clock_count}/{MAX_ACTIVE_CLOCKS}) "
+                f"— skipping {len(new_clocks)} proposed clock(s)", level="warning")
+            new_clocks = []
+        else:
+            # Limit new additions to not exceed the cap
+            slots_free = MAX_ACTIVE_CLOCKS - active_clock_count
+            if len(new_clocks) > slots_free:
+                log(f"[Director] Clock cap: trimming proposed clocks from "
+                    f"{len(new_clocks)} to {slots_free}")
+                new_clocks = new_clocks[:slots_free]
+        existing_names = {
+            _normalize_for_match(c.get("name", "")) for c in game.clocks
+        }
+        max_clock_num = 0
+        for c in game.clocks:
+            cid_match = re.match(r'clock_(\d+)', str(c.get("id", "")))
+            if cid_match:
+                max_clock_num = max(max_clock_num, int(cid_match.group(1)))
+        added = []
+        for c in new_clocks:
+            name = c.get("name", "").strip()
+            if not name:
+                continue
+            if _normalize_for_match(name) in existing_names:
+                log(f"[Director] Skipped duplicate clock: '{name}' already tracked",
+                    level="warning")
+                continue
+            max_clock_num += 1
+            clock_entry = {
+                "id":                  f"clock_{max_clock_num}",
+                "name":                name,
+                "clock_type":          c.get("clock_type", "threat"),
+                "segments":            max(2, min(10, int(c.get("segments", 6)))),
+                "filled":              max(0, min(int(c.get("filled", 1)),
+                                           max(2, min(10, int(c.get("segments", 6)))))),
+                "trigger_description": c.get("trigger_description", ""),
+                "owner":               c.get("owner", "world"),
+                "fired":               False,
+                "fired_at_scene":      0,
+            }
+            game.clocks.append(clock_entry)
+            existing_names.add(_normalize_for_match(name))
+            added.append(name)
+        if added:
+            log(f"[Director] Added {len(added)} new clock(s): {added}")
 
     log(f"[Director] Guidance applied: pacing={guidance.get('pacing', '?')}")
 
@@ -5441,8 +6054,20 @@ def reset_stale_reflection_flags(game: GameState) -> None:
 # ===============================================================
 
 def _time_ctx(game: "GameState") -> str:
-    """Escaped <time> element, or empty string if time_of_day is unset."""
-    return f'\n<time>{html.escape(game.time_of_day)}</time>' if game.time_of_day else ""
+    """Escaped <time> element, or empty string if time_of_day is unset.
+    When time_of_day has not advanced for TIME_STALE_THRESHOLD or more scenes,
+    appends an inline directive so the Narrator includes at least one concrete
+    atmospheric cue that marks time as passing (light quality, temperature, sound).
+    This self-correction fires before the Elvira violation threshold (10 scenes)."""
+    if not game.time_of_day:
+        return ""
+    stale = game.time_unchanged_scenes
+    if stale >= TIME_STALE_THRESHOLD:
+        hint = (f" — static for {stale} scenes: include one concrete atmospheric"
+                f" cue this scene showing time has passed"
+                f" (shift in light quality, temperature, or ambient sound)")
+        return f'\n<time>{html.escape(game.time_of_day)}{hint}</time>'
+    return f'\n<time>{html.escape(game.time_of_day)}</time>'
 
 
 def _loc_hist(game: "GameState") -> str:
@@ -5462,7 +6087,7 @@ def build_new_game_prompt(game: GameState) -> str:
 {_scene_header(game)}
 <location>{html.escape(game.current_location)}</location>{_loc_hist(game)}{_time_ctx(game)}
 <situation>{html.escape(game.current_scene_context)}</situation>{crisis}
-{story}</scene>
+{_status_context_block(game)}{story}</scene>
 <task>
 Opening scene: 3-4 paragraphs. Introduce 2 NPCs through action/dialog. Immediate tension. Create one threat clock.
 IMPORTANT: The <character> above is the PLAYER CHARACTER (the "you" in narration). Do NOT include them as an NPC. NPCs are OTHER people the player meets.
@@ -5715,11 +6340,14 @@ def build_dialog_prompt(game: GameState, brain: dict, player_words: str = "",
     # Director guidance injection
     director_block = ""
     dg = game.director_guidance
-    if dg and dg.get("narrator_guidance"):
-        director_block = f'\n<director_guidance>{html.escape(dg["narrator_guidance"])}</director_guidance>'
-        # NPC-specific guidance
+    if dg:
+        if dg.get("narrator_guidance"):
+            director_block = f'\n<director_guidance>{html.escape(dg["narrator_guidance"])}</director_guidance>'
+        # NPC-specific guidance — independent of narrator_guidance
         for npc_id, guidance in dg.get("npc_guidance", {}).items():
             director_block += f'\n<npc_note for="{npc_id}">{html.escape(guidance)}</npc_note>'
+        if dg.get("arc_notes"):                      # independent — survives empty narrator_guidance
+            director_block += f'\n<arc_notes>{html.escape(dg["arc_notes"])}</arc_notes>'
 
     return f"""<scene type="dialog" n="{game.scene_count}">
 {_scene_header(game)}
@@ -5727,7 +6355,7 @@ def build_dialog_prompt(game: GameState, brain: dict, player_words: str = "",
 <location>{html.escape(game.current_location)}</location>{_loc_hist(game)}{_time_ctx(game)}
 {npc}{npcs_section}{wl}{crisis}
 {pacing}{director_block}
-{_story_context_block(game)}{_recent_events_block(game)}</scene>
+{_status_context_block(game)}{_story_context_block(game)}{_recent_events_block(game)}{_narrator_clocks_block(game)}{_npc_relations_block(game, _present_ids)}</scene>
 <task>2-3 paragraphs of immersive narration. Let the world breathe around the conversation — small details of place, light, sound, and texture that make this moment feel inhabited. Something between the characters should shift by the end. Let the current act's mood (from <story_arc>) shape the undertone of the exchange — even a quiet conversation carries the weight of the surrounding phase. If <director_guidance> is present, follow its direction while maintaining your creative voice.</task>"""
 
 
@@ -5813,10 +6441,14 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
     # Director guidance injection
     director_block = ""
     dg = game.director_guidance
-    if dg and dg.get("narrator_guidance"):
-        director_block = f'\n<director_guidance>{html.escape(dg["narrator_guidance"])}</director_guidance>'
+    if dg:
+        if dg.get("narrator_guidance"):
+            director_block = f'\n<director_guidance>{html.escape(dg["narrator_guidance"])}</director_guidance>'
+        # NPC-specific guidance — independent of narrator_guidance
         for npc_id, guidance in dg.get("npc_guidance", {}).items():
             director_block += f'\n<npc_note for="{npc_id}">{html.escape(guidance)}</npc_note>'
+        if dg.get("arc_notes"):                      # independent — survives empty narrator_guidance
+            director_block += f'\n<arc_notes>{html.escape(dg["arc_notes"])}</arc_notes>'
 
     return f"""<scene type="action" n="{game.scene_count}">
 {_scene_header(game)}
@@ -5827,7 +6459,7 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
 <location>{html.escape(game.current_location)}</location>{_loc_hist(game)}{_time_ctx(game)}
 {npc}{npcs_section}{wl}{flags}{agency}
 {pacing}{director_block}
-{_story_context_block(game)}{_recent_events_block(game)}</scene>
+{_status_context_block(game)}{_story_context_block(game)}{_recent_events_block(game)}{_narrator_clocks_block(game)}{_npc_relations_block(game, _present_ids)}</scene>
 <task>2-4 paragraphs of immersive narration. Let the roll consequence open new story questions rather than just closing old ones — the scene should end in motion, with something shifted. Let the current act's mood (from <story_arc>) shape the texture of this moment — a STRONG_HIT in a desperate phase still tastes of the surrounding darkness. If <director_guidance> is present, follow its direction while maintaining your creative voice.</task>"""
 
 
@@ -5864,6 +6496,7 @@ def _process_game_data(game: GameState, data: dict, force_npcs: bool = True):
             nd.setdefault("aliases", [])
             nd.setdefault("importance_accumulator", 0)
             nd.setdefault("last_reflection_scene", 0)
+            nd.setdefault("last_memory_scene", 0)
             nd.setdefault("last_location", game.current_location or "")
             nd.setdefault("arc", "")           # Narrative trajectory — set by Director on first reflection
             nd.setdefault("absent_until_scene", 0)  # Exit suppression — always 0 for opening NPCs
@@ -5880,6 +6513,35 @@ def _process_game_data(game: GameState, data: dict, force_npcs: bool = True):
                     m["importance"] = imp
                     m["type"] = m.get("type", "observation")
                     m["_score_debug"] = f"opening game_data | {dbg}"
+            # Safety net: create seed memory for hollow opening NPCs (no memories
+            # provided by the opening extractor).  Mirrors _process_new_npcs logic:
+            # ensures last_memory_scene is set, the established-character guard in
+            # _process_npc_renames/_process_npc_details can protect them, and the
+            # Director can include them in reflections on the first cycle.
+            if not nd["memory"]:
+                # Use description as seed event if available; fall back to the name.
+                # Note: _apply_name_sanitization runs after this loop, so we strip
+                # any parenthetical annotation from the fallback string manually.
+                _raw_seed_name = nd.get("name", "?")
+                _clean_seed_name = _raw_seed_name.split("(")[0].strip() if "(" in _raw_seed_name else _raw_seed_name
+                seed_event = nd.get("description", "") or f"{_clean_seed_name} appeared"
+                seed_disp  = _normalize_disposition(nd.get("disposition", "neutral"))
+                _disp_to_emotion = {
+                    "hostile": "hostile", "distrustful": "suspicious",
+                    "neutral": "neutral", "friendly": "curious", "loyal": "trusting",
+                }
+                seed_emotion = _disp_to_emotion.get(seed_disp, "neutral")
+                seed_imp, seed_dbg = score_importance(seed_emotion, seed_event, debug=True)
+                seed_imp = max(seed_imp, 3)
+                nd["memory"].append({
+                    "scene": game.scene_count,
+                    "event": seed_event,
+                    "emotional_weight": seed_emotion,
+                    "importance": seed_imp,
+                    "type": "observation",
+                    "_score_debug": f"auto-seed from opening game_data | {seed_dbg}",
+                })
+                nd["last_memory_scene"] = game.scene_count
         # Filter out NPCs that match the player character name
         player_norm = _normalize_for_match(game.player_name)
         data["npcs"] = [
@@ -5921,6 +6583,7 @@ def _process_game_data(game: GameState, data: dict, force_npcs: bool = True):
         game.current_scene_context = data["scene_context"]
     if data.get("time_of_day") and data["time_of_day"] in TIME_PHASES:
         game.time_of_day = data["time_of_day"]
+        game.time_unchanged_scenes = 0
 
 
 def parse_narrator_response(game: GameState, raw: str) -> str:
@@ -6118,6 +6781,7 @@ def _apply_memory_updates(game: GameState, json_text: str,
             if not isinstance(u, dict) or "npc_id" not in u:
                 continue
             npc = _find_npc(game, u["npc_id"])
+            is_absent_mention = bool(u.get("absent"))
 
             # Fuzzy fallback: try word-overlap matching before creating a stub
             # v0.9.29: additional first-name mismatch guard
@@ -6144,8 +6808,11 @@ def _apply_memory_updates(game: GameState, json_text: str,
                         npc = fuzzy_candidate
                         log(f"[NPC] memory_update fuzzy-matched '{u['npc_id']}' → '{npc['name']}'")
 
-            # Auto-create NPC stub if not found (safety net when <new_npcs> was omitted)
-            if not npc and u["npc_id"] and u["npc_id"] not in ("world", "player", ""):
+            # Auto-create NPC stub if not found (safety net when <new_npcs> was omitted).
+            # Exception: absent=true entries reference off-screen NPCs that are already
+            # tracked — never create a new stub for an absent mention.
+            if (not npc and u["npc_id"] and u["npc_id"] not in ("world", "player", "")
+                    and not u.get("absent")):
                 npc_name = u["npc_id"]
                 # Skip technical ID references (e.g. "npc_4") — this is a Narrator
                 # reference error to an existing NPC, not a new character
@@ -6188,10 +6855,18 @@ def _apply_memory_updates(game: GameState, json_text: str,
                         "aliases": [],
                         "importance_accumulator": 0,
                         "last_reflection_scene": 0,
+                        "last_memory_scene": 0,
                         "last_location": game.current_location or "",
                     }
                     game.npcs.append(npc)
                     log(f"[NPC] Auto-created stub NPC from memory_update: {npc_name}")
+
+            # Absent mention for unknown NPC — no auto-stub created, log and skip.
+            if is_absent_mention and not npc:
+                npc_ref = u.get("npc_id", "?")
+                log(f"[NPC] absent mention SKIPPED — npc_id '{npc_ref}' not found "
+                    f"and no auto-stub for absent entries", level="warning")
+                continue
 
             # Presence guard: reject memory updates for NPCs that were not in this
             # scene.  Conditions for rejection (ALL must be true):
@@ -6205,7 +6880,9 @@ def _apply_memory_updates(game: GameState, json_text: str,
             #     would permanently prevent resurrection via memory_updates)
             #   - pre_turn_npc_ids is provided AND the NPC was known before this turn
             #     (freshly-created NPCs and auto-stubs are always allowed through)
+            #   EXCEPTION: absent=true entries bypass the presence guard (handled below).
             if (npc
+                    and not is_absent_mention
                     and scene_present_ids is not None
                     and npc["id"] not in scene_present_ids
                     and npc.get("status") not in ("lore", "deceased")
@@ -6218,6 +6895,61 @@ def _apply_memory_updates(game: GameState, json_text: str,
                 continue
 
             if npc:
+                # absent=true: NPC was mentioned off-screen with narrative significance.
+                # Conditions for using the absent (mention) path — ALL must hold:
+                #   (a) Extractor flagged absent=true
+                #   (b) NPC is not deceased (out of story — no updates)
+                #   (c) NPC is not lore (already presence-guard-exempt; lore NPCs use the
+                #       normal path so they receive full importance + accumulator weight)
+                if (is_absent_mention
+                        and npc.get("status") != "deceased"
+                        and npc.get("status") != "lore"):
+                    # Rate-limit: max 1 absent-mention per NPC per scene,
+                    # and max 2 absent-mentions globally per scene.
+                    absent_this_scene = sum(
+                        1 for m in npc.get("memory", [])
+                        if isinstance(m, dict)
+                        and m.get("scene") == game.scene_count
+                        and m.get("type") == "mention"
+                    )
+                    total_absent_this_scene = sum(
+                        1 for n in game.npcs
+                        for m in n.get("memory", [])
+                        if isinstance(m, dict)
+                        and m.get("scene") == game.scene_count
+                        and m.get("type") == "mention"
+                    )
+                    if absent_this_scene > 0 or total_absent_this_scene >= 2:
+                        log(f"[NPC] absent mention SKIPPED for '{npc.get('name','?')}' — "
+                            f"cap reached (total absent this scene: {total_absent_this_scene})",
+                            level="warning")
+                        continue
+                    # Absent mentions: do NOT reactivate background NPCs, do NOT
+                    # update last_location — the NPC stayed where they were.
+                    _ensure_npc_memory_fields(npc)
+                    npc["memory"].append({
+                        "scene": game.scene_count,
+                        "event": u.get("event", ""),
+                        "emotional_weight": u.get("emotional_weight", "neutral"),
+                        "importance": 3,   # Fixed low importance — weak off-screen signal
+                        "type": "mention",
+                        "about_npc": _resolve_about_npc(game, u.get("about_npc"),
+                                                        owner_id=npc.get("id")),
+                    })
+                    # Absent mentions do not drive Director reflections — importance
+                    # accumulator intentionally not incremented.
+                    npc["last_memory_scene"] = game.scene_count
+                    _consolidate_memory(npc)
+                    log(f"[NPC] Absent mention memory for {npc.get('name','?')} "
+                        f"(scene {game.scene_count}): {u.get('event','')[:60]}")
+                    continue
+                elif is_absent_mention and npc.get("status") == "deceased":
+                    log(f"[NPC] absent mention SKIPPED for '{npc.get('name','?')}' — deceased",
+                        level="warning")
+                    continue
+                # else: absent=true for lore NPCs, or absent=false — fall through to normal path
+
+                # Normal path: NPC physically present in scene.
                 # Resurrect deceased NPCs if the extractor reports them as active
                 # (exact npc_id match = extractor considers them physically present)
                 if npc.get("status") == "deceased":
@@ -6244,6 +6976,7 @@ def _apply_memory_updates(game: GameState, json_text: str,
                     "about_npc": _resolve_about_npc(game, u.get("about_npc"), owner_id=npc.get("id")),
                     "_score_debug": score_debug,
                 })
+                npc["last_memory_scene"] = game.scene_count
 
                 # Update importance accumulator for reflection triggering
                 npc["importance_accumulator"] = npc.get("importance_accumulator", 0) + importance
@@ -6873,7 +7606,7 @@ def start_new_game(client: anthropic.Anthropic, creation_data: dict,
         scene_intensity_history=[],
         player_wishes=creation_data.get("wishes", ""),
         content_lines=creation_data.get("content_lines", ""),
-        backstory=creation_data.get("custom_desc", ""),
+        backstory=creation_data.get("backstory", "") or creation_data.get("custom_desc", ""),
     )
     log(f"[NewGame] Character created: {game.player_name} at {game.current_location}")
 
@@ -6918,6 +7651,18 @@ def start_new_game(client: anthropic.Anthropic, creation_data: dict,
     # Replaces the old inline <game_data> approach — narrator now writes pure prose.
     opening_data = call_opening_metadata(client, narration, game, config)
     _process_game_data(game, opening_data)
+
+    # Guard: call_opening_metadata swallows all exceptions and returns an empty
+    # fallback dict — game.npcs being empty here means the call silently failed.
+    # Retry once so a transient API error doesn't produce an NPC-less session.
+    if not game.npcs:
+        log("[NewGame] WARNING: call_opening_metadata returned 0 NPCs — retrying",
+            level="warning")
+        opening_data = call_opening_metadata(client, narration, game, config)
+        _process_game_data(game, opening_data)
+        if not game.npcs:
+            log("[NewGame] ERROR: call_opening_metadata retry yielded 0 NPCs — "
+                "session will proceed without NPC system data", level="error")
 
     # Opening-scene NPCs are extracted FROM the narration — they are introduced
     # by definition. _process_game_data defaults to introduced=False (legacy),
@@ -7174,7 +7919,7 @@ def build_new_chapter_prompt(game: GameState) -> str:
 <situation>{html.escape(game.current_scene_context)}</situation>
 {campaign}
 {npc_block}{evolutions_block}
-{story}</scene>
+{_status_context_block(game)}{story}</scene>
 <task>
 Chapter {game.chapter_number} opening: 3-4 paragraphs. This is a NEW chapter in an ongoing campaign.
 - Reference the character's history and relationships naturally (don't recap everything, just hint)
@@ -7225,6 +7970,7 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
     game.scene_intensity_history = []
     game.story_blueprint = {}  # Cleared; new blueprint generated after opening scene
     game.time_of_day = ""      # Reset -- new chapter, new time context
+    game.time_unchanged_scenes = 0
     game.location_history = []  # Reset -- new chapter, fresh location tracking
     game.director_guidance = {}  # Reset -- old pacing/guidance shouldn't carry over
 
@@ -7324,6 +8070,26 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
     # defaults, then merge returning NPCs back.
     game.npcs = []
     _process_game_data(game, opening_data)
+
+    # Guard: if scene_context is still the placeholder text the call silently failed.
+    # We cannot use `if not game.current_scene_context:` here — the placeholder set
+    # above ("New chapter. Open threads:..." / "A new chapter begins.") is already
+    # non-empty, so a silently-failing call leaves it unchanged rather than empty.
+    # Solution: capture the placeholder before _process_game_data and compare after.
+    _chapter_ctx_placeholder = (
+        f"New chapter. Open threads: {'; '.join(threads[:3])}" if threads
+        else "A new chapter begins."
+    )
+    if game.current_scene_context == _chapter_ctx_placeholder:
+        log("[Chapter] WARNING: call_opening_metadata returned no scene_context — retrying",
+            level="warning")
+        opening_data = call_opening_metadata(client, narration, game, config,
+                                             known_npcs=returning_npcs)
+        game.npcs = []
+        _process_game_data(game, opening_data)
+        if game.current_scene_context == _chapter_ctx_placeholder:
+            log("[Chapter] ERROR: call_opening_metadata retry yielded no scene_context — "
+                "chapter will proceed with incomplete metadata", level="error")
 
     # Chapter-opening NPCs extracted from narration are introduced by definition
     for npc in game.npcs:
@@ -7543,6 +8309,10 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
                 "id": pending_revs[0].get("id"),
                 "confirmed": revelation_confirmed,
             }
+        # NPC agency ticks — fires on scene multiples regardless of action/dialog
+        _, agency_clock_events = check_npc_agency(game)
+        if agency_clock_events and game.session_log:
+            game.session_log[-1]["clock_events"].extend(agency_clock_events)
         # Autonomous clock ticks — world moves forward independent of player rolls
         auto_clock_events = _tick_autonomous_clocks(game)
         if auto_clock_events and game.session_log:
@@ -7750,7 +8520,7 @@ def _check_story_completion(game: GameState):
     if not acts:
         return
     final_act = acts[-1]
-    final_end = final_act.get("scene_range", [14, 20])[1]
+    final_end = _safe_sr(final_act, fallback_start=14)[1]
 
     # Primary: penultimate act was Director-confirmed → final act narratively entered
     # Use `or []` to guard against triggered_transitions=None (can occur when the
@@ -7770,7 +8540,7 @@ def _check_story_completion(game: GameState):
             bp["triggered_transitions"] = []
         for i, act in enumerate(acts[:-1]):  # all acts except the final one
             act_id = f"act_{i}"
-            sr = act.get("scene_range", [1, 20])
+            sr = _safe_sr(act, fallback_start=i * 5 + 1)
             if game.scene_count > sr[1] and act_id not in bp["triggered_transitions"]:
                 bp["triggered_transitions"].append(act_id)
                 log(f"[Story] Back-filled transition: {act_id} "

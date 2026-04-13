@@ -6,7 +6,7 @@
 [![NiceGUI](https://img.shields.io/badge/UI-NiceGUI-4CAF50?logo=vuedotjs&logoColor=white)](https://nicegui.io)
 [![Claude AI](https://img.shields.io/badge/AI-Claude%20Haiku%20%2B%20Sonnet-orange?logo=anthropic&logoColor=white)](https://anthropic.com)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-lightgrey)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-0.9.94-blueviolet)]()
+[![Version](https://img.shields.io/badge/Version-0.9.96-blueviolet)]()
 [![Mobile Ready](https://img.shields.io/badge/Mobile-PWA%20Ready-success?logo=pwa&logoColor=white)]()
 
 ---
@@ -31,7 +31,7 @@ EdgeTales is a self-hosted, AI-driven solo tabletop RPG engine. Type what your c
 
 **Narrative**
 - Free-form player input - type anything, the AI understands your intent
-- Multi-agent AI architecture: fast *Brain* (Haiku) parses mechanics, creative *Narrator* (Sonnet) writes the scene, *Metadata Extractor* (Haiku) extracts state changes from the prose, strategic *Director* (Haiku) steers story pacing and NPC development behind the scenes
+- Multi-agent AI architecture: fast *Brain* (Haiku) parses mechanics, creative *Narrator* (Sonnet) writes the scene, *Metadata Extractor* (Haiku) extracts state changes from the prose, strategic *Director* (Haiku) steers story pacing and NPC development behind the scenes. The Narrator receives active threat clock pressure, inter-NPC relationship dynamics, and the Director's arc synthesis directly — so every scene reflects the full state of the world, not just the immediate action.
 - Player Authorship guarantee - your exact words are never rewritten or reinterpreted by the AI
 - **`##` Correction system** — prefix any input with `##` to correct the last scene. The engine distinguishes between a *misread input* (Brain misunderstood what you did — full state rollback, re-roll if needed, narrator rewrites) and a *state error* (wrong NPC identity, location, relationship — world patched in-place, narrator rewrites with corrections applied). No scene is ever permanently broken by an AI misunderstanding
 - Dynamic NPC system with persistent memory, evolving dispositions, bonds, agendas, NPC-to-NPC relationships, and mid-game discovery
@@ -69,6 +69,7 @@ EdgeTales doesn't invent its own rules from scratch. It draws on proven, beloved
 - HTTPS with auto-generated self-signed certificates
 - Kid-friendly mode (ages 8–12, see below)
 - Multiple save slots with full story export to PDF
+- **Adjustable narrator font size** — scale the story text from 0.75× to 1.5× in the settings. Applies live without page reload; persists across sessions
 - **Visual Effects mode** — an optional narrator display mode that brings the story to life with subtle visual cues: NPC names are highlighted in the narration text with colours based on their current disposition (hostile NPCs in red, loyal ones in green, etc.), your character's name appears in accent gold. As the chaos factor rises, a faint ambient glow pulses around the chat area. When health drops low, a dark vignette creeps in at the edges of the screen. Dialogue lines are subtly highlighted to stand out from prose. All effects are purely cosmetic and can be switched off at any time in the narrator font settings.
 
 **Accessibility — Screen Reader & Voice Support**
@@ -222,7 +223,11 @@ Player types action
          ▼
   Dice rolled (2d6+stat vs 2d10)    ← action turns only
   (dialog turns skip this step)
-         │  result + full context
+         │  result + full context including:
+         │  · active threat clocks + urgency level
+         │  · inter-NPC relationship memories
+         │  · Director arc synthesis (arc_notes)
+         │  · character state (health/spirit/supply → prose)
          ▼
   ┌──────────────┐
   │   Narrator   │  Claude Sonnet — creative, immersive (~2s)
@@ -240,6 +245,7 @@ Player types action
   │   Director   │  Claude Haiku — runs in background
   │              │  Strategic: pacing guidance, NPC reflections,
   └──────────────┘  clock awareness, act transitions, scene summaries
+                    Runs every 2 scenes + on significant events
 ```
 
 **The Brain** receives the player's raw input along with the full game state and decides *what happens mechanically*: which move to roll, which stat to use, what position and effect apply, whether the player is moving to a new location or time is progressing, and what the player's dramatic question is for the scene. It returns structured JSON — no prose, no creativity.
@@ -248,7 +254,11 @@ Player types action
 
 **The Metadata Extractor** is a separate Haiku call that runs immediately after the Narrator. It reads the finished prose and extracts all game state changes as structured JSON: NPC memory events, new character introductions, scene context, location and time updates, deaths. This two-step design means the Narrator can focus entirely on storytelling quality, while the Extractor handles the bookkeeping with guaranteed valid JSON (Structured Outputs).
 
-**The Director** runs as a background task after the narration is already displayed and saved — it never adds latency to gameplay. Think of it as the showrunner watching from behind the scenes. It analyses recent scenes, the current story arc, clock fill levels, and NPC states to provide strategic guidance: where should the story go next? Which NPCs have untapped potential? Is the pacing right? When enough has happened to a particular NPC (tracked via an importance accumulator), the Director writes a *reflection* — a higher-level insight about how that character views the player. Each reflection updates the NPC's `arc` field (their narrative trajectory: where the story has taken them emotionally) while leaving their `instinct` untouched (their fundamental wiring, set once and never changed). The `arc` surfaces in every subsequent narrator prompt, giving NPCs the sense of evolving opinions and growing relationships without losing their core personality.
+**The Director** runs as a background task after the narration is already displayed and saved — it never adds latency to gameplay. Think of it as the showrunner watching from behind the scenes. It analyses recent scenes, the current story arc, clock fill levels, and NPC states to provide strategic guidance: where should the story go next? Which NPCs have untapped potential? Is the pacing right? The Director runs every two scenes and on significant events (misses, new NPCs, chaos interrupts, phase changes) — frequent enough that its guidance stays current, rare enough to avoid redundant calls.
+
+When enough has happened to a particular NPC (tracked via an importance accumulator), the Director writes a *reflection* — a higher-level insight about how that character views the player. Each reflection updates the NPC's `arc` field (their narrative trajectory: where the story has taken them emotionally) while leaving their `instinct` untouched (their fundamental wiring, set once and never changed). The `arc` surfaces in every subsequent narrator prompt, giving NPCs the sense of evolving opinions and growing relationships without losing their core personality.
+
+The Director's output flows directly into the Narrator's context three ways: `narrator_guidance` gives concrete scene direction, `arc_notes` provides a synthesised view of where the story stands, and `npc_guidance` gives per-character instructions for the next scene. All three reach the Narrator independently — none can suppress the others.
 
 The Director also generates enriched scene summaries that replace the Brain's bare-bones log entries, giving the narrator richer context about *why* things matter, not just *what* happened. And it evaluates act transition triggers, signalling when the story should advance to the next act based on what actually happened — not a fixed scene count.
 
@@ -264,7 +274,7 @@ NPCs in EdgeTales don't just exist in the moment — they remember. Every signif
 
 Each NPC carries two separate identity layers. Their `instinct` is their fundamental psychological wiring — how they react under real pressure, what they do when their strategy fails. It is set once (at introduction or first Director profile) and never changes; it is their character, not their mood. Their `arc` is their narrative trajectory — what the story has made of them so far. The arc evolves with each Director reflection, so the same instinct can read very differently depending on where the character is emotionally. The narrator receives both layers and uses them together: instinct determines *how* an NPC reacts; arc informs *where they are* when they react.
 
-NPCs also form opinions about *each other*. Tell a character that another NPC is trustworthy — or dangerous, or attractive — and that opinion is stored as a tagged memory. When both NPCs are present in the same scene, those inter-NPC memories surface automatically, creating dynamic social situations the player set in motion but no longer controls.
+NPCs also form opinions about *each other*. Tell a character that another NPC is trustworthy — or dangerous, or attractive — and that opinion is stored as a tagged memory. When both NPCs are present in the same scene, those inter-NPC memories surface automatically in the narrator's context, creating dynamic social situations the player set in motion but no longer controls. The narrator uses this relationship history to shape how characters speak to and about each other — through body language, tone, small avoidances, and unspoken tension — without ever narrating the relationship directly.
 
 NPC descriptions in the sidebar update dynamically when a character undergoes meaningful development, so the cast list reflects who they've become, not just who they were when you first met them.
 
@@ -455,8 +465,9 @@ The invite system includes rate limiting: after 5 failed attempts from the same 
 EdgeTales is designed to be cost-efficient. A typical play session uses:
 
 - **Brain (Haiku):** ~$0.001 per turn — fast classification, minimal tokens
-- **Narrator (Sonnet):** ~$0.01–0.02 per turn — the main cost, produces 2-4 paragraphs of prose
-- **Director (Haiku):** ~$0.003 per session — runs only when needed (every few turns), not every turn
+- **Narrator (Sonnet):** ~$0.01–0.02 per turn — the main cost, produces 2-4 paragraphs of prose. The Narrator system prompt is cached server-side (Anthropic prompt caching), reducing input token costs by ~20% at typical play pace
+- **Director (Haiku):** ~$0.004–0.005 per session — runs every 2 scenes plus on significant events (misses, new NPCs, phase changes). Slightly more frequent than earlier versions, but still well under $0.01/session at Haiku pricing
+- **Metadata Extractor (Haiku):** ~$0.001 per turn — runs after every scene to extract state changes
 
 A one-hour session with ~20 turns typically costs **$0.15–0.30**, depending on scene complexity and narration length.
 
