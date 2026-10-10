@@ -37,6 +37,8 @@ def isolated_engine(tmp_path, monkeypatch):
     monkeypatch.setattr(E, "USERS_DIR", users)
     monkeypatch.setattr(E, "GLOBAL_CONFIG_FILE", tmp_path / "config.json")
     monkeypatch.setattr(E, "_NPC_ID_ENUM_DISABLED", False)
+    monkeypatch.setattr(E, "_MODEL_SETTINGS", None)  # re-read per-role models per test
+    E._REJECTED_OPTIONS.clear()
     E._SAVE_INFO_CACHE.clear()
     random.seed(1234)
     yield
