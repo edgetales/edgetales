@@ -46,10 +46,19 @@ Auto-install: `_ensure_requirements()` checks and installs 9 mandatory packages 
 - After a successful `str_replace`, re-view the file before further edits to the same file.
 
 ### Mandatory Session-End Steps
-Every session that changes code or architecture must end with both:
+Every session that changes code or architecture must end with:
 
 1. **`CHANGELOG.md`**: Add to the current version entry. Keep a Changelog format (Added / Changed / Fixed). English only. Entries self-contained. **`elvira/` changes are never logged here.**
 2. **`PROJECT_BRIEFING.md`**: Reflect any architectural, behavioral, or API changes. Update version in Quick Reference.
+3. **Push + PR + project mirror** (see Git Workflow below).
+
+### Git Workflow
+- **Source of truth**: the GitHub repo `edgetales/edgetales`. At session start, clone it and work there — never edit from stale copies.
+- **Branch per session** (`fix/<topic>`, `feat/<topic>`), never commit directly to `main`.
+- Before pushing: `git fetch origin main` + rebase (keeps the push small on the shallow clone).
+- **Open a pull request to `main`** with a short summary and test results. Lars merges.
+- **Project mirror**: after every push, copy all tracked text files into the claude.ai Project under `repo/` (same relative paths, e.g. `repo/engine.py`, `repo/tests/conftest.py`) so the project knowledge always equals the pushed state. Binary files (`docs/*.png`) are not mirrored.
+- **Internal files stay out of Git**: `elvira/` and `coopgm.md` live only in the Project (root level), never in the repo.
 
 ### Multi-Language Requirement ⚠️
 Every UI change must:
