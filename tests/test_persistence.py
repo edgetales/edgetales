@@ -132,3 +132,19 @@ def test_chapter_archive_roundtrip():
     msgs, title = E.load_chapter_archive("u", "slot", 1)
     assert title == "T" and msgs[0]["content"] == "c"
     assert E.list_chapter_archives("u", "slot") == [{"chapter": 1, "title": "T"}]
+
+
+def test_replace_chapter_archives_same_slot_keeps_archives():
+    E.create_user("u")
+    E.save_chapter_archive("u", "camp", 1, [{"role": "assistant", "content": "c1"}], title="T1")
+    E.replace_chapter_archives("u", "camp", "camp")          # "Save As" under own name
+    assert E.list_chapter_archives("u", "camp") == [{"chapter": 1, "title": "T1"}]
+
+
+def test_replace_chapter_archives_copies_and_drops_stale():
+    E.create_user("u")
+    E.save_chapter_archive("u", "src", 1, [{"role": "assistant", "content": "a"}], title="A")
+    E.save_chapter_archive("u", "dst", 2, [{"role": "assistant", "content": "old"}], title="Old")
+    E.replace_chapter_archives("u", "src", "dst")
+    assert E.list_chapter_archives("u", "dst") == [{"chapter": 1, "title": "A"}]
+    assert E.list_chapter_archives("u", "src") == [{"chapter": 1, "title": "A"}]

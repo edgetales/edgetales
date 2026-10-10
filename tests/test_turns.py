@@ -238,3 +238,54 @@ def test_new_npc_reference_gets_memory(game, ai):
     assert brask is not None
     assert any("mustert" in m["event"] for m in brask["memory"])
     assert not any(m.get("event") == "verloren" for n in g.npcs for m in n["memory"])
+
+
+def test_burn_keeps_once_only_director_mark(game, ai):
+    # Scene 4 lies inside act 0's trigger-due window → act_due fires once per act.
+    game.momentum = 10
+    ai.roll = roll("WEAK_HIT", c1=9, c2=3)
+    ai.brain = make_brain()
+    g, _, r, burn, dctx = E.process_turn(None, game, "Ich renne", CFG)
+    assert dctx and g.session_log[-1]["director_trigger"] == "act_due:act_0"
+    assert burn and burn["new_result"] == "STRONG_HIT"
+    g, _ = _do_burn(g, burn)
+    assert g.story_blueprint["triggered_director_phases"] == ["due:act_0"]
+    assert E._should_call_director(g, roll_result="STRONG_HIT") != "act_due:act_0"
+
+
+def _patch_chapter_with(monkeypatch, opening_npcs, post_location=""):
+    monkeypatch.setattr(E, "call_chapter_summary", lambda *a, **k: {
+        "title": "Kapitel", "summary": "s", "unresolved_threads": [],
+        "character_growth": "", "npc_evolutions": [], "thematic_question": "",
+        "post_story_location": post_location})
+    monkeypatch.setattr(E, "call_story_architect", lambda *a, **k: {})
+    monkeypatch.setattr(E, "call_opening_metadata", lambda *a, **k: {
+        "npcs": [dict(n) for n in opening_npcs], "clocks": [], "location": "",
+        "scene_context": "Neubeginn", "time_of_day": "morning", "deceased_npcs": []})
+
+
+def test_new_chapter_same_name_npc_keeps_history(game, ai, monkeypatch):
+    mara = game.npcs[0]
+    mara.update(bond=3, instinct="wird still und präzise", arc="Sie misstraut allen.",
+                agenda="den Hafen schützen")
+    mara["memory"] = [{"scene": 2, "event": "Mara rettet Elin", "importance": 8,
+                       "emotional_weight": "grateful", "type": "observation"}]
+    _patch_chapter_with(monkeypatch, [{"name": mara["name"], "description": "neu",
+                                       "agenda": "", "instinct": "ruhig", "secrets": [],
+                                       "disposition": "friendly"}])
+    g, _ = E.start_new_chapter(None, game, CFG, "u")
+    same = [n for n in g.npcs if n["name"] == "Mara Voss"]
+    assert len(same) == 1
+    m = same[0]
+    assert m["bond"] == 3 and m["instinct"] == "wird still und präzise"
+    assert m["arc"] == "Sie misstraut allen." and m["agenda"] == "den Hafen schützen"
+    assert any(x["event"] == "Mara rettet Elin" for x in m["memory"])
+
+
+def test_new_chapter_post_story_location_is_shortened(game, ai, monkeypatch):
+    long_loc = ("Die alte Leuchtturmwärterhütte am Nordkap, ein windschiefer Bau aus "
+                "Treibholz und Teerpappe hoch über der Brandung")
+    _patch_chapter_with(monkeypatch, [], post_location=long_loc)
+    g, _ = E.start_new_chapter(None, game, CFG, "u")
+    assert len(g.current_location) <= E.LOCATION_MAX_CHARS
+    assert g.current_location.startswith("Die alte Leuchtturmwärterhütte")

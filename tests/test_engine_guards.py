@@ -1,7 +1,7 @@
 """Engine guards: arc trimming, clock-cap rule, stat normalization, short locations,
 forward-only time updates."""
 import engine as E
-from conftest import make_metadata
+from conftest import make_metadata, make_npc
 
 
 # --- arc trimming --------------------------------------------------------------
@@ -274,3 +274,67 @@ def test_due_trigger_reaches_narrator_story_block(game):
     game.scene_count = 5
     block = E._story_context_block(game)
     assert "<act_turning_point>" in block and "Elin findet den Schlüssel." in block
+
+
+# --- setup brain error handling ---------------------------------------------------
+
+class _FailingClient:
+    def __init__(self, exc):
+        self._exc = exc
+        self.messages = self
+
+    def create(self, **kwargs):
+        raise self._exc
+
+
+def test_setup_brain_reraises_api_errors(monkeypatch):
+    import httpx, pytest
+    monkeypatch.setattr(E, "_api_create_with_retry",
+                        lambda client, **kw: client.messages.create(**kw))
+    exc = E.anthropic.APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com"))
+    with pytest.raises(E.anthropic.APIConnectionError):
+        E.call_setup_brain(_FailingClient(exc), {"genre": "dark_fantasy", "tone": "dark_gritty",
+                                                 "archetype": "outsider_loner"})
+
+
+def test_setup_brain_falls_back_on_unusable_output(monkeypatch):
+    monkeypatch.setattr(E, "_api_create_with_retry",
+                        lambda client, **kw: client.messages.create(**kw))
+    setup = E.call_setup_brain(_FailingClient(ValueError("bad json")),
+                               {"genre": "dark_fantasy", "tone": "dark_gritty",
+                                "archetype": "outsider_loner", "player_name": "Kaelen"})
+    assert setup["starting_location"] and sum(setup["stats"].values()) == E.STAT_TARGET_SUM
+
+
+# --- same-scene death of a known NPC ---------------------------------------------
+
+def test_known_npc_dying_with_memory_stays_deceased(game):
+    npc = game.npcs[0]
+    md = make_metadata(
+        deceased_npcs=[{"npc_id": npc["id"]}],
+        memory_updates=[{"npc_id": npc["id"], "event": "Mara bricht tödlich getroffen zusammen",
+                         "emotional_weight": "terrified", "about_npc": None, "absent": False}])
+    E._apply_narrator_metadata(game, md, scene_present_ids={npc["id"]})
+    assert npc["status"] == "deceased"
+    assert any("zusammen" in m["event"] for m in npc["memory"])
+
+
+def test_earlier_dead_npc_with_new_memory_is_resurrected(game):
+    npc = game.npcs[0]
+    npc["status"] = "deceased"
+    md = make_metadata(memory_updates=[{"npc_id": npc["id"], "event": "Mara steht in der Tür",
+                                        "emotional_weight": "calm", "about_npc": None,
+                                        "absent": False}])
+    E._apply_narrator_metadata(game, md, scene_present_ids=set())
+    assert npc["status"] == "active"
+
+
+def test_absent_mention_does_not_confirm_death(game):
+    game.npcs.append(make_npc("npc_2", "Leo Brandt"))
+    leo = game.npcs[-1]
+    md = make_metadata(
+        deceased_npcs=[{"npc_id": "npc_2"}],
+        memory_updates=[{"npc_id": "npc_2", "event": "Jorin behauptet, Leo sei tot",
+                         "emotional_weight": "grief", "about_npc": None, "absent": True}])
+    E._apply_narrator_metadata(game, md, scene_present_ids={game.npcs[0]["id"]})
+    assert leo["status"] != "deceased"
