@@ -393,8 +393,31 @@ EdgeTales is configured via a single `config.json` file in the project root.
 | `storage_secret` | No | `""` | Secret for signing session cookies. Auto-generated if not set |
 | `port` | No | `8080` | Server port |
 | `default_ui_lang` | No | `""` | Default UI language for new users. `"de"` = German, `"en"` = English. Empty = German |
+| `narrator_model` / `brain_model` | No | `""` | Claude model for the Narrator/Architect role (Sonnet) and for Brain/Director/Extractors (Haiku). Empty = built-in default (see below) |
+| `narrator_effort` / `brain_effort` | No | `""` | Effort level per role: `low`, `medium`, `high`, `xhigh`, `max`. Empty = model default |
+| `narrator_thinking` / `brain_thinking` | No | `""` | Thinking mode per role: `disabled`, `adaptive`, `between_tools`. Empty = model default |
 
 > 🔒 On Unix systems, `config.json` is automatically set to `chmod 600` (owner-only) to protect your API key.
+
+### Choosing Models and Effort
+
+By default EdgeTales uses `claude-sonnet-4-6` for narration and `claude-haiku-4-5-20251001` for the fast structured calls. Both roles can be switched in `config.json` without touching code:
+
+```json
+{
+  "narrator_model": "claude-sonnet-5-5",
+  "narrator_effort": "high",
+  "narrator_thinking": "between_tools",
+  "brain_model": "claude-haiku-5-5",
+  "brain_effort": "low",
+  "brain_thinking": "disabled"
+}
+```
+
+- Model IDs are pinned snapshots — there is no "always latest" alias. Switch deliberately and compare a few sessions before keeping a new model.
+- Higher effort and thinking improve depth but add latency and output tokens per turn. For narration, `between_tools` turns off up-front thinking and keeps turns fast.
+- If a model rejects a configured effort or thinking value, EdgeTales logs a warning and continues without that option.
+- The active settings are logged on first use (`[Models] narrator=… effort=… thinking=…`), and every API call logs the model it used.
 
 ### Environment Variable Overrides
 

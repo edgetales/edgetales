@@ -4174,12 +4174,114 @@ def _log_usage(kwargs: dict, response) -> None:
     if usage is None:
         return
     model = str(kwargs.get("model", "?"))
-    short = "sonnet" if "sonnet" in model else ("haiku" if "haiku" in model else model)
+    oc = kwargs.get("output_config") or {}
+    effort = f" effort={oc['effort']}" if oc.get("effort") else ""
     c_read = getattr(usage, "cache_read_input_tokens", 0) or 0
     c_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
-    log(f"[API] {short}: in={getattr(usage, 'input_tokens', 0)} "
+    log(f"[API] {model}{effort}: in={getattr(usage, 'input_tokens', 0)} "
         f"out={getattr(usage, 'output_tokens', 0)} "
         f"cache_read={c_read} cache_write={c_write}")
+
+
+# ---------------------------------------------------------------
+# MODEL SETTINGS — per-role model, effort and thinking (config.json)
+# ---------------------------------------------------------------
+# Call sites keep passing NARRATOR_MODEL / BRAIN_MODEL; these constants act as
+# role tokens. _api_create_with_retry() swaps in the configured model and adds
+# output_config.effort / thinking for that role. Empty or missing config values
+# keep the API defaults, i.e. the previous behaviour.
+#
+#   config.json:  "narrator_model": "claude-sonnet-5-5",
+#                 "narrator_effort": "high",          # low|medium|high|xhigh|max
+#                 "narrator_thinking": "between_tools",  # disabled|adaptive|between_tools
+#                 "brain_model" / "brain_effort" / "brain_thinking"  (same for Haiku calls)
+#
+# Model IDs are pinned snapshots — there is no "latest" alias. Switch models
+# deliberately and compare with an Elvira run first.
+MODEL_ROLES = ("narrator", "brain")
+_MODEL_ROLE_BY_DEFAULT = {NARRATOR_MODEL: "narrator", BRAIN_MODEL: "brain"}
+_ROLE_DEFAULT_MODEL = {"narrator": NARRATOR_MODEL, "brain": BRAIN_MODEL}
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+THINKING_MODES = ("disabled", "adaptive", "between_tools")
+
+_MODEL_SETTINGS: Optional[dict] = None   # lazily loaded from config.json
+_REJECTED_OPTIONS: set = set()           # {(role, "effort"|"thinking")} the API refused
+
+
+def configure_models(cfg: Optional[dict] = None) -> dict:
+    """Load per-role model settings from a config dict (default: config.json).
+    Invalid effort/thinking values are ignored with a warning. Returns the settings."""
+    global _MODEL_SETTINGS
+    if cfg is None:
+        cfg = load_global_config()
+    settings = {}
+    for role in MODEL_ROLES:
+        model = str(cfg.get(f"{role}_model") or "").strip() or _ROLE_DEFAULT_MODEL[role]
+        effort = str(cfg.get(f"{role}_effort") or "").strip().lower() or None
+        thinking = str(cfg.get(f"{role}_thinking") or "").strip().lower() or None
+        if effort and effort not in EFFORT_LEVELS:
+            log(f"[Models] Ignoring invalid {role}_effort '{effort}' "
+                f"(allowed: {', '.join(EFFORT_LEVELS)})", level="warning")
+            effort = None
+        if thinking and thinking not in THINKING_MODES:
+            log(f"[Models] Ignoring invalid {role}_thinking '{thinking}' "
+                f"(allowed: {', '.join(THINKING_MODES)})", level="warning")
+            thinking = None
+        settings[role] = {"model": model, "effort": effort, "thinking": thinking}
+    _MODEL_SETTINGS = settings
+    _REJECTED_OPTIONS.clear()
+    log("[Models] " + " | ".join(
+        f"{r}={s['model']} effort={s['effort'] or 'default'} thinking={s['thinking'] or 'default'}"
+        for r, s in settings.items()))
+    return settings
+
+
+def get_model_settings() -> dict:
+    """Current per-role settings (loads config.json on first use)."""
+    if _MODEL_SETTINGS is None:
+        configure_models()
+    return _MODEL_SETTINGS
+
+
+def model_for(role: str) -> str:
+    """Configured model ID for a role ("narrator" or "brain")."""
+    return get_model_settings()[role]["model"]
+
+
+def _apply_model_settings(kwargs: dict) -> tuple[dict, Optional[str]]:
+    """Map a role-token model to the configured model and add effort/thinking.
+    Returns (new_kwargs, role). Unknown models (e.g. explicit IDs) pass through."""
+    role = _MODEL_ROLE_BY_DEFAULT.get(kwargs.get("model"))
+    if role is None:
+        return kwargs, None
+    s = get_model_settings()[role]
+    kw = dict(kwargs)
+    kw["model"] = s["model"]
+    if s["effort"] and (role, "effort") not in _REJECTED_OPTIONS:
+        oc = dict(kw.get("output_config") or {})
+        oc["effort"] = s["effort"]
+        kw["output_config"] = oc
+    if s["thinking"] and (role, "thinking") not in _REJECTED_OPTIONS:
+        kw["thinking"] = {"type": s["thinking"]}
+    return kw, role
+
+
+def _rejected_option(e: Exception, kw: dict) -> Optional[str]:
+    """Which injected option ("effort"/"thinking") a 400 error is about, if any."""
+    msg = str(e).lower()
+    if "effort" in msg and (kw.get("output_config") or {}).get("effort"):
+        return "effort"
+    if "thinking" in msg and kw.get("thinking"):
+        return "thinking"
+    return None
+
+
+def _response_text(response) -> str:
+    """Concatenated text of all text blocks. Newer models may return thinking
+    blocks before the text, so content[0] is not necessarily the answer."""
+    parts = [getattr(b, "text", "") for b in getattr(response, "content", None) or []
+             if getattr(b, "type", "text") == "text"]
+    return "".join(p for p in parts if p)
 
 
 def _api_create_with_retry(client: anthropic.Anthropic, max_retries: int = 2, **kwargs):
@@ -4187,9 +4289,15 @@ def _api_create_with_retry(client: anthropic.Anthropic, max_retries: int = 2, **
     Handles rate limits (429), server errors (500/502/503), and overloaded (529)
     with exponential backoff. JSON parsing retries remain in callers.
     529 uses a longer base wait (10s) — standard API overload needs more headroom
-    than transient server errors (base 2s)."""
+    than transient server errors (base 2s).
+    Also applies the per-role model settings; if the API rejects an injected
+    effort/thinking option, the call is retried without it and the option stays
+    off for that role for the rest of the process."""
     import time as _time
-    for attempt in range(max_retries + 1):
+    kwargs, role = _apply_model_settings(kwargs)
+    attempt = -1
+    while attempt < max_retries:
+        attempt += 1
         try:
             response = client.messages.create(**kwargs)
             try:
@@ -4197,6 +4305,23 @@ def _api_create_with_retry(client: anthropic.Anthropic, max_retries: int = 2, **
             except Exception:
                 pass  # diagnostics must never break a call
             return response
+        except anthropic.BadRequestError as e:
+            opt = _rejected_option(e, kwargs) if role else None
+            if opt is None:
+                raise
+            # Model does not support the configured option — drop it for this role
+            # and retry immediately (does not count as a transient retry).
+            _REJECTED_OPTIONS.add((role, opt))
+            if opt == "effort":
+                oc = {k: v for k, v in kwargs["output_config"].items() if k != "effort"}
+                kwargs = {**kwargs, "output_config": oc} if oc else \
+                    {k: v for k, v in kwargs.items() if k != "output_config"}
+            else:
+                kwargs = {k: v for k, v in kwargs.items() if k != "thinking"}
+            log(f"[Models] API rejected {role}_{opt} for {kwargs.get('model')} — "
+                f"continuing without it ({e})", level="warning")
+            attempt -= 1
+            continue
         except anthropic.APIStatusError as e:
             if attempt < max_retries and e.status_code in (429, 500, 502, 503, 529):
                 # 529 = API overloaded: use longer base wait (10s, 20s, 30s cap, ...)
@@ -4325,7 +4450,7 @@ time:{game.time_of_day or 'unspecified'} | prev_locations:{', '.join(game.locati
             system=_cached_system(system),  # static per game (rules + boundaries)
             messages=[{"role": "user", "content": user_msg}],
         )
-        result = json.loads(response.content[0].text)
+        result = json.loads(_response_text(response))
         log(f"[Brain] Result: move={result['move']}, pos={result['position']}, "
             f"effect={result['effect']}, intent={result['player_intent'][:60]}")
         return result
@@ -4386,7 +4511,7 @@ creativity_seed: {seed} (Use as loose inspiration for names, locations, and deta
             messages=[{"role": "user", "content": user_msg}],
             output_config={"format": {"type": "json_schema", "schema": SETUP_BRAIN_OUTPUT_SCHEMA}},
         )
-        result = json.loads(response.content[0].text)
+        result = json.loads(_response_text(response))
 
         # --- Stat validation (two-layer: prompt + engine) ---
         # Structured outputs guarantee types but not cross-field constraints.
@@ -4492,7 +4617,7 @@ def call_recap(client: anthropic.Anthropic, game: GameState,
                            f"{arc_info}{campaign_info}\nnow:{game.current_scene_context}\n"
                            f"recent_scenes:\n{recent_narrations}"}],
             )
-            return re.sub(r'\s*[—–]\s*', ' - ', response.content[0].text)
+            return re.sub(r'\s*[—–]\s*', ' - ', _response_text(response))
         except Exception as e:
             log(f"[Recap] Attempt {attempt + 1}/3 failed: {e}", level="warning")
             if attempt < 2:
@@ -4586,7 +4711,7 @@ npcs:{npc_text}{campaign_ctx}{backstory_text}"""
             messages=[{"role": "user", "content": user_msg}],
             output_config={"format": {"type": "json_schema", "schema": STORY_ARCHITECT_OUTPUT_SCHEMA}},
         )
-        blueprint = json.loads(response.content[0].text)
+        blueprint = json.loads(_response_text(response))
         blueprint["revealed"] = []  # Track which revelations have fired
         blueprint["structure_type"] = structure_type
 
@@ -5082,7 +5207,7 @@ def call_narrator(client: anthropic.Anthropic, prompt: str,
         system=system,
         messages=messages,
     )
-    raw = response.content[0].text
+    raw = _response_text(response)
     stop = response.stop_reason
 
     # Handle truncation: clean up to last complete sentence
@@ -5232,7 +5357,7 @@ Extract all metadata from the narration above. Remember: {html.escape(game.playe
             system=system,
             messages=[{"role": "user", "content": prompt}],
         )
-        metadata = json.loads(response.content[0].text)
+        metadata = json.loads(_response_text(response))
         # Guard: schema minLength:1 is not enforced server-side when the model
         # returns an empty string due to a transient glitch.  One retry is
         # sufficient — if it fails again the exception fallback below handles it.
@@ -5244,7 +5369,7 @@ Extract all metadata from the narration above. Remember: {html.escape(game.playe
                 system=system,
                 messages=[{"role": "user", "content": prompt}],
             )
-            metadata2 = json.loads(response2.content[0].text)
+            metadata2 = json.loads(_response_text(response2))
             if metadata2.get("scene_context", "").strip():
                 metadata = metadata2
                 log("[Metadata] scene_context recovered on retry")
@@ -5314,7 +5439,7 @@ def call_revelation_check(client: anthropic.Anthropic, narration: str,
                 "schema": REVELATION_CHECK_SCHEMA,
             }},
         )
-        result = json.loads(response.content[0].text)
+        result = json.loads(_response_text(response))
         confirmed = result.get("revelation_confirmed", True)
         reasoning = result.get("reasoning", "")
         log(f"[Revelation] Check for '{revelation.get('id', '?')}': "
@@ -5393,7 +5518,7 @@ Extract all NPCs, clocks, location, scene context, and time of day from the open
                 "schema": OPENING_METADATA_SCHEMA,
             }},
         )
-        data = json.loads(response.content[0].text)
+        data = json.loads(_response_text(response))
         log(f"[OpeningMeta] Extracted: {len(data.get('npcs', []))} NPCs, "
             f"{len(data.get('clocks', []))} clocks, "
             f"loc={data.get('location')}, time={data.get('time_of_day')}")
@@ -6023,7 +6148,7 @@ def call_director(client: anthropic.Anthropic, game: GameState,
             system=_cached_system(DIRECTOR_SYSTEM),
             messages=[{"role": "user", "content": prompt}],
         )
-        guidance = json.loads(response.content[0].text)
+        guidance = json.loads(_response_text(response))
 
         # Convert npc_guidance from array (schema) to dict (internal format)
         # Array format: [{"npc_id": "npc_1", "guidance": "..."}]
@@ -8131,7 +8256,7 @@ def call_chapter_summary(client: anthropic.Anthropic, game: GameState,
                        f"{epilogue_block}"}],
             output_config={"format": {"type": "json_schema", "schema": CHAPTER_SUMMARY_OUTPUT_SCHEMA}},
         )
-        data = json.loads(response.content[0].text)
+        data = json.loads(_response_text(response))
         data["chapter"] = game.chapter_number
         data["scenes"] = game.scene_count
         return data
@@ -9126,7 +9251,7 @@ npcs:
             output_config={"format": {"type": "json_schema",
                                       "schema": CORRECTION_OUTPUT_SCHEMA}},
         )
-        result = json.loads(response.content[0].text)
+        result = json.loads(_response_text(response))
         log(f"[Correction] source={result['correction_source']} "
             f"reroll={result['reroll_needed']} ops={len(result['state_ops'])}")
         return result

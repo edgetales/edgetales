@@ -13,7 +13,7 @@
 | **Codebase** | ~14,200 lines across 5 source files + config, plus offline test suite in `tests/` |
 | **Tests** | `python -m pytest tests -q` (pytest + jsonschema; fake AI, no API key) |
 | **Stack** | Python 3.11+, NiceGUI, Anthropic SDK (Structured Outputs), reportlab, edge-tts, faster-whisper, wonderwords, stop-words, nameparser, cryptography |
-| **AI Models** | Narrator/Architect: `claude-sonnet-4-6` · Brain/Director/Extractors: `claude-haiku-4-5-20251001` |
+| **AI Models** | Defaults — Narrator/Architect: `claude-sonnet-4-6` · Brain/Director/Extractors: `claude-haiku-4-5-20251001`. Overridable per role in `config.json` (`narrator_*` / `brain_*`: model, effort, thinking) |
 | **Core Principle** | "AI narrates, dice decide." — All outcomes determined by dice rolls, never by AI judgment |
 | **Start** | `python app.py` → `http://localhost:8080` (requires `config.json` with `api_key`) |
 | **ENV Overrides** | `ANTHROPIC_API_KEY`, `INVITE_CODE`, `ENABLE_HTTPS`, `SSL_EXTRA_SANS`, `PORT`, `DEFAULT_UI_LANG` |
@@ -166,6 +166,8 @@ Player Input
 ```
 
 **Total per turn: ~$0.003–0.004, ~2.5s**
+
+**Model settings (per role)**: `NARRATOR_MODEL` / `BRAIN_MODEL` are role tokens *and* defaults. `_api_create_with_retry()` → `_apply_model_settings()` maps them to `config.json` overrides (`narrator_model`, `narrator_effort`, `narrator_thinking`, same for `brain_`), merging `effort` into an existing `output_config` (structured-output `format` is preserved) and setting `thinking: {"type": …}`. Settings load lazily via `get_model_settings()` / `configure_models(cfg)` (tests reset `_MODEL_SETTINGS`). A 400 that names an injected option → retry without it, recorded in `_REJECTED_OPTIONS` for the process. Explicit model IDs (not a role token) pass through untouched. Model IDs are pinned snapshots — no "latest" alias; switch deliberately and compare with an Elvira run. Cache floors (`CACHE_MIN_TOKENS_*`) are documented for 4.x models only — verify them before relying on caching with other models.
 
 **Prompt caching**: all cacheable system prompts go through `_cached_system()`. Cache floors: Sonnet 4.6 = 1,024 tokens, Haiku 4.5 = 4,096 tokens (`CACHE_MIN_TOKENS_*`); shorter prefixes are processed uncached without error or surcharge. Brain, Metadata Extractor and Director (Haiku, ~0.5–2.5k tokens) are marked but currently below the floor — they activate automatically if they grow. Structured-output schema changes invalidate only the *messages* cache level, not the system level. Every call logs `[API] <model>: in/out/cache_read/cache_write` — `cache_read > 0` confirms a hit. `call_narrator()` sends the system prompt with `cache_control: {"type": "ephemeral"}` (5-min server-side cache, 10× cheaper reads). `_status_context_block()` lives in the four user-prompt builders (not the system prompt) so H/Sp/Su changes never invalidate the cache. ~20% Narrator input token savings at typical 2–3 min/turn pace.
 
@@ -403,6 +405,8 @@ MISS (all three): bond -1, spirit -1 or -2. Disposition ladder: `hostile → dis
 - **`<h2>` font-size**: Browser default sets `<h2>` to ~1.5rem; `em`-based CSS compounds. Use `<div>` with direct `rem` sizing.
 
 ### AI / Tokens
+- **Never read `response.content[0].text`** — use `_response_text(response)`. Models with thinking return a thinking block before the text.
+- **Never hardcode a model ID at a call site** — pass `NARRATOR_MODEL` / `BRAIN_MODEL` so per-role config applies.
 - `max_tokens` is an upper bound, not a cost factor — always set generous headroom.
 - **German ≈ 15–20% more tokens** — Director and Narrator budgets must account for this.
 - Token budget constants are named module-level constants — never hardcode inline.
