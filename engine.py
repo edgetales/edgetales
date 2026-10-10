@@ -4111,12 +4111,27 @@ def _story_context_block(game: GameState) -> str:
             f'</revelation_ready>'
         )
 
+    # Due act trigger: hand the turning point to the Narrator directly. Director
+    # guidance alone was crowded out by other rules (time, location), so the
+    # act's core event never reached the page and acts only advanced via scene_range.
+    trigger_block = ""
+    if _act_trigger_due(game):
+        trigger_block = (
+            f'\n<act_turning_point>This act is about to end and its turning point has not'
+            f' happened yet: {html.escape(act.get("transition_trigger", ""))} Move this scene'
+            f' toward it as a concrete on-page moment the character can act on (plant the'
+            f' find, bring the confrontation, put the decision in front of them). If the'
+            f' player\'s action reaches it, let it happen fully on the page. Never make the'
+            f' player\'s choices for them.</act_turning_point>'
+        )
+
     return (
         f'<story_arc structure="{_xa(structure)}" act="{act["act_number"]}/{act["total_acts"]}"'
         f' phase="{_xa(act["phase"])}" progress="{act["progress"]}" mood="{_xa(act.get("mood",""))}"'
         f' conflict="{_xa(bp.get("central_conflict",""))}" act_goal="{_xa(act.get("goal",""))}"'
         f'{thematic_attr}/>'
         f'{rev_block}'
+        f'{trigger_block}'
         f'{ending_hint}\n'
     )
 

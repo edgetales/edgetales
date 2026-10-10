@@ -265,3 +265,12 @@ def test_mark_director_reason_phase_and_others(game):
     E._mark_director_reason(game, "interval")
     E._mark_director_reason(game, None)
     assert game.story_blueprint["triggered_director_phases"] == ["climax"]
+
+
+def test_due_trigger_reaches_narrator_story_block(game):
+    game.story_blueprint["acts"][0]["transition_trigger"] = "Elin findet den Schlüssel."
+    game.scene_count = 2
+    assert "<act_turning_point>" not in E._story_context_block(game)
+    game.scene_count = 5
+    block = E._story_context_block(game)
+    assert "<act_turning_point>" in block and "Elin findet den Schlüssel." in block
