@@ -1,0 +1,9 @@
+[Unit]
+Description=EdgeTales auto-update (git fast-forward + restart)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/edgetales-update
+ExecStart=/usr/local/sbin/edgetales-update

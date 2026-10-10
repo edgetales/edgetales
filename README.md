@@ -528,6 +528,8 @@ All configuration is read from `config.json` in the working directory - no envir
 Environment=ANTHROPIC_API_KEY=sk-ant-YOUR-KEY-HERE
 ```
 
+**Automatic updates:** if your install is a git clone, `deploy/install-autoupdate.sh` sets up a systemd timer that pulls new versions from `main`, restarts the service (postponed while someone is playing) and rolls back automatically if the new version fails to start. See [deploy/README.md](deploy/README.md).
+
 ---
 
 ## 🎮 Gameplay Overview

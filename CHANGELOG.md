@@ -5,6 +5,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Auto-update for self-hosted installs (`deploy/`):** a systemd timer checks GitHub every 10 minutes, fast-forwards a git-cloned install to `main` and restarts the service. Updates wait while someone is playing (at most 12 hours), and a version that fails to compile or start is rolled back automatically and skipped until a newer commit arrives. `config.json`, `.storage_secret` and `users/` are never touched. Install with `sudo deploy/install-autoupdate.sh`; see `deploy/README.md`.
+
+---
+
 ## [0.9.97] - 2026-10-10
 
 ### Changed

@@ -1,0 +1,10 @@
+[Unit]
+Description=Check GitHub for EdgeTales updates every 10 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=10min
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=timers.target

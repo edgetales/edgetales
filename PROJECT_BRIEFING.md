@@ -104,6 +104,8 @@ users/<n>/saves/<n>.json            — Save slots
 users/<n>/saves/chapters/<n>/       — Chapter archives
 ```
 
+**`deploy/`** — auto-updater for git-cloned installs (Pi): `edgetales-update.sh` (fast-forward to `origin/main`, postpone while players are connected, compile + health check, automatic rollback), systemd service + 10-minute timer, `install-autoupdate.sh`. See `deploy/README.md`.
+
 ### Framework Decoupling via Dataclasses
 
 ```python
@@ -451,7 +453,9 @@ MISS (all three): bond -1, spirit -1 or -2. Disposition ladder: `hostile → dis
 
 ### Deployment (Pi + Windows Dev)
 - **PowerShell after SSH password prompts**: use `;` not `&&` — `&&` silently fails after a password prompt.
-- SFTP auto-sync (`uploadOnSave: true`) pushes on save — restart the service after pushing `engine.py`.
+- The Pi follows `main` via `deploy/edgetales-update.sh` (systemd timer, every 10 min): merging a PR **deploys it** within ~10 minutes (postponed while someone is playing, max 12 h). Never merge untested work to `main`.
+- The Pi install must be a clean git clone — local edits to tracked files (e.g. SFTP upload-on-save) block the updater. Log: `journalctl -u edgetales-update`.
+- New Python dependencies are not installed by the updater; such a version fails the health check and is rolled back — install the package on the Pi first.
 - `edgetales_monitor.py` (watchdog + IONOS SMTP) is a separate service — don't confuse its log with app errors.
 
 ### Savegame Diagnostics (field name gotchas)
