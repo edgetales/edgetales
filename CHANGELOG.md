@@ -5,7 +5,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## [0.9.96] - 2026-10-10
+## [Unreleased]
+
+### Fixed
+- **Deaths in the same scene were undone:** when a known NPC died and the extractor also stored a memory of the dying moment, the memory path resurrected the NPC immediately. All deaths of a scene are now marked after the scene's memories are stored (as already done for NPCs introduced and killed in the same scene). Off-screen mentions no longer count as presence for the death guard, so a dialog claim about an absent NPC still cannot kill them.
+- **Returning NPCs lost their history at chapter start:** if the chapter-opening extractor re-created a returning NPC under the same name, the returning entry was dropped — memories, bond, instinct and arc were lost and `about_npc` references went stale. Its history is now merged into the new entry (`_absorb_returning_npc()`, shared with the alias path, which now also keeps the locked instinct, arc and agenda).
+- **"Save As" under the active slot's name deleted all chapter archives:** the archives were wiped before being copied from the same slot. `replace_chapter_archives()` is a no-op when source and destination match.
+- **"New Game" deleted the chapters of a named save:** it cleared the archives of the active slot while keeping its save file. It now clears the archives of the autosave slot the new game is written to.
+- **Momentum burn fired once-only Director triggers twice:** the burn's pre-turn restore removed the `phase:` / `act_due:` mark of the turn. The mark is re-applied; in the UI an accepted burn now also re-runs the Director for the burned narration (its earlier results were discarded by the restore).
+- **Invalid API key produced a placeholder character:** the setup call swallowed authentication, network and overload errors and returned a generic "wanderer". API errors now propagate; character creation shows "Invalid API Key!" (or the error) and removes the loading indicator.
+- **Long post-epilogue location:** the chapter summary's `post_story_location` is shortened like every other location.
+- **Dialog highlight:** the closing quotation mark no longer sits detached from the highlighted speech.
+
 
 ### Added
 - **Configurable models per role:** `config.json` accepts `narrator_model` / `brain_model`, `narrator_effort` / `brain_effort` (`low`–`max`, sent as `output_config.effort`) and `narrator_thinking` / `brain_thinking` (`disabled`, `adaptive`, `between_tools`). Call sites keep passing `NARRATOR_MODEL` / `BRAIN_MODEL` as role tokens; `_api_create_with_retry()` swaps in the configured model and options. Empty values keep the previous behaviour. If the API rejects an effort or thinking option for a model, the call is retried without it and the option stays off for that role for the rest of the process. New tests in `tests/test_models.py`.

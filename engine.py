@@ -4671,6 +4671,10 @@ creativity_seed: {seed} (Use as loose inspiration for names, locations, and deta
             f"location={result['starting_location']!r}")
         return result
 
+    except anthropic.APIError:
+        # Invalid/expired key, network outage or persistent overload: the caller
+        # must report it. A silent fallback character hid these errors entirely.
+        raise
     except Exception as e:
         log(f"[Setup] Structured output failed ({type(e).__name__}: {e}), "
             f"using fallback", level="warning")
@@ -5809,12 +5813,11 @@ def _apply_narrator_metadata(game: GameState, metadata: dict,
                 d["description"] = ""
         _process_npc_details(game, json.dumps(details, ensure_ascii=False), world_addition=world_addition)
 
-    # Deceased NPCs — processed before memory updates so status is set first.
-    # Note: _apply_memory_updates() intentionally resurrects deceased NPCs when
-    # the extractor reports memories for them (= narrator depicted them alive).
+    # Deceased NPCs reported for THIS scene are marked after the memory updates
+    # (see below): _apply_memory_updates() resurrects NPCs that are deceased when
+    # it stores a memory for them — correct for NPCs who died in an earlier scene
+    # and reappear, but it undid every death whose dying moment got a memory.
     deceased = metadata.get("deceased_npcs", [])
-    if deceased:
-        _process_deceased_npcs(game, deceased, scene_present_ids=scene_present_ids)
 
     # Exit tracking: mark NPCs who physically departed the scene as suppressed for
     # the next scene. activate_npcs_for_prompt() will skip 'recent' re-activation
@@ -5835,11 +5838,14 @@ def _apply_narrator_metadata(game: GameState, metadata: dict,
                               pre_turn_npc_ids=pre_npc_ids,
                               pre_turn_lore_ids=pre_lore_ids)
 
-    # Deferred: mark NPCs created AND killed in the same scene as deceased.
-    # Must run after _apply_memory_updates() — that function resurrects any
-    # deceased NPC it finds memories for (force=True). Running before it would
-    # have our marking silently undone. The memories ARE valid (the NPC acted
-    # in the scene); we just want them to end up deceased afterward.
+    # Deferred: mark NPCs killed in this scene (known NPCs and NPCs created AND
+    # killed in the same scene) as deceased. Must run after _apply_memory_updates()
+    # — that function resurrects any deceased NPC it finds memories for
+    # (force=True). Running before it would have the marking silently undone.
+    # The memories ARE valid (the NPC acted in the scene); the NPC just has to
+    # end up deceased afterward.
+    if deceased:
+        _process_deceased_npcs(game, deceased, scene_present_ids=scene_present_ids)
     if intro_deceased:
         _process_deceased_npcs(game, intro_deceased, scene_present_ids=scene_present_ids)
 
@@ -5878,9 +5884,11 @@ def _process_deceased_npcs(game: GameState, deceased_list: list,
             continue  # Already marked
         # Presence guard: NPC must have been in-scene to die on-screen
         if scene_present_ids is not None and npc["id"] not in scene_present_ids:
-            # Allow if NPC was just introduced this scene (walk-in + die edge case)
+            # Allow if NPC was just introduced this scene (walk-in + die edge case).
+            # Off-screen mentions (type "mention") are not presence — otherwise a
+            # dialog claim about an absent NPC would pass the guard.
             has_current_scene_memory = any(
-                m.get("scene") == game.scene_count
+                m.get("scene") == game.scene_count and m.get("type") != "mention"
                 for m in npc.get("memory", [])
             )
             if not has_current_scene_memory:
@@ -8050,6 +8058,16 @@ def delete_chapter_archives(username: str, save_name: str):
         log(f"[ChapterArchive] Deleted archives: {username}/{save_name}")
 
 
+def replace_chapter_archives(username: str, src_save: str, dst_save: str) -> None:
+    """Make dst_save's chapter archives an exact copy of src_save's ("Save As").
+    No-op when both names are the same: deleting first would wipe the very archives
+    that are about to be copied."""
+    if src_save == dst_save:
+        return
+    delete_chapter_archives(username, dst_save)
+    copy_chapter_archives(username, src_save, dst_save)
+
+
 def copy_chapter_archives(username: str, src_save: str, dst_save: str):
     """Copy all chapter archives from one save slot to another.
     Destination directory is created if it does not exist.
@@ -8645,6 +8663,40 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
         return _start_new_chapter_impl(client=client, game=game, config=config, username=username)
 
 
+def _absorb_returning_npc(target: dict, old: dict) -> None:
+    """Move a returning NPC's history into the NPC the chapter-opening extractor
+    created for the same person (matched by name or alias). The extractor entry
+    keeps its new-chapter ID, fresh description, disposition and secrets; the
+    returning NPC contributes memories, bond, reflection rhythm, its locked
+    instinct, arc, agenda (if the extractor gave none) and aliases."""
+    old_mem = [m for m in old.get("memory", []) if isinstance(m, dict)]
+    if old_mem:
+        target["memory"] = old_mem + [m for m in target.get("memory", []) if m not in old_mem]
+    target["bond"] = max(target.get("bond", 0), old.get("bond", 0))
+    target["importance_accumulator"] = (target.get("importance_accumulator", 0)
+                                        + old.get("importance_accumulator", 0))
+    target["last_reflection_scene"] = max(target.get("last_reflection_scene", 0),
+                                          old.get("last_reflection_scene", 0))
+    if old.get("instinct"):                      # instinct is locked once set
+        target["instinct"] = old["instinct"]
+    if old.get("arc") and not target.get("arc"):
+        target["arc"] = old["arc"]
+    if old.get("agenda") and not target.get("agenda"):
+        target["agenda"] = old["agenda"]
+    if not target.get("secrets") and old.get("secrets"):
+        target["secrets"] = old["secrets"]
+    target.setdefault("aliases", [])
+    existing = {_normalize_for_match(a) for a in target["aliases"]}
+    canonical = _normalize_for_match(target["name"])
+    for alias in old.get("aliases", []):
+        a_norm = _normalize_for_match(alias)
+        if a_norm not in existing and a_norm != canonical:
+            target["aliases"].append(alias)
+            existing.add(a_norm)
+    target["introduced"] = True
+    _consolidate_memory(target)
+
+
 def _start_new_chapter_impl(client: anthropic.Anthropic, game: GameState,
                       config: Optional[EngineConfig] = None,
                       username: str = "") -> tuple[GameState, str]:
@@ -8748,6 +8800,7 @@ def _start_new_chapter_impl(client: anthropic.Anthropic, game: GameState,
     # This prevents the new chapter opening from anchoring to a mid-action location.
     post_location = chapter_summary.get("post_story_location", "").strip()
     if post_location:
+        post_location = _short_location_name(post_location)
         log(f"[Campaign] Location updated to post-story position: {post_location!r}")
         game.current_location = post_location
 
@@ -8830,8 +8883,19 @@ def _start_new_chapter_impl(client: anthropic.Anthropic, game: GameState,
     new_npc_names = {_normalize_for_match(n["name"]) for n in game.npcs}
     id_remap = {}  # old_id → new_id; needed to fix about_npc references below
     for old_npc in returning_npcs:
-        # Skip if extractor already created an NPC with this name
+        # Extractor re-created this NPC under the same name: keep ONE entry (the
+        # extractor's, it carries the new chapter's ID) and move the returning NPC's
+        # history into it. Previously the returning NPC was simply dropped — its
+        # memories, bond, instinct and arc were lost and about_npc refs went stale.
         if _normalize_for_match(old_npc["name"]) in new_npc_names:
+            same = next((n for n in game.npcs
+                         if _normalize_for_match(n["name"]) == _normalize_for_match(old_npc["name"])),
+                        None)
+            if same is not None and same is not old_npc:
+                _absorb_returning_npc(same, old_npc)
+                id_remap[old_npc["id"]] = same["id"]
+                log(f"[Campaign] Returning NPC '{old_npc['name']}' re-extracted by name — "
+                    f"history merged into {same['id']}")
             continue
 
         # Alias-based dedup: the extractor may have introduced the returning NPC
@@ -8859,35 +8923,7 @@ def _start_new_chapter_impl(client: anthropic.Anthropic, game: GameState,
             # extractor name becomes an alias automatically.
             old_id = old_npc["id"]
             _merge_npc_identity(alias_hit, old_npc["name"], game=game)
-            # Transfer historical data from returning NPC into hollow extractor NPC.
-            # Memories: returning NPC has the full history; extractor NPC has none.
-            if old_npc.get("memory"):
-                alias_hit["memory"] = old_npc["memory"]
-            # Bond: take the higher value
-            alias_hit["bond"] = max(alias_hit.get("bond", 0), old_npc.get("bond", 0))
-            # Reflection state: preserve chapter-1 rhythm for Director
-            alias_hit["importance_accumulator"] = (
-                alias_hit.get("importance_accumulator", 0)
-                + old_npc.get("importance_accumulator", 0)
-            )
-            alias_hit["last_reflection_scene"] = max(
-                alias_hit.get("last_reflection_scene", 0),
-                old_npc.get("last_reflection_scene", 0),
-            )
-            # Secrets: keep extractor's fresh chapter-2 secrets if present, else inherit
-            if not alias_hit.get("secrets") and old_npc.get("secrets"):
-                alias_hit["secrets"] = old_npc["secrets"]
-            # Merge any remaining aliases from the returning NPC
-            alias_hit.setdefault("aliases", [])
-            existing_alias_norms = {_normalize_for_match(a) for a in alias_hit["aliases"]}
-            canonical_norm = _normalize_for_match(alias_hit["name"])
-            for alias in old_npc.get("aliases", []):
-                a_norm = _normalize_for_match(alias)
-                if a_norm not in existing_alias_norms and a_norm != canonical_norm:
-                    alias_hit["aliases"].append(alias)
-                    existing_alias_norms.add(a_norm)
-            # Status stays active (NPC appeared in chapter opening)
-            alias_hit["introduced"] = True
+            _absorb_returning_npc(alias_hit, old_npc)
             # Register id_remap so about_npc references get rewritten below
             id_remap[old_id] = alias_hit["id"]
             new_npc_names.add(_normalize_for_match(old_npc["name"]))
@@ -9876,6 +9912,12 @@ def _process_momentum_burn_impl(client: anthropic.Anthropic, game: GameState,
     # back (scene advance, targeted-NPC reactivation, Brain location/time change,
     # chaos release of a reused interrupt) — shared with the ## re-run path.
     _reapply_turn_structure(game, brain_data, chaos_interrupt)
+    # The original turn marked its once-only Director reason (phase:/act_due:) in
+    # triggered_director_phases; the blueprint restore above removed that mark while
+    # the deferred Director for this turn still runs — re-mark it, otherwise the same
+    # phase/act trigger fires a second time on the next turn.
+    if game.session_log:
+        _mark_director_reason(game, game.session_log[-1].get("director_trigger"))
 
     # Reset momentum to burn-reset value (Ironsworn: cost of burning is momentum → 2)
     # This must happen before apply_consequences so the upgraded result's momentum

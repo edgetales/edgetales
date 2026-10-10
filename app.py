@@ -131,7 +131,7 @@ from engine import (
     list_users, create_user, delete_user, is_valid_username,
     save_game, load_game, list_saves_with_info, delete_save, export_story_pdf,
     save_chapter_archive, load_chapter_archive, list_chapter_archives, delete_chapter_archives,
-    copy_chapter_archives,
+    replace_chapter_archives,
     get_current_act, setup_file_logging,
     call_setup_brain, start_new_game, start_new_chapter,
     process_turn, process_momentum_burn, process_correction, call_recap,
@@ -347,6 +347,15 @@ def _clean_narration(text: str) -> str:
 # margin-left on em strong; the closing quote is covered by the extended
 # padding-right.  CSS selector: .chat-msg.assistant em strong.
 # ---------------------------------------------------------------
+
+def _creation_error_text(e: Exception, lang: str) -> str:
+    """User-facing message for a failed character-setup or game-start call: an
+    invalid or unauthorised API key gets the short dedicated message instead of
+    raw API JSON."""
+    if isinstance(e, (anthropic.AuthenticationError, anthropic.PermissionDeniedError)):
+        return t("game.invalid_api_key", lang)
+    return t("creation.error", lang, error=e)
+
 
 def _highlight_dialog(text: str) -> str:
     """Wrap quoted speech in ***bold-italic*** Markdown for Dialog-Highlight mode.
@@ -1271,9 +1280,9 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                     old_name = s.get("active_save", "autosave")
                     save_game(game, username, s["messages"], new_name)
                     # Replace chapter archives in the destination slot wholesale so
-                    # no stale chapters from a previously existing save survive.
-                    delete_chapter_archives(username, new_name)
-                    copy_chapter_archives(username, old_name, new_name)
+                    # no stale chapters from a previously existing save survive
+                    # (no-op when saving under the active slot's own name).
+                    replace_chapter_archives(username, old_name, new_name)
                     s["active_save"] = new_name
                     if on_refresh:
                         on_refresh()
@@ -1477,7 +1486,9 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                     with ui.row().classes("gap-4 mt-2"):
                         async def confirm_new():
                             dlg.close()
-                            delete_chapter_archives(username, s.get("active_save", "autosave"))
+                            # The new game starts in the autosave slot: clear THAT slot's
+                            # archives. A named active save keeps its file and its chapters.
+                            delete_chapter_archives(username, "autosave")
                             s["game"]=None;s["creation"]=None;s["pending_burn"]=None;s["messages"]=[];s["active_save"]="autosave"
                             s["processing"]=False;s["_turn_gen"]=s.get("_turn_gen",0)+1
                             s["viewing_chapter"]=None;s["chapter_view_messages"]=None
@@ -2087,7 +2098,7 @@ def _render_wishes():
         creation["content_lines"]=l_inp.value.strip() if l_inp.value else ""
         # Show spinner below button
         with btn_container:
-            with ui.row().classes("w-full items-center gap-3").props('role="status"'):
+            with ui.row().classes("w-full items-center gap-3").props('role="status"') as gen_row:
                 ui.spinner("dots", size="md", color="primary")
                 ui.label(t("creation.generating", lang)).classes("text-sm").style("color: var(--text-secondary)")
         await _scroll_chat_bottom()
@@ -2102,7 +2113,9 @@ def _render_wishes():
                 save_user_config(username,ucfg)
             s["creation"]=creation
             ui.navigate.reload()
-        except Exception as e: ui.notify(t("creation.error", lang, error=e), type="negative")
+        except Exception as e:
+            gen_row.delete()
+            ui.notify(_creation_error_text(e, lang), type="negative")
     with btn_container:
         with ui.row().classes("w-full gap-2"):
             ui.button(t("creation.back", lang), on_click=_creation_back_to_personalize).props("flat")
@@ -2224,7 +2237,7 @@ def _render_confirm():
             updated["wishes"] = edit_wishes.value.strip() if edit_wishes.value else ""
             updated["content_lines"] = edit_lines.value.strip() if edit_lines.value else ""
             with adjust_container:
-                with ui.row().classes("w-full items-center gap-3"):
+                with ui.row().classes("w-full items-center gap-3") as regen_row:
                     ui.spinner("dots", size="md", color="primary")
                     ui.label(t("creation.regenerating", lang)).classes("text-sm").style("color: var(--text-secondary)")
             try:
@@ -2239,7 +2252,9 @@ def _render_confirm():
                     save_user_config(s["current_user"], ucfg)
                 s["creation"] = updated
                 ui.navigate.reload()
-            except Exception as e: ui.notify(t("creation.error", lang, error=e), type="negative")
+            except Exception as e:
+                regen_row.delete()
+                ui.notify(_creation_error_text(e, lang), type="negative")
         with adjust_container:
             ui.button(f"{E['refresh']} {t('creation.regenerate', lang)}", on_click=regenerate_adjusted, color="primary").classes("w-full")
 
@@ -2277,9 +2292,9 @@ def _render_confirm():
                     return
                 start_btn.disable(); reroll_btn.disable()
                 with confirm_container:
-                    with ui.row().classes("w-full items-center gap-3").props('role="status"'):
+                    with ui.row().classes("w-full items-center gap-3").props('role="status"') as start_row:
                         ui.spinner("dots", size="md", color="primary")
-                        loading_label = ui.label(t("creation.world_awakens", lang)) \
+                        ui.label(t("creation.world_awakens", lang)) \
                             .classes("text-sm creation-loading-label") \
                             .style("color: var(--text-secondary)")
                     # Rotate loading text every 10 seconds to show progress
@@ -2315,8 +2330,13 @@ def _render_confirm():
                     if s.get("tts_enabled",False): s["pending_tts"]=narration
                     ui.navigate.reload()
                 except Exception as e:
+                    start_row.delete()
+                    try:
+                        await ui.run_javascript('clearInterval(window._loadingTimer)', timeout=3.0)
+                    except Exception:
+                        pass
                     start_btn.enable(); reroll_btn.enable()
-                    ui.notify(t("creation.error", lang, error=e), type="negative")
+                    ui.notify(_creation_error_text(e, lang), type="negative")
             start_btn = ui.button(f"{E['swords']} {t('creation.start', lang)}", on_click=start, color="primary").classes("text-lg px-8")
             async def reroll():
                 if not s.get("api_key", "").strip():
@@ -2324,7 +2344,7 @@ def _render_confirm():
                     return
                 start_btn.disable(); reroll_btn.disable()
                 with confirm_container:
-                    with ui.row().classes("w-full items-center gap-3"):
+                    with ui.row().classes("w-full items-center gap-3") as reroll_row:
                         ui.spinner("dots", size="md", color="primary")
                         ui.label(t("creation.regenerating", lang)).classes("text-sm").style("color: var(--text-secondary)")
                 await _scroll_chat_bottom()
@@ -2339,8 +2359,9 @@ def _render_confirm():
                     s["creation"]=updated
                     ui.navigate.reload()
                 except Exception as e:
+                    reroll_row.delete()
                     start_btn.enable(); reroll_btn.enable()
-                    ui.notify(t("creation.error", lang, error=e), type="negative")
+                    ui.notify(_creation_error_text(e, lang), type="negative")
             reroll_btn = ui.button(f"{E['refresh']} {t('creation.reroll', lang)}", on_click=reroll, color="primary").props("outline").classes("text-lg px-8")
             ui.button(t("creation.back", lang), on_click=_creation_back_to_wishes).props("flat")
     return True
@@ -2623,6 +2644,13 @@ def render_momentum_burn() -> bool:
                         msgs[-1]={"role":"assistant","content":f"*{E['fire']} {t('momentum.gathering', lang)}*\n\n{narration}",
                                   "roll_data":rd}
                     save_game(game,username,s["messages"],s.get("active_save","autosave"))
+                    # The burn restored the pre-turn state, which also discarded what the
+                    # Director produced for the pre-burn narration. If the turn had a
+                    # Director trigger, run it again for the scene the player now sees.
+                    if game.session_log and game.session_log[-1].get("director_trigger"):
+                        await asyncio.to_thread(run_deferred_director, client, game,
+                                                {"narration": narration, "config": config})
+                        save_game(game,username,s["messages"],s.get("active_save","autosave"))
                     if s.get("tts_enabled",False): s["pending_tts"]=narration
                     # Rewind effect: VHS-Scan-Linien + Chrom-Schimmer vor dem Reload
                     try:
@@ -2708,7 +2736,9 @@ def _make_chapter_action(game, chapter_msg_key: str):
             ui.notify(t("game.error", lang, error=e), type="negative")
 
     def full_new():
-        delete_chapter_archives(s["current_user"], s.get("active_save", "autosave"))
+        # New game goes into the autosave slot — clear its archives, never those of a
+        # named save that stays on disk.
+        delete_chapter_archives(s["current_user"], "autosave")
         s["game"] = None; s["creation"] = None; s["messages"] = []; s["active_save"] = "autosave"
         s["viewing_chapter"] = None; s["chapter_view_messages"] = None
         ui.navigate.reload()
