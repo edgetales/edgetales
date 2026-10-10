@@ -9,7 +9,7 @@
 
 | | |
 |---|---|
-| **Version** | v0.9.96 |
+| **Version** | v0.9.97 |
 | **Codebase** | ~14,200 lines across 5 source files + config, plus offline test suite in `tests/` |
 | **Tests** | `python -m pytest tests -q` (pytest + jsonschema; fake AI, no API key) |
 | **Stack** | Python 3.11+, NiceGUI, Anthropic SDK (Structured Outputs), reportlab, edge-tts, faster-whisper, wonderwords, stop-words, nameparser, cryptography |
@@ -42,7 +42,7 @@ Auto-install: `_ensure_requirements()` checks and installs 9 mandatory packages 
 ### Editing Rules
 - `str_replace` preferred: target the exact function or section; never modify unrelated code.
 - `old_str` must match the raw file content exactly (whitespace included) — always `view` immediately before editing.
-- **Version strings** in `engine.py` and `README.md` are updated manually by Lars — never touch them.
+- **Version strings**: when preparing a release, Claude updates `VERSION` in `engine.py`, the version badge in `README.md`, the Quick Reference version here and the CHANGELOG section heading together (one release branch + PR). Never bump them outside a release.
 - After a successful `str_replace`, re-view the file before further edits to the same file.
 
 ### Mandatory Session-End Steps

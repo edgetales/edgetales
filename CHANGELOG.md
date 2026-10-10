@@ -5,7 +5,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## [Unreleased]
+## [0.9.97] - 2026-10-10
 
 ### Changed
 - **Action rolls use the Ironsworn rule: 1d6 + stat vs two d10.** The engine rolled 2d6 + stat, which made rolls far too easy (at stat 2: 58 % strong hits and 10 % misses instead of Ironsworn's 23 % and 33 %) — momentum sat at its maximum, chaos at its minimum and setbacks were rare. Saved games stay compatible: rolls stored with two action dice are still shown as such. The help text (DE/EN) and the detailed dice display show one action die.
