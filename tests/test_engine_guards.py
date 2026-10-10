@@ -216,3 +216,13 @@ def test_chaos_bounds(game, monkeypatch):
     assert game.chaos_factor == 9
     E.update_chaos_factor(game, "WEAK_HIT")
     assert game.chaos_factor == 9
+
+
+def test_act_transition_check_precedes_boolean_and_is_kept(game):
+    props = list(E.DIRECTOR_OUTPUT_SCHEMA["properties"])
+    assert props.index("act_transition_check") == props.index("act_transition") - 1
+    assert "act_transition_check" in E.DIRECTOR_OUTPUT_SCHEMA["required"]
+    game.scene_count = 1 + E.ACT_MIN_SCENES
+    E._apply_director_guidance(game, _guidance(act_transition_check="Core event happened in scene 3."))
+    assert game.director_guidance["act_transition_check"] == "Core event happened in scene 3."
+    assert game.story_blueprint["triggered_transitions"] == ["act_0"]

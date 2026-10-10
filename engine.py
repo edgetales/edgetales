@@ -67,7 +67,7 @@ except ImportError:
 
 VERSION = "0.9.96"
 BRAIN_MODEL = "claude-haiku-5-5"
-NARRATOR_MODEL = "claude-sonnet-4-6"
+NARRATOR_MODEL = "claude-sonnet-5-5"
 _SCRIPT_DIR = Path(__file__).resolve().parent
 USERS_DIR = _SCRIPT_DIR / "users"
 USERS_DIR.mkdir(exist_ok=True)
@@ -309,6 +309,10 @@ DIRECTOR_OUTPUT_SCHEMA = {
             },
         },
         "arc_notes": {"type": "string"},
+        # Evidence sentence generated BEFORE the boolean — without it, smaller
+        # models answered act_transition=false by default even when their own
+        # arc_notes described the trigger as fulfilled.
+        "act_transition_check": {"type": "string"},
         "act_transition": {"type": "boolean"},
         "new_clocks": {
             # Director-proposed threat clocks for genuinely new mid-game dangers.
@@ -334,8 +338,8 @@ DIRECTOR_OUTPUT_SCHEMA = {
         },
     },
     "required": ["scene_summary", "narrator_guidance", "npc_guidance",
-                  "pacing", "npc_reflections", "arc_notes", "act_transition",
-                  "new_clocks"],
+                  "pacing", "npc_reflections", "arc_notes", "act_transition_check",
+                  "act_transition", "new_clocks"],
     "additionalProperties": False,
 }
 
@@ -4276,6 +4280,8 @@ _ROLE_DEFAULT_MODEL = {"narrator": NARRATOR_MODEL, "brain": BRAIN_MODEL}
 # Role defaults applied when config.json leaves the option empty. The brain role
 # runs many short structured calls per turn — thinking only adds latency there.
 _ROLE_DEFAULT_THINKING = {"brain": "disabled"}
+# Narration quality benefits from high effort; the brain role keeps the API default.
+_ROLE_DEFAULT_EFFORT = {"narrator": "high"}
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 THINKING_MODES = ("disabled", "adaptive", "between_tools")
 
@@ -4293,8 +4299,7 @@ def configure_models(cfg: Optional[dict] = None) -> dict:
     for role in MODEL_ROLES:
         model = str(cfg.get(f"{role}_model") or "").strip() or _ROLE_DEFAULT_MODEL[role]
         effort = str(cfg.get(f"{role}_effort") or "").strip().lower() or None
-        thinking = (str(cfg.get(f"{role}_thinking") or "").strip().lower()
-                    or _ROLE_DEFAULT_THINKING.get(role))
+        thinking = str(cfg.get(f"{role}_thinking") or "").strip().lower() or None
         if effort and effort not in EFFORT_LEVELS:
             log(f"[Models] Ignoring invalid {role}_effort '{effort}' "
                 f"(allowed: {', '.join(EFFORT_LEVELS)})", level="warning")
@@ -4303,6 +4308,9 @@ def configure_models(cfg: Optional[dict] = None) -> dict:
             log(f"[Models] Ignoring invalid {role}_thinking '{thinking}' "
                 f"(allowed: {', '.join(THINKING_MODES)})", level="warning")
             thinking = None
+        # Empty or invalid values fall back to the role default (None = API default).
+        effort = effort or _ROLE_DEFAULT_EFFORT.get(role)
+        thinking = thinking or _ROLE_DEFAULT_THINKING.get(role)
         settings[role] = {"model": model, "effort": effort, "thinking": thinking}
     _MODEL_SETTINGS = settings
     _REJECTED_OPTIONS.clear()
@@ -6242,10 +6250,8 @@ Field instructions:
   - instinct: NPC's psychological signature under real pressure (max 8 words, only if needs_profile="true"), null otherwise. NOT job demeanor or genre convention — the specific human underneath: what they do when their strategy fails, what betrays them, what is slightly irrational but inevitable. BAD: "stays calm under pressure" / "methodical and efficient" / "evaluates before acting". GOOD: "goes quiet and hyper-precise when cornered" / "agrees then quietly does what he intended" / "dark humor until something breaks, then overcorrects". Base on this NPC's description and story observations. IMPORTANT: instinct is set ONCE (first reflection, needs_profile=true) and never updated — it is the NPC's wiring, not their mood.
   - disposition_shift: Set to "improve" or "worsen" ONLY when the NPC's accumulated story arc clearly justifies a one-step organic change in their relationship to the player — e.g. an NPC who has consistently helped and trusted over many scenes should shift from neutral to friendly, or a betrayal should shift from friendly to neutral. This is NOT a reward for a single good roll; it reflects a relationship that has genuinely changed through narrative accumulation. Leave null in the vast majority of cases. One step only per reflection. The direction must match the tone of the reflection.
 - arc_notes: Brief story arc progress observation
-- act_transition: Evaluate whether the current act's <transition_trigger> has been fulfilled by recent events. Set to true if:
-  (a) the trigger's core condition has been substantially met — the story has clearly moved into the situation the trigger describes, even if not every detail matches (do not wait for a perfect match), OR
-  (b) the story has moved PAST the act's scene_range (PAST_RANGE="true") and the trigger's spirit has been approximately met.
-  Set to false only if the trigger condition is clearly unmet AND we are still within scene_range. The scene_range is a fallback — content-driven transitions via this flag produce better pacing.
+- act_transition_check: One sentence (in English) written BEFORE deciding act_transition. Name the CORE EVENT of <transition_trigger> — the single central story development it describes, ignoring secondary details, exact wording and named specifics — then state in which recent scene (<scene_history> or <latest_scene>) that core event happened in any form, or what is still missing. Empty string if there is no <transition_trigger>.
+- act_transition: true if act_transition_check found the core event in the story, even partially, in different words, or via other characters or means than the trigger names (do not wait for a perfect match). Also true if PAST_RANGE="true" and the trigger's spirit has been approximately met. false only if the core event has clearly not happened yet. Your arc_notes and act_transition must agree: if arc_notes describe the trigger's situation as reached, act_transition is true. The scene_range is only a fallback — content-driven transitions produce better pacing.
 - new_clocks: Propose new threat clocks ONLY when ALL conditions are met: (1) a concrete new danger has emerged in the last 1-2 scenes that is NOT already tracked by an existing clock in <clocks>, (2) the threat is specific enough to have a concrete, narratively meaningful trigger_description (what happens when the clock fills), (3) the threat is genuinely new — not a re-framing of an existing one. Leave this array EMPTY when any condition is unmet. When creating a clock: name (short, evocative), clock_type ("threat" or "scheme"), segments (4–8 based on urgency — 4 for imminent, 6 for medium, 8 for slow-burn), filled (1 to show the threat has already begun, 0 only if it is entirely latent), trigger_description (the concrete consequence when filled), owner ("world" or the NPC name driving this threat). Maximum 2 new clocks per Director run — default is empty array.{clock_cap_rule}
 
 If a <reflect> tag has a last_reflection attribute, write a NEW insight that builds on, deepens, or contradicts it. Do NOT repeat the same theme or emotional tone. If last_tone is present, use it as the emotional register to evolve from — the texture and arc direction of the previous state. If last_tone_key is present, use it as the enum category to move away from when choosing the new tone_key (avoid repeating the identical value unless deliberate stagnation is the point).
@@ -6328,6 +6334,7 @@ def _apply_director_guidance(game: GameState, guidance: dict):
         "pacing":            guidance.get("pacing", ""),
         "arc_notes":         guidance.get("arc_notes", ""),
         "act_transition":    guidance.get("act_transition"),
+        "act_transition_check": guidance.get("act_transition_check", ""),
         "npc_reflections": [
             {
                 "npc_id":           r.get("npc_id", ""),
@@ -6345,6 +6352,9 @@ def _apply_director_guidance(game: GameState, guidance: dict):
 
     # Handle act transition: Director signals that the current act's
     # transition_trigger has been fulfilled → mark in blueprint
+    if game.story_blueprint and guidance.get("act_transition_check"):
+        log(f"[Director] act_transition={bool(guidance.get('act_transition'))} — "
+            f"{guidance['act_transition_check'][:200]}")
     if guidance.get("act_transition") and game.story_blueprint:
         bp = game.story_blueprint
         # Normalize None → [] before setdefault, since setdefault only fires when
