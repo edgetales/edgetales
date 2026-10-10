@@ -28,6 +28,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **Save-slot metadata is cached:** `get_save_info()` caches parsed metadata per file, invalidated by mtime/size. The sidebar lists every slot on each render and previously re-parsed every full save (chat history included) each time.
 
 ### Fixed
+- **Director arc updates were discarded:** arcs over 300 characters (frequent in German) were rejected outright, so NPC development was lost. The prompt now states the limit (`ARC_MAX_CHARS`) and over-long arcs are trimmed at a sentence end.
+- **Director kept proposing clocks at the cap:** the cap was only an attribute on the `<clocks>` tag. The `new_clocks` instruction now carries an explicit rule — empty array when the cap is reached, otherwise the number of free slots.
+- **Setup stats with a wrong sum lost the character fit:** instead of resetting to archetype defaults, `_normalize_stats()` brings the sum to 7 while keeping the AI's weighting.
+- **Location field held a full description:** the Setup Brain now asks for a short place label, and `_short_location_name()` cuts descriptive tails in Setup and `update_location()`. Previously the long starting description also made the fuzzy matcher treat the Opening Extractor's short name as "same place".
+- **Time of day could jump backwards:** Extractor `time_update`s are accepted only 1–4 phases forward (incl. past midnight); backward jumps such as `deep_night` → `late_evening` are logged and ignored. A `time_update` equal to the current phase no longer resets the stale-time counter.
 - **Responses with thinking blocks were parsed as empty/invalid:** every call read `response.content[0].text`, but newer models (e.g. Sonnet 5.5 with default thinking) return a thinking block first. All reads now go through `_response_text()`, which concatenates the text blocks only.
 
 #### Code Review Pass
