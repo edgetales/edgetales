@@ -10,7 +10,8 @@
 | | |
 |---|---|
 | **Version** | v0.9.96 |
-| **Codebase** | ~13,600 lines across 5 source files + config |
+| **Codebase** | ~14,200 lines across 5 source files + config, plus offline test suite in `tests/` |
+| **Tests** | `python -m pytest tests -q` (pytest + jsonschema; fake AI, no API key) |
 | **Stack** | Python 3.11+, NiceGUI, Anthropic SDK (Structured Outputs), reportlab, edge-tts, faster-whisper, wonderwords, stop-words, nameparser, cryptography |
 | **AI Models** | Narrator/Architect: `claude-sonnet-4-6` · Brain/Director/Extractors: `claude-haiku-4-5-20251001` |
 | **Core Principle** | "AI narrates, dice decide." — All outcomes determined by dice rolls, never by AI judgment |
@@ -35,7 +36,7 @@ Auto-install: `_ensure_requirements()` checks and installs 9 mandatory packages 
 1. **Analyze first** — read the relevant code/file section before proposing solutions. For bugs: ask for savegame or log upload if the root cause is unclear.
 2. **Discuss if non-trivial** — architectural implications → align before coding.
 3. **Implement surgically** — `str_replace` for targeted edits. Full file output only if Lars explicitly asks or >30% of file changes.
-4. **Syntax-check** — verify Python syntax after every code change.
+4. **Syntax-check + tests** — verify Python syntax after every code change and run `python -m pytest tests -q`. Engine behaviour changes get a test in `tests/` (fixtures in `tests/conftest.py`: `game`, `ai` fake with `fail_on`/`roll`/`brain`/`metadata`, `make_npc`, `state_fingerprint`).
 5. **Session end** — update `CHANGELOG.md` + `PROJECT_BRIEFING.md` (mandatory).
 
 ### Editing Rules
@@ -45,10 +46,19 @@ Auto-install: `_ensure_requirements()` checks and installs 9 mandatory packages 
 - After a successful `str_replace`, re-view the file before further edits to the same file.
 
 ### Mandatory Session-End Steps
-Every session that changes code or architecture must end with both:
+Every session that changes code or architecture must end with:
 
 1. **`CHANGELOG.md`**: Add to the current version entry. Keep a Changelog format (Added / Changed / Fixed). English only. Entries self-contained. **`elvira/` changes are never logged here.**
 2. **`PROJECT_BRIEFING.md`**: Reflect any architectural, behavioral, or API changes. Update version in Quick Reference.
+3. **Push + PR + project mirror** (see Git Workflow below).
+
+### Git Workflow
+- **Source of truth**: the GitHub repo `edgetales/edgetales`. At session start, clone it and work there — never edit from stale copies.
+- **Branch per session** (`fix/<topic>`, `feat/<topic>`), never commit directly to `main`.
+- Before pushing: `git fetch origin main` + rebase (keeps the push small on the shallow clone).
+- **Open a pull request to `main`** with a short summary and test results. Lars merges.
+- **Project mirror**: after every push, copy all tracked text files into the claude.ai Project under `repo/` (same relative paths, e.g. `repo/engine.py`, `repo/tests/conftest.py`) so the project knowledge always equals the pushed state. Binary files (`docs/*.png`) are not mirrored.
+- **Internal files stay out of Git**: `elvira/` and `coopgm.md` live only in the Project (root level), never in the repo.
 
 ### Multi-Language Requirement ⚠️
 Every UI change must:
@@ -143,11 +153,12 @@ Player Input
     scene_context, location_update, time_update, memory_updates,
     new_npcs, npc_renames, npc_details, deceased_npcs
     ↓
-[Player receives narration + TTS]  ←── IMMEDIATELY (no waiting for Director or Save)
-    ↓  (after rendering + scroll, via asyncio.create_task)
-[Save]  ─── save_game() — runs after display, does not block player
-    ↓  (parallel, non-blocking)
-[Director] (Haiku, Structured Outputs)  ─── ~$0.0003, 0ms latency for player
+[Player receives narration]  ←── IMMEDIATELY (no waiting for Director)
+    ↓  (after rendering + scroll)
+[Save]  ─── save_game() — runs after display
+    ↓  (inline-awaited, concurrent with TTS generation, processing lock still held)
+[Director] (Haiku, Structured Outputs)  ─── ~$0.0003, narration already visible
+    → second save_game() persists Director results
     Triggered ONLY on: MISS, Chaos, new NPCs, every 3 scenes
     → narrator_guidance (concrete, for next round)
     → npc_reflections (stored in NPC memory, dual tone/tone_key)
@@ -156,7 +167,7 @@ Player Input
 
 **Total per turn: ~$0.003–0.004, ~2.5s**
 
-**Prompt caching**: `call_narrator()` sends the system prompt with `cache_control: {"type": "ephemeral"}` (5-min server-side cache, 10× cheaper reads). `_status_context_block()` lives in the four user-prompt builders (not the system prompt) so H/Sp/Su changes never invalidate the cache. ~20% Narrator input token savings at typical 2–3 min/turn pace.
+**Prompt caching**: all cacheable system prompts go through `_cached_system()`. Cache floors: Sonnet 4.6 = 1,024 tokens, Haiku 4.5 = 4,096 tokens (`CACHE_MIN_TOKENS_*`); shorter prefixes are processed uncached without error or surcharge. Brain, Metadata Extractor and Director (Haiku, ~0.5–2.5k tokens) are marked but currently below the floor — they activate automatically if they grow. Structured-output schema changes invalidate only the *messages* cache level, not the system level. Every call logs `[API] <model>: in/out/cache_read/cache_write` — `cache_read > 0` confirms a hit. `call_narrator()` sends the system prompt with `cache_control: {"type": "ephemeral"}` (5-min server-side cache, 10× cheaper reads). `_status_context_block()` lives in the four user-prompt builders (not the system prompt) so H/Sp/Su changes never invalidate the cache. ~20% Narrator input token savings at typical 2–3 min/turn pace.
 
 ### Story Architect (Sonnet, one-time call)
 
@@ -180,7 +191,7 @@ Player Input
 
 **Phase-trigger deduplication**: `phase:` triggers fire at most once per phase per chapter, tracked in `story_blueprint["triggered_director_phases"]`. `_build_turn_snapshot()` captures and `_restore_from_snapshot()` restores this list — a `##` correction on the trigger turn un-marks the phase, allowing re-fire.
 
-**Director Race Condition Guard**: `_director_gen` session counter incremented at each turn start. Background Director task checks (1) before API call and (2) before `save_game()`. When early-return fires, `reset_stale_reflection_flags()` MUST be called — or `_needs_reflection` flags accumulate indefinitely (zombie-reflection loop).
+**Director execution (UI)**: `process_player_input()` starts `run_deferred_director()` via `asyncio.to_thread` right after the narration is rendered and saved, lets it run concurrently with `do_tts()`, then awaits it (`_finish_director()`) **before** the `processing` lock is released and saves again. This is the only reliable pattern: the former detached `asyncio.create_task(_bg_director())` raced with the next turn's `process_turn()` thread on the same `GameState` and its staleness early-returns silently dropped results (zombie-reflection loop). The `_director_gen` counter no longer exists. On a pending momentum burn, the Director is awaited before `ui.navigate.reload()`. A save/game switch during the Director (`_turn_gen` changed) skips the second save. `reset_stale_reflection_flags()` remains in the engine but is no longer needed by the UI.
 
 **`_apply_director_guidance()` — agenda/instinct/arc paths**:
 - `agenda`/`instinct`: fills **only empty fields** (`needs_profile="true"` NPCs)
@@ -243,9 +254,17 @@ When `story_complete=True` + `epilogue_dismissed=True`: `get_current_act()` retu
 
 Players prefix `##` to correct the previous turn. Error type auto-detected; repair strategy selected accordingly.
 
-**Turn Snapshot** (`_build_turn_snapshot()`): Created at every `process_turn()` start. Captures all turn-mutable fields: resources, counters, flags, spatial/temporal state, NPCs (deepcopy), clocks (deepcopy), director guidance, `story_blueprint` sub-fields (`bp_revealed`, `bp_triggered_transitions`, `bp_story_complete`, `bp_triggered_director_phases`). Both restore paths (`_restore_from_snapshot()` and `process_momentum_burn()`) use this snapshot.
+**Turn Snapshot** (`_build_turn_snapshot()`): Created at every `process_turn()` start. **Spec-driven** — every turn-mutable field is listed exactly once in `_SNAPSHOT_SCALAR_FIELDS` (copied), `_SNAPSHOT_DEEP_FIELDS` (deep-copied) or `_SNAPSHOT_BP_KEYS` (blueprint sub-keys → snapshot key `bp_<key>`). To add a turn-mutable field, append it there — nothing else. `tests/test_snapshot.py::test_every_gamestate_field_is_classified` fails until every new `GameState` field is classified. Snapshot key names are persisted — never rename them.
+- `_restore_snapshot(game, snap, logs=True|False)` is the only restore implementation. `logs=True` (`_restore_from_snapshot()`, `## input_misread`) also removes the turn's log entries via `_truncate_log_to_tail()` (pops everything after the pre-turn tail; empty pre-turn log handled; bounded fallback when the list was trimmed at its cap). `logs=False` (momentum burn) keeps them for in-place editing. Missing keys in old snapshots leave the current value untouched. Empty blueprint lists restore as *absent* keys (all readers use `.get(k) or []`).
+- `_reapply_turn_structure(game, brain, chaos_interrupt)` re-applies scene advance, targeted-NPC reactivation, Brain location/time and the chaos release after a restore — shared by burn and `## input_misread`.
 
-`last_turn_snapshot` persisted in `SAVE_FIELDS`. `save_game()` converts `snapshot["roll"]` via `dataclasses.asdict()`; `load_game()` reconstructs via `RollResult(**r)`.
+**Transactional pipelines** (`_rollback_on_error(game, label)`): `process_turn`, `process_momentum_burn`, `process_correction` and `start_new_chapter` are thin wrappers around `_<name>_impl()`; `run_deferred_director()` wraps `_apply_director_guidance()`. On any exception the full `GameState` (deepcopy taken at entry, ~5 ms x86 for a large game) is restored field-by-field **into the same object** and the exception re-raised — the UI retry then starts from clean state. Never mutate `GameState` outside these wrappers in a multi-call flow.
+
+`last_turn_snapshot` persisted in `SAVE_FIELDS`. `save_game()` converts `snapshot["roll"]` via `dataclasses.asdict()`; `load_game()` reconstructs via `RollResult(**r)`. The snapshot also carries `time_unchanged_scenes`. `start_new_chapter()` sets `last_turn_snapshot = None` — a `##` at a chapter opening must never roll back into the previous chapter.
+
+**`state_error` corrections** call `check_npc_agency(game, tick=False)` — agenda prompt lines only; the original turn already ticked NPC-owned clocks.
+
+**Correction state ops** (`_apply_correction_ops()`): `npc_edit` normalises disposition, clamps bond, maps `inactive` → `background`; `npc_split` uses `_next_npc_id()` + `_ensure_npc_memory_fields()`; `npc_merge` re-points `about_npc` refs and clock owners to the survivor and runs `_consolidate_memory()`; `time_edit` accepts only `TIME_PHASES`.
 
 **Scene marker sync on location correction**: `_is_correction` branch updates the most recent scene marker string in `s["messages"]` before `render_chat_messages()`.
 
@@ -263,7 +282,7 @@ Players prefix `##` to correct the previous turn. Error type auto-detected; repa
 
 **Tracks**: Health, Spirit, Supply (0–5), Momentum (-6 to +10)
 
-**Momentum Burn**: `process_momentum_burn()` fully restores state from `last_turn_snapshot` (all turn-mutable fields including NPCs, clocks, chaos, resources) before applying new consequences.
+**Momentum Burn**: `process_momentum_burn()` fully restores state from `last_turn_snapshot` (all turn-mutable fields including NPCs, clocks, chaos, resources, `triggered_director_phases`, `time_unchanged_scenes`), then **re-applies the turn's structural effects** the pre-turn snapshot rolled back: `scene_count += 1`, `_apply_brain_location_time()`, background→active reactivation of the targeted NPC, and the chaos release of a reused chaos interrupt. After consequences it re-runs `check_npc_agency()` and `_tick_autonomous_clocks()`, re-checks `_check_story_completion()`, and writes the upgraded roll + new narration back into `last_turn_snapshot` so a follow-up `##` sees the burned result.
 
 **Chaos System**: Scene dice vs chaos threshold (3–9). Match on Miss → Chaos Interrupt (10 types).
 
@@ -278,6 +297,8 @@ Players prefix `##` to correct the previous turn. Error type auto-detected; repa
 **`SAVE_FIELDS`**: Authoritative list of persisted fields — all other GameState fields are transient.
 
 ### Narrative Continuity (Chapter Transitions)
+
+**Scene rebase at chapter start**: `scene_count` restarts at 1, so `start_new_chapter()` sets every carried memory's `scene` to 0 ("before this chapter") and resets `last_memory_scene`/`last_reflection_scene` to 0. Without this, old memories collide with new scene numbers (burn purge, death corroboration), get permanent full recency, and block staleness retirement.
 
 Extended chapter summary: `npc_evolutions` (projected NPC changes in time skip) + `thematic_question` + `post_story_location` (where protagonist ends up after epilogue). Architect receives `character_growth` and `thematic_question` from previous chapters. Chapter opening injects `<npc_evolutions>` as projections (hints, not facts).
 
@@ -321,6 +342,8 @@ Extended chapter summary: `npc_evolutions` (projected NPC changes in time skip) 
 4. **`_apply_memory_updates()`**: Presence guard — memory updates for absent known NPCs rejected. Exemptions: fresh NPCs, auto-stubs, lore/deceased, formerly-lore NPCs (`pre_turn_lore_ids`).
 5. **`_process_npc_details()` identity-reveal fallback**: Established Guard — if existing NPC has memories OR agenda set AND new name shares zero normalized words with name+aliases → reject rename, create fresh stub. Descriptor-named NPCs exempt. Guard extended from `memory`-only to `memory OR agenda` to protect Opening Extractor NPCs (agenda set on creation, no memories yet in first scene).
 6. **Slug resolution** `_resolve_slug_refs()`: snake_case slugs → real `npc_id`s for same-cycle cross-references. Runs between `_process_new_npcs()` and `_apply_memory_updates()`.
+
+**NPC-ID enums (Structured Outputs)**: Extractor, Director and Brain get per-call schemas from `_metadata_schema_for()` / `_director_schema_for()` / `_brain_schema_for()` where every NPC reference is an enum of `_npc_id_enum(game)` (nullable fields via `_nullable_enum()` = `anyOf`). The enum is the ID range `npc_1..npc_N` rounded up to `NPC_ID_ENUM_BUCKET` (10) plus any non-standard legacy IDs → schema changes (and Anthropic grammar recompiles, cached 24 h) only every 10 new NPCs. Unassigned range IDs are never shown to the model; if returned, `_find_npc()` finds nothing and existing technical-ID guards skip them. Extractor memory for a character created in the SAME response: `npc_id: "NEW"` + `new_npc_name` → `_resolve_new_npc_refs()` turns it into a name ref before `_resolve_slug_refs()`. `about_npc` can only reference known IDs (fresh NPCs → null). All calls go through `_structured_create(client, dynamic, static, …)`: a schema-related `BadRequestError` sets `_NPC_ID_ENUM_DISABLED` and falls back to the static schemas for the process lifetime. Limits to respect when editing schemas: ≤ 16 union parameters (`anyOf` / type arrays) per request, `maxItems` unsupported, `minItems` only 0/1 — `tests/test_schemas.py` enforces the union limit and strict objects. The correction schema is intentionally NOT enum-constrained (already at 15 unions).
 
 **Always use `_find_npc()`** as search entry point — never iterate `game.npcs` by name directly.  
 Search chain: exact ID → normalized name → normalized alias → **title-aware core match (3b)** → substring name (min 5 chars) → substring alias. Step 3b strips `_NAME_TITLES` from both ref and stored names and returns the NPC only when there is exactly ONE unambiguous core match (ambiguity guard prevents false positives when two NPCs share the same untitled core).
@@ -385,7 +408,7 @@ MISS (all three): bond -1, spirit -1 or -2. Disposition ladder: `hostile → dis
 - Token budget constants are named module-level constants — never hardcode inline.
 - **Structured Outputs replaced JSON repair** — do not reintroduce `json.loads(repair(text))` patterns.
 - Narrator `PURE PROSE ONLY` rule — never add metadata templates or JSON examples to Narrator prompts; never add role-label prefixes.
-- **Director `_bg_director` race condition**: `reset_stale_reflection_flags()` MUST be called on early-return — or `_needs_reflection` flags accumulate indefinitely (zombie-reflection loop). Diagnostic: if `importance_accumulator` == sum of all NPC memory importances and `last_reflection_scene=0`, Director has never completed for that NPC.
+- **Director must be awaited inline** (while `processing` is held) — never reintroduce a detached background task: it races with the next turn on the same `GameState` and drops results (zombie-reflection loop). Diagnostic for old saves: if `importance_accumulator` == sum of all NPC memory importances and `last_reflection_scene=0`, Director has never completed for that NPC.
 
 ### NPC System
 - Six-layer anti-duplicate system is delicate — test changes against all six layers.
@@ -397,6 +420,12 @@ MISS (all three): bond -1, spirit -1 or -2. Disposition ladder: `hostile → dis
 
 ### Persistence
 - **`SAVE_FIELDS`** is authoritative — transient fields not in it are silently dropped on save.
+- **`version_history` is a persisted `GameState` field** — `save_game()` appends `VERSION` when it differs from the last entry and never reads the old file. `load_game()` backfills `[engine_version]` for old saves.
+- **Game saves and chapter archives are compact JSON** (`_SAVE_JSON_KW`, no indentation). Use `python -m json.tool <file>` to inspect by hand.
+- **All persistent JSON writes go through `_atomic_write_text()`** (temp file + `fsync` + `os.replace`): saves, chapter archives, global and user config. Never use `Path.write_text()` for these.
+- `load_game()` returns `(None, [])` for unreadable/corrupt JSON instead of raising.
+- `get_save_info()` is cached per file (mtime_ns + size) in `_SAVE_INFO_CACHE`; `_read_save_info()` is the uncached parser.
+- **User names must pass `is_valid_username()`** (no path separators, reserved/control characters or leading dots). `create_user()`/`delete_user()` enforce it; `delete_user()` also checks the resolved directory is a direct child of `users/`.
 - `RollResult` dataclass in snapshots requires `dataclasses.asdict()` for JSON — `json.dumps` raises `TypeError`.
 - `load_game()` is the backward-compatibility boundary — new fields must have sane defaults for old saves.
 - `revelation_check` after momentum burn: `process_momentum_burn()` restores blueprint state — `pop("revelation_check", None)` from `session_log[-1]` required or log reports confirmed while blueprint treats it as pending.
@@ -405,6 +434,11 @@ MISS (all three): bond -1, spirit -1 or -2. Disposition ladder: `hostile → dis
 - Every user-visible string through `t(key, lang)` — no hardcoded strings.
 - ARIA labels need **both** `de` and `en` entries.
 - Voice/TTS labels resolved via `resolve_voice_id()` / `resolve_tts_backend()` — never assume label == ID.
+
+### Voice
+- edge-tts runs in a manually managed `ThreadPoolExecutor` with `shutdown(wait=False)` — a `with` block would wait for a hung worker and defeat the timeout.
+- Chatterbox inter-chunk silence must be created on the audio tensor's device/dtype (CUDA/MPS).
+- `VoiceEngine.speech_to_text()` is serialised by `_whisper_lock` (shared singleton across tabs).
 
 ### Deployment (Pi + Windows Dev)
 - **PowerShell after SSH password prompts**: use `;` not `&&` — `&&` silently fails after a password prompt.
@@ -424,7 +458,7 @@ MISS (all three): bond -1, spirit -1 or -2. Disposition ladder: `hostile → dis
 |---|---|---|
 | Server-side Python markup for entity highlighting | JavaScript DOM mutation after render | NiceGUI Vue reconciliation silently overwrites all JS DOM changes |
 | Structured Outputs for all AI JSON calls | JSON repair (`json.loads(repair(text))`) | Eliminates entire error class; guarantees valid schema |
-| Deferred Director (non-blocking, post-save) | Blocking Director before player sees narration | Reduces player-facing latency from ~4s to ~2.5s |
+| Deferred Director (runs after narration is displayed + saved, inline-awaited while the processing lock is held) | Blocking Director before player sees narration / detached background task | Player sees narration at ~2.5s; inline await avoids the GameState race and dropped results of a background task |
 | Haiku for Brain/Director/Metadata, Sonnet for Narrator/Architect | Sonnet everywhere | Haiku ~10× cheaper and fast enough for structured-output tasks |
 | Parallel Narrator + Story Architect at game start | Sequential calls | Halves startup wait (~15s vs ~30s) |
 | `about_npc` field on memories (emergent relationships) | Dedicated NPC relationship data structure | No added complexity; relationships emerge organically from existing memory infrastructure |

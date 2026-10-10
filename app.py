@@ -105,6 +105,7 @@ _ensure_requirements()
 # ---------------------------------------------------------------------------
 import asyncio
 import html as html_mod
+import json as _json
 import os
 import re
 import tempfile
@@ -127,8 +128,8 @@ from engine import (
     VOICE_DIR,
     load_global_config, save_global_config,
     load_user_config, save_user_config,
-    list_users, create_user, delete_user,
-    save_game, load_game, list_saves, list_saves_with_info, delete_save, export_story_pdf,
+    list_users, create_user, delete_user, is_valid_username,
+    save_game, load_game, list_saves_with_info, delete_save, export_story_pdf,
     save_chapter_archive, load_chapter_archive, list_chapter_archives, delete_chapter_archives,
     copy_chapter_archives,
     get_current_act, setup_file_logging,
@@ -454,7 +455,6 @@ def _build_entity_data(game) -> dict:
 def _inject_entity_highlights(game, scope_new: bool = False) -> None:
     """Inject JS call to highlight entity names in narrator text (Design mode only).
     scope_new=True → only process elements with .et-new class (live turn optimization)."""
-    import json as _json
     data = _build_entity_data(game)
     if data["entities"]:
         _scope = "true" if scope_new else "false"
@@ -1099,7 +1099,7 @@ def render_sidebar_status(game: GameState, session=None) -> None:
             active_npcs.sort(key=_npc_sort_key)
             ui.label(f"{E['people']} {t('sidebar.persons', lang)}").classes("text-sm font-semibold")
             for n in active_npcs:
-                disp = dl.get(n["disposition"], f"{E['white_circle']} Neutral")
+                disp = dl.get(n.get("disposition", "neutral"), dl["neutral"])
                 bond_max = n.get("bond_max", 4)
                 with ui.expansion(f"{disp} {E['dash']} {n['name']}").classes("w-full"):
                     _da = _display_aliases(n.get("aliases", []))
@@ -1114,7 +1114,7 @@ def render_sidebar_status(game: GameState, session=None) -> None:
             background_npcs.sort(key=_npc_sort_key)
             with ui.expansion(f"{E['people']} {t('sidebar.known_persons', lang)} ({len(background_npcs)})").classes("w-full"):
                 for n in background_npcs:
-                    disp = dl.get(n["disposition"], f"{E['white_circle']} Neutral")
+                    disp = dl.get(n.get("disposition", "neutral"), dl["neutral"])
                     bond_max = n.get("bond_max", 4)
                     with ui.expansion(f"{disp} {E['dash']} {n['name']}").classes("w-full").style("opacity:0.75"):
                         _da = _display_aliases(n.get("aliases", []))
@@ -2153,7 +2153,7 @@ def _render_confirm():
     custom_arch_lbl = f"{E['pen']} {t('creation.custom_idea', lang)}"
 
     with ui.expansion(f"{E['pen']} {t('creation.adjust', lang)}").classes("w-full"):
-        edit_name = ui.input("Name", value=setup.get("character_name","")).classes("w-full")
+        edit_name = ui.input(t("user.name", lang), value=setup.get("character_name","")).classes("w-full")
         edit_desc = ui.textarea(t("creation.background", lang), value=creation.get("custom_desc","")).props("rows=3 maxlength=800 counter").classes("w-full")
         ui.separator()
         # Genre dropdown
@@ -2287,7 +2287,7 @@ def _render_confirm():
                     _msg2 = t("creation.world_awakens_2", lang)
                     _msg3 = t("creation.world_awakens_3", lang)
                     await ui.run_javascript(f'''
-                        window._loadingMsgs = ["{_msg1}", "{_msg2}", "{_msg3}"];
+                        window._loadingMsgs = {_json.dumps([_msg1, _msg2, _msg3], ensure_ascii=False)};
                         window._loadingIdx = 0;
                         window._loadingTimer = setInterval(() => {{
                             window._loadingIdx = (window._loadingIdx + 1) % window._loadingMsgs.length;
@@ -2360,8 +2360,6 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
         return
     s["processing"] = True
     turn_gen = s.get("_turn_gen", 0)  # Capture generation to detect save-switch during processing
-    s["_director_gen"] = s.get("_director_gen", 0) + 1  # Invalidate any in-flight director
-    director_gen = s["_director_gen"]
     config=get_engine_config();username=s["current_user"]
     # On retry, the message is already in s["messages"] and rendered — don't duplicate
     if not is_retry:
@@ -2508,32 +2506,36 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
             await _scroll_to_element(scroll_target_id)
         # Save after rendering — player sees narration immediately, save doesn't block display
         save_game(game,username,s["messages"],s.get("active_save","autosave"))
-        # Fire Director in background — doesn't block narration display
+        # Director — awaited inline while the processing lock is still held.
+        # A detached background task raced with the next turn: both threads mutated
+        # the same GameState, and stale-guard early returns silently dropped results
+        # (zombie-reflection loop). The player already sees the narration; the
+        # Director runs concurrently with TTS generation and only delays the next
+        # input by its own latency (~1-2 s Haiku).
+        director_task = None
         if director_ctx:
-            _dc=director_ctx; _g=game; _u=username; _s=s; _gen=turn_gen; _dgen=director_gen
-            async def _bg_director():
-                try:
-                    # Don't even run if a newer turn has already started
-                    # (the game object may be mutated by the new turn's thread)
-                    if _s.get("_director_gen", 0) != _dgen:
-                        log("[Director] Skipping — newer turn already started")
-                        return
-                    await asyncio.to_thread(run_deferred_director, client, _g, _dc)
-                    # Don't save if user switched to a different game during Director processing
-                    if _s.get("_turn_gen", 0) != _gen:
-                        log("[Director] Discarding stale save (game context changed)")
-                        return
-                    # Don't save if another turn started while Director was running
-                    if _s.get("_director_gen", 0) != _dgen:
-                        log("[Director] Discarding stale save (newer turn started)")
-                        return
-                    save_game(_g, _u, _s["messages"], _s.get("active_save", "autosave"))
-                    log("[Director] Background save complete")
-                except Exception as e:
-                    log(f"[Director] Background call failed: {e}", level="warning")
-            asyncio.create_task(_bg_director())
+            director_task = asyncio.create_task(
+                asyncio.to_thread(run_deferred_director, client, game, director_ctx))
+
+        async def _finish_director():
+            if director_task is None:
+                return
+            try:
+                await director_task
+            except Exception as e:
+                log(f"[Director] Call failed: {e}", level="warning")
+                return
+            if s.get("_turn_gen", 0) != turn_gen:
+                log("[Director] Discarding save (game context changed)")
+                return
+            save_game(game, username, s["messages"], s.get("active_save", "autosave"))
+            log("[Director] Save after Director complete")
+
         # TTS — skip if momentum burn pending (page will reload, cutting off audio)
         if burn_info:
+            # Finish the Director before reloading so a declined burn keeps its results
+            # (an accepted burn restores the pre-turn snapshot anyway).
+            await _finish_director()
             # Serialize RollResult to dict for JSON-safe session storage
             burn_info["roll"] = asdict(burn_info["roll"])
             s["pending_burn"]=burn_info; ui.navigate.reload()
@@ -2541,6 +2543,7 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
             # For corrections msg_col is None (full re-render) — TTS still works, no container needed
             tts_container = msg_col if not _is_correction else None
             await do_tts(narration, tts_container)
+            await _finish_director()
             # Reload if game state now requires special UI (epilogue offer, game over)
             # These cards only render on page load, so a reload is needed to show them.
             bp = game.story_blueprint or {}
@@ -2775,14 +2778,13 @@ def render_game_over() -> bool:
     s=S();game=s.get("game");lang=L()
     if not game or not game.game_over: return False
     kid=s.get("kid_friendly",False)
-    import json as _json
 
     # Inject full-screen "Schwarzer Vorhang" overlay via JS.
     # It fades out after the animation and hands off to the NiceGUI buttons below.
     _sub   = t("gameover.dark", lang) if not kid else t("gameover.kid", lang)
     _flavor = t("gameover.flavor_kid" if kid else "gameover.flavor", lang, name=game.player_name)
     _skull  = "⭐" if kid else "💀"
-    _title  = "ABENTEUER ZU ENDE" if lang == "de" else "ADVENTURE OVER"
+    _title  = html_mod.escape(t("gameover.overlay_title", lang))
     ui.run_javascript(f'''
         (function(){{
             if (document.querySelector('._go_overlay')) return;
@@ -3079,7 +3081,9 @@ async def main_page(client: Client):
                     async def create():
                         n = inp.value.strip()
                         if n:
-                            if create_user(n):
+                            if not is_valid_username(n):
+                                ui.notify(t("user.invalid_name", lang), type="negative")
+                            elif create_user(n):
                                 await _select_user(n)
                             else:
                                 ui.notify(t("user.exists", lang, name=n), type="negative")

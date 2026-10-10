@@ -14,8 +14,11 @@ import math
 import logging
 import sys
 import html
+import os
+import threading
 from pathlib import Path
 from datetime import datetime
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -438,8 +441,13 @@ NARRATOR_METADATA_SCHEMA = {
                     # Produces a low-importance "mention" memory; does not reactivate
                     # background NPCs or update last_location.
                     "absent":           {"type": ["boolean", "null"]},
+                    # npc_id="NEW" → this memory belongs to a character introduced in
+                    # the SAME response (new_npcs). new_npc_name carries the exact
+                    # name used there; the engine resolves it after NPC creation.
+                    "new_npc_name":     {"type": ["string", "null"]},
                 },
-                "required": ["npc_id", "event", "emotional_weight", "about_npc", "absent"],
+                "required": ["npc_id", "event", "emotional_weight", "about_npc", "absent",
+                             "new_npc_name"],
                 "additionalProperties": False,
             },
         },
@@ -600,6 +608,137 @@ OPENING_METADATA_SCHEMA = {
                  "deceased_npcs"],
     "additionalProperties": False,
 }
+
+# ---------------------------------------------------------------
+# NPC ID ENUMS — per-call schemas that restrict NPC references to real IDs
+# ---------------------------------------------------------------
+# Structured Outputs can constrain a string to an enum. Every NPC reference the
+# Extractor, Director and Brain return is restricted to known npc_ids, so they
+# can no longer answer with names, invented slugs or comma lists — the root cause
+# most of the fuzzy fallback layers exist for. The layers stay in place as
+# defence in depth (legacy saves, static-schema fallback).
+#
+# Grammar-cache stability: Anthropic compiles each distinct schema once and caches
+# it for 24h; a changed enum costs one extra compilation. The enum therefore
+# covers the whole ID *range* npc_1..npc_N rounded up to NPC_ID_ENUM_BUCKET, plus
+# any non-standard legacy IDs — so it only changes every 10 new NPCs, not on
+# every creation, death or merge. Unassigned IDs in the range are never shown to
+# the model; if one is returned anyway, _find_npc() finds nothing and the entry
+# is skipped (existing technical-ID guards).
+NPC_ID_ENUM_BUCKET = 10
+NPC_REF_NEW = "NEW"   # memory_updates: character introduced in the same response
+
+# Set to True for the rest of the process if the API ever rejects a dynamic enum
+# schema — all calls then fall back to the static schemas (previous behaviour).
+_NPC_ID_ENUM_DISABLED = False
+
+
+def _npc_id_enum(game) -> list:
+    """Stable, sorted list of allowed npc_id values for enum-constrained schemas."""
+    ids = {n.get("id") for n in game.npcs if n.get("id")}
+    max_num = 0
+    for i in ids:
+        m = re.fullmatch(r"npc_(\d+)", str(i))
+        if m:
+            max_num = max(max_num, int(m.group(1)))
+    upper = max(NPC_ID_ENUM_BUCKET,
+                math.ceil((max_num + 1) / NPC_ID_ENUM_BUCKET) * NPC_ID_ENUM_BUCKET)
+    values = {f"npc_{k}" for k in range(1, upper + 1)} | {str(i) for i in ids}
+
+    def _key(v):
+        m = re.fullmatch(r"npc_(\d+)", v)
+        return (0, int(m.group(1)), "") if m else (1, 0, v)
+    return sorted(values, key=_key)
+
+
+def _nullable_enum(values: list) -> dict:
+    """String enum OR null (anyOf — counts as one union parameter)."""
+    return {"anyOf": [{"type": "string", "enum": list(values)}, {"type": "null"}]}
+
+
+def _metadata_schema_for(game) -> dict:
+    """NARRATOR_METADATA_SCHEMA with every NPC reference constrained to real IDs."""
+    ids = _npc_id_enum(game)
+    sch = copy.deepcopy(NARRATOR_METADATA_SCHEMA)
+    props = sch["properties"]
+    mem = props["memory_updates"]["items"]["properties"]
+    mem["npc_id"] = {"type": "string", "enum": ids + [NPC_REF_NEW]}
+    mem["about_npc"] = _nullable_enum(ids)
+    props["npc_renames"]["items"]["properties"]["npc_id"] = {"type": "string", "enum": ids}
+    props["npc_details"]["items"]["properties"]["npc_id"] = {"type": "string", "enum": ids}
+    props["deceased_npcs"]["items"]["properties"]["npc_id"] = {"type": "string", "enum": ids}
+    props["exited_npc_ids"]["items"] = {"type": "string", "enum": ids}
+    return sch
+
+
+def _director_schema_for(game) -> dict:
+    """DIRECTOR_OUTPUT_SCHEMA with NPC references constrained to real IDs."""
+    ids = _npc_id_enum(game)
+    sch = copy.deepcopy(DIRECTOR_OUTPUT_SCHEMA)
+    props = sch["properties"]
+    props["npc_guidance"]["items"]["properties"]["npc_id"] = {"type": "string", "enum": ids}
+    refl = props["npc_reflections"]["items"]["properties"]
+    refl["npc_id"] = {"type": "string", "enum": ids}
+    refl["about_npc"] = _nullable_enum(ids)
+    return sch
+
+
+def _brain_schema_for(game) -> dict:
+    """BRAIN_OUTPUT_SCHEMA with target_npc constrained to real IDs or null."""
+    sch = copy.deepcopy(BRAIN_OUTPUT_SCHEMA)
+    sch["properties"]["target_npc"] = _nullable_enum(_npc_id_enum(game))
+    return sch
+
+
+def _is_schema_rejection(e: Exception) -> bool:
+    """True if a 400 error is about the output schema (not e.g. prompt length)."""
+    msg = str(e).lower()
+    return any(k in msg for k in ("schema", "grammar", "enum", "output_config",
+                                  "json_schema", "anyof", "too complex"))
+
+
+def _structured_create(client, dynamic_schema: dict, static_schema: dict,
+                       max_retries: int = 2, **kwargs):
+    """messages.create with a per-call (ID-enum) schema, falling back to the static
+    schema — permanently for this process — if the API rejects the dynamic one."""
+    global _NPC_ID_ENUM_DISABLED
+    if not _NPC_ID_ENUM_DISABLED:
+        try:
+            return _api_create_with_retry(
+                client, max_retries=max_retries,
+                output_config={"format": {"type": "json_schema", "schema": dynamic_schema}},
+                **kwargs)
+        except anthropic.BadRequestError as e:
+            if not _is_schema_rejection(e):
+                raise
+            _NPC_ID_ENUM_DISABLED = True
+            log(f"[Schema] Dynamic NPC-ID enum schema rejected ({e}) — falling back to "
+                f"static schemas for this process", level="warning")
+    return _api_create_with_retry(
+        client, max_retries=max_retries,
+        output_config={"format": {"type": "json_schema", "schema": static_schema}},
+        **kwargs)
+
+
+def _resolve_new_npc_refs(mem_updates: list) -> list:
+    """Turn npc_id="NEW" memory updates into name references for the NPCs created in
+    the same metadata cycle (resolved downstream by _resolve_slug_refs/_find_npc).
+    Drops NEW entries without a name. Strips the helper key new_npc_name."""
+    out = []
+    for u in mem_updates:
+        if not isinstance(u, dict):
+            continue
+        name = u.pop("new_npc_name", None)
+        if u.get("npc_id") == NPC_REF_NEW:
+            if isinstance(name, str) and name.strip():
+                u["npc_id"] = name.strip()
+            else:
+                log("[Metadata] Dropped memory_update with npc_id=NEW but no new_npc_name",
+                    level="warning")
+                continue
+        out.append(u)
+    return out
+
 
 # --- NPC name matching: title/honorific filter ---
 # Uses nameparser library (619 English titles) + German/French/Spanish/RPG additions.
@@ -943,6 +1082,44 @@ IMPORTANCE_BOOST_KEYWORDS = {
 
 def _get_user_dir(username: str) -> Path:
     return USERS_DIR / username
+
+
+# Characters that must never appear in a user or save-slot name: path separators,
+# Windows-reserved characters and control characters.
+_INVALID_NAME_RE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+
+
+def is_valid_username(name: str) -> bool:
+    """True if name is safe to use as a directory name under USERS_DIR.
+    Rejects path separators, '.', '..', leading dots and reserved characters so a
+    crafted name can never create or delete directories outside users/."""
+    if not name or name != name.strip() or len(name) > 64:
+        return False
+    if name.startswith(".") or _INVALID_NAME_RE.search(name):
+        return False
+    return True
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write text to path atomically (temp file in the same directory + os.replace).
+    A crash or power loss mid-write (Raspberry Pi!) leaves either the old or the new
+    file on disk — never a truncated, unparseable JSON file."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 def _get_save_dir(username: str) -> Path:
     return _get_user_dir(username) / "saves"
@@ -2959,7 +3136,7 @@ def save_global_config(cfg: dict):
     try:
         existing = load_global_config()
         existing.update(cfg)
-        GLOBAL_CONFIG_FILE.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+        _atomic_write_text(GLOBAL_CONFIG_FILE, json.dumps(existing, indent=2, ensure_ascii=False))
         # Restrict permissions: owner read/write only (no group/others)
         try:
             import stat
@@ -3003,7 +3180,7 @@ def save_user_config(username: str, cfg: dict):
     """Save per-user settings to settings.json."""
     cfg_file = _get_user_config_file(username)
     try:
-        cfg_file.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+        _atomic_write_text(cfg_file, json.dumps(cfg, indent=2, ensure_ascii=False))
     except OSError:
         pass
 
@@ -3023,7 +3200,11 @@ def list_users() -> list[dict]:
 
 
 def create_user(name: str) -> bool:
-    """Create a new user directory with metadata."""
+    """Create a new user directory with metadata.
+    Returns False if the user already exists or the name is not a safe directory name."""
+    if not is_valid_username(name):
+        log(f"[User] Rejected invalid user name: {name!r}", level="warning")
+        return False
     user_dir = _get_user_dir(name)
     if user_dir.exists():
         return False
@@ -3037,8 +3218,11 @@ def create_user(name: str) -> bool:
 
 def delete_user(name: str) -> bool:
     """Delete a user and all their data."""
+    if not is_valid_username(name):
+        log(f"[User] Refusing to delete invalid user name: {name!r}", level="warning")
+        return False
     user_dir = _get_user_dir(name)
-    if not user_dir.exists():
+    if not user_dir.exists() or user_dir.resolve().parent != USERS_DIR.resolve():
         return False
     import shutil
     shutil.rmtree(user_dir)
@@ -3115,6 +3299,9 @@ class GameState:
     # Persisted in SAVE_FIELDS. Full pre-turn snapshot for ## correction flow.
     # Allows one correction after reload (e.g. after accidental disconnect).
     last_turn_snapshot: Optional[dict] = field(default=None, repr=False)
+    # Engine versions this save has been played with (oldest first). Carried in the
+    # GameState so save_game() never has to re-read the previous save file.
+    version_history: list = field(default_factory=list)
 
     def get_stat(self, name: str) -> int:
         return getattr(self, name, 0)
@@ -3292,58 +3479,173 @@ def get_pacing_hint(game: GameState) -> str:
     return "neutral"
 
 
+# ---------------------------------------------------------------
+# TURN SNAPSHOT — single source of truth
+# ---------------------------------------------------------------
+# Every turn-mutable GameState field is listed exactly ONCE here. The snapshot
+# builder, the correction restore and the momentum-burn restore are all derived
+# from these specs, so a new field can no longer be forgotten in one of the paths
+# (the root cause of several burn/correction bugs in 0.9.96).
+#
+# To add a turn-mutable field: append it to the matching tuple below. Nothing else.
+# Snapshot key names are persisted in saves (last_turn_snapshot) — never rename them.
+
+# Immutable values (int/str/bool) — copied as-is.
+_SNAPSHOT_SCALAR_FIELDS = (
+    "health", "spirit", "supply", "momentum", "max_momentum",
+    "scene_count", "chaos_factor", "crisis_mode", "game_over",
+    "epilogue_shown", "epilogue_dismissed",
+    "current_location", "current_scene_context",
+    "time_of_day", "time_unchanged_scenes",
+)
+# Mutable containers — deep-copied on snapshot AND on restore.
+_SNAPSHOT_DEEP_FIELDS = (
+    "location_history", "npcs", "clocks", "director_guidance",
+    "scene_intensity_history",
+)
+# story_blueprint sub-keys that mutate during a turn → snapshot key "bp_<key>".
+# The rest of the blueprint (acts, conflict, endings, …) is immutable during a turn.
+_SNAPSHOT_BP_KEYS = (
+    "revealed",                    # mark_revelation_used()
+    "triggered_transitions",       # _apply_director_guidance() / back-fill
+    "story_complete",              # _check_story_completion()
+    "triggered_director_phases",   # phase-trigger dedup in process_turn()
+)
+# Turn inputs filled in progressively by process_turn() (not restored).
+_SNAPSHOT_TURN_INPUT_KEYS = ("player_input", "brain", "roll", "narration")
+
+
 def _build_turn_snapshot(game: GameState) -> dict:
     """Build a complete snapshot of all turn-mutable GameState fields.
     Called at the start of process_turn() BEFORE any mutations.
     Used by the ## correction flow to fully restore pre-turn state.
     Also used as the authoritative basis for the burn pre_snapshot.
-    NOT persisted to disk — transient only.
+    Persisted via SAVE_FIELDS so a ## correction still works after a reload.
+    Field lists: _SNAPSHOT_SCALAR_FIELDS / _SNAPSHOT_DEEP_FIELDS / _SNAPSHOT_BP_KEYS.
     """
-    # Snapshot the mutable sub-fields of story_blueprint that can change during a turn:
-    # - "revealed": revelation IDs marked used by mark_revelation_used()
-    # - "triggered_transitions": act transition IDs set by _apply_director_guidance()
-    # - "story_complete": set by _check_story_completion()
-    # - "triggered_director_phases": phase keys marked by process_turn() Director trigger
-    # The rest of story_blueprint (acts, conflict, endings, …) is immutable during a turn.
+    snap: dict = {}
+    for f in _SNAPSHOT_SCALAR_FIELDS:
+        snap[f] = getattr(game, f)
+    for f in _SNAPSHOT_DEEP_FIELDS:
+        snap[f] = copy.deepcopy(getattr(game, f))
     bp = game.story_blueprint or {}
-    return {
-        # Resource tracks
-        "health": game.health,
-        "spirit": game.spirit,
-        "supply": game.supply,
-        "momentum": game.momentum,
-        "max_momentum": game.max_momentum,
-        # Counters & flags
-        "scene_count": game.scene_count,
-        "chaos_factor": game.chaos_factor,
-        "crisis_mode": game.crisis_mode,
-        "game_over": game.game_over,
-        "epilogue_shown": game.epilogue_shown,
-        "epilogue_dismissed": game.epilogue_dismissed,
-        # Spatial / temporal
-        "current_location": game.current_location,
-        "current_scene_context": game.current_scene_context,
-        "time_of_day": game.time_of_day,
-        "location_history": list(game.location_history),
-        # Narrative state — deepcopy because these are mutable nested structures
-        "npcs": copy.deepcopy(game.npcs),
-        "clocks": copy.deepcopy(game.clocks),
-        "director_guidance": copy.deepcopy(game.director_guidance),
-        "scene_intensity_history": list(game.scene_intensity_history),
-        # Blueprint sub-fields that mutate during a turn
-        "bp_revealed": list(bp.get("revealed") or []),
-        "bp_triggered_transitions": list(bp.get("triggered_transitions") or []),
-        "bp_story_complete": bp.get("story_complete") or False,
-        "bp_triggered_director_phases": list(bp.get("triggered_director_phases") or []),
-        # Log tails — only last entry needed for restore/replace
-        "session_log_tail": copy.deepcopy(game.session_log[-1]) if game.session_log else None,
-        "narration_history_tail": copy.deepcopy(game.narration_history[-1]) if game.narration_history else None,
-        # Turn inputs — filled in progressively by process_turn()
-        "player_input": "",   # set immediately in process_turn
-        "brain": None,          # set after Brain call
-        "roll": None,           # set after roll (None for dialog turns)
-        "narration": None,      # set after Narrator call
-    }
+    for k in _SNAPSHOT_BP_KEYS:
+        val = bp.get(k)
+        if k == "story_complete":
+            snap["bp_story_complete"] = bool(val)
+        else:
+            snap[f"bp_{k}"] = list(val or [])
+    # Log tails — the last entry BEFORE this turn. _restore_snapshot(logs=True)
+    # pops everything appended after it.
+    snap["session_log_tail"] = copy.deepcopy(game.session_log[-1]) if game.session_log else None
+    snap["narration_history_tail"] = (copy.deepcopy(game.narration_history[-1])
+                                      if game.narration_history else None)
+    for k in _SNAPSHOT_TURN_INPUT_KEYS:
+        snap[k] = "" if k == "player_input" else None
+    return snap
+
+
+def _truncate_log_to_tail(entries: list, tail: Optional[dict], max_pop: int = 3) -> None:
+    """Pop entries appended after `tail` (the last pre-turn entry), in place.
+    tail=None means the list was empty before the turn → everything after it is
+    turn output. Bounded by max_pop so a list that was trimmed at its cap (tail no
+    longer present) loses at most the turn's own entry instead of being wiped."""
+    if tail is None:
+        if len(entries) <= max_pop:
+            entries.clear()
+        else:
+            entries.pop()
+        return
+    for i in range(1, min(max_pop, len(entries)) + 1):
+        if entries[-i] == tail:
+            del entries[len(entries) - i + 1:]
+            return
+    # Tail not found among the last entries (list trimmed at cap, or tail edited):
+    # fall back to dropping exactly the turn's entry.
+    if entries:
+        entries.pop()
+
+
+def _restore_snapshot(game: GameState, snap: dict, *, logs: bool) -> None:
+    """Restore every turn-mutable field from a snapshot (spec-driven).
+    logs=True additionally removes the session_log / narration_history entries the
+    turn appended (## input_misread: the turn is re-run from scratch).
+    logs=False keeps them (momentum burn: the turn's entries are edited in place).
+    Missing keys (older saved snapshots) leave the current value untouched."""
+    for f in _SNAPSHOT_SCALAR_FIELDS:
+        if f in snap:
+            setattr(game, f, snap[f])
+    for f in _SNAPSHOT_DEEP_FIELDS:
+        if f in snap and snap[f] is not None:
+            setattr(game, f, copy.deepcopy(snap[f]))
+    if game.story_blueprint is not None:
+        for k in _SNAPSHOT_BP_KEYS:
+            key = f"bp_{k}"
+            if key not in snap:
+                continue
+            if k == "story_complete":
+                if snap[key]:
+                    game.story_blueprint["story_complete"] = True
+                else:
+                    game.story_blueprint.pop("story_complete", None)
+            elif snap[key]:
+                game.story_blueprint[k] = list(snap[key])
+            else:
+                # Empty pre-turn ≙ absent (all readers use .get(k) or []) — pop so a
+                # restore reproduces the exact pre-turn blueprint.
+                game.story_blueprint.pop(k, None)
+    if logs:
+        _truncate_log_to_tail(game.session_log, snap.get("session_log_tail"))
+        _truncate_log_to_tail(game.narration_history, snap.get("narration_history_tail"))
+
+
+def _reapply_turn_structure(game: GameState, brain: dict,
+                            chaos_interrupt: Optional[str] = None) -> None:
+    """Re-apply the structural effects of a turn after a pre-turn snapshot restore:
+    scene advance, background→active reactivation of the targeted NPC, the Brain's
+    location/time change, and the chaos release of a (reused) chaos interrupt.
+    Used by process_momentum_burn() and the ## input_misread re-run so both paths
+    stay in sync with process_turn()."""
+    game.scene_count += 1
+    tid = brain.get("target_npc")
+    if tid:
+        target = _find_npc(game, tid)
+        if target and target.get("status") == "background":
+            _reactivate_npc(target, reason=f"targeted by player in scene {game.scene_count}")
+    _apply_brain_location_time(game, brain)
+    if chaos_interrupt:
+        # check_chaos_interrupt() releases one chaos point when it fires.
+        game.chaos_factor = max(3, game.chaos_factor - 1)
+
+
+class _rollback_on_error:
+    """Context manager: if the wrapped block raises, restore the COMPLETE GameState
+    to its state at entry and re-raise.
+
+    Multi-call pipelines (Brain → Narrator → Extractor …) mutate the game between
+    API calls. Without this, a failure halfway (API timeout, overload) left the
+    state half-applied — scene already advanced, consequences already deducted —
+    and the UI retry applied them a second time. The backup is a full deepcopy
+    (a few ms), restored field-by-field into the SAME object so every caller
+    reference (session storage, closures) stays valid."""
+
+    def __init__(self, game: GameState, label: str):
+        self.game = game
+        self.label = label
+        self.backup = None
+
+    def __enter__(self):
+        self.backup = copy.deepcopy(self.game)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is not None and self.backup is not None:
+            for f in dataclasses.fields(self.game):
+                setattr(self.game, f.name, getattr(self.backup, f.name))
+            log(f"[{self.label}] Failed ({exc_type.__name__}: {exc}) — "
+                f"game state rolled back to pre-call state", level="warning")
+        return False  # never swallow the exception
+
 
 def record_scene_intensity(game: GameState, scene_type: str):
     """Record a scene's intensity type for pacing analysis.
@@ -3466,7 +3768,7 @@ def apply_consequences(game: GameState, roll: RollResult, brain: dict) -> tuple[
                     clock["fired_at_scene"] = game.scene_count
                 clock_events.append({
                     "clock": clock["name"],
-                    "trigger": clock["trigger_description"],
+                    "trigger": clock.get("trigger_description", ""),
                     "source": "miss",
                     "ticks": ticks,
                     "fired": fired,
@@ -3520,7 +3822,7 @@ def apply_consequences(game: GameState, roll: RollResult, brain: dict) -> tuple[
                             clock["fired_at_scene"] = game.scene_count
                         clock_events.append({
                             "clock": clock["name"],
-                            "trigger": clock["trigger_description"],
+                            "trigger": clock.get("trigger_description", ""),
                             "source": "weak_hit",
                             "fired": fired,
                         })
@@ -3599,7 +3901,7 @@ def _tick_autonomous_clocks(game: GameState) -> list:
                 clock["fired_at_scene"] = game.scene_count
             event = {
                 "clock": clock["name"],
-                "trigger": clock["trigger_description"],
+                "trigger": clock.get("trigger_description", ""),
                 "autonomous": True,
             }
             if triggered:
@@ -3642,8 +3944,12 @@ def can_burn_momentum(game: "GameState", roll: "RollResult") -> str | None:
     return None
 
 
-def check_npc_agency(game: GameState) -> tuple[list[str], list[dict]]:
+def check_npc_agency(game: GameState, tick: bool = True) -> tuple[list[str], list[dict]]:
     """Advance NPC-owned clocks on every 5th scene and return prompt strings + clock events.
+
+    tick=False returns only the agenda prompt lines without advancing any clock —
+    used by re-narration paths (## state_error correction) where the original turn
+    already applied the agency ticks.
 
     Returns a (actions, clock_events) tuple so callers can log agency ticks alongside
     other clock events in session_log.  clock_events follow the same dict format as
@@ -3660,6 +3966,8 @@ def check_npc_agency(game: GameState) -> tuple[list[str], list[dict]]:
             # Build normalised name set for this NPC (canonical name + aliases).
             # Clock owner is written by the AI as a name string ("world" or NPC name),
             # never as a raw npc_id — so we must compare by name, not by id.
+            if not tick:
+                continue
             npc_norms = {_normalize_for_match(npc["name"])}
             npc_norms.update(_normalize_for_match(a) for a in npc.get("aliases", []))
             for clock in game.clocks:
@@ -3673,10 +3981,10 @@ def check_npc_agency(game: GameState) -> tuple[list[str], list[dict]]:
                     if triggered:
                         clock["fired"] = True
                         clock["fired_at_scene"] = game.scene_count
-                        actions.append(f'CLOCK FILLED "{clock["name"]}": {clock["trigger_description"]}')
+                        actions.append(f'CLOCK FILLED "{clock["name"]}": {clock.get("trigger_description", "")}')
                     event: dict = {
                         "clock": clock["name"],
-                        "trigger": clock["trigger_description"],
+                        "trigger": clock.get("trigger_description", ""),
                         "source": "npc_agency",
                         "npc": npc["name"],
                     }
@@ -3844,6 +4152,36 @@ def _npc_relations_block(game: GameState, present_npc_ids: set) -> str:
     )
 
 
+# Minimum prefix length (tokens) Anthropic caches per model family. Shorter
+# prefixes marked with cache_control are processed uncached — no error, no cache
+# write surcharge — so marking a prompt that is (currently) below the floor is free.
+CACHE_MIN_TOKENS_HAIKU = 4096
+CACHE_MIN_TOKENS_SONNET = 1024
+
+
+def _cached_system(text: str) -> list:
+    """Wrap a STATIC system prompt as a cacheable content block (5-min ephemeral).
+    Only use for system text that is identical across calls within a session —
+    any per-turn value in the text turns every call into a cache miss.
+    Structured-output schema changes do not invalidate the system-level cache."""
+    return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
+
+
+def _log_usage(kwargs: dict, response) -> None:
+    """One log line per API call with token usage incl. prompt-cache reads/writes.
+    Makes caching verifiable in the log (cache_read > 0 = hit)."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return
+    model = str(kwargs.get("model", "?"))
+    short = "sonnet" if "sonnet" in model else ("haiku" if "haiku" in model else model)
+    c_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+    c_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
+    log(f"[API] {short}: in={getattr(usage, 'input_tokens', 0)} "
+        f"out={getattr(usage, 'output_tokens', 0)} "
+        f"cache_read={c_read} cache_write={c_write}")
+
+
 def _api_create_with_retry(client: anthropic.Anthropic, max_retries: int = 2, **kwargs):
     """Wrapper around client.messages.create with retry on transient API errors.
     Handles rate limits (429), server errors (500/502/503), and overloaded (529)
@@ -3853,7 +4191,12 @@ def _api_create_with_retry(client: anthropic.Anthropic, max_retries: int = 2, **
     import time as _time
     for attempt in range(max_retries + 1):
         try:
-            return client.messages.create(**kwargs)
+            response = client.messages.create(**kwargs)
+            try:
+                _log_usage(kwargs, response)
+            except Exception:
+                pass  # diagnostics must never break a call
+            return response
         except anthropic.APIStatusError as e:
             if attempt < max_retries and e.status_code in (429, 500, 502, 503, 529):
                 # 529 = API overloaded: use longer base wait (10s, 20s, 30s cap, ...)
@@ -3886,7 +4229,7 @@ def call_brain(client: anthropic.Anthropic, game: GameState, player_message: str
     npc_summary = "\n".join(
         _brain_npc_line(n)
         for n in game.npcs if n.get("status") == "active"
-    ) or "(keine)"
+    ) or "(none)"
     # Background NPCs: condensed list so Brain can identify returning characters
     bg_npcs = [n for n in game.npcs if n.get("status") == "background"]
     bg_summary = "\n".join(
@@ -3908,7 +4251,7 @@ def call_brain(client: anthropic.Anthropic, game: GameState, player_message: str
     clock_summary = "\n".join(
         f'- {html.escape(c["name"])} ({c["clock_type"]}): {c["filled"]}/{c["segments"]}'
         for c in game.clocks if c["filled"] < c["segments"]
-    ) or "(keine)"
+    ) or "(none)"
     last_scenes = "\n".join(
         f'Scene {s["scene"]}: {html.escape(s.get("rich_summary") or s["summary"])}' for s in game.session_log[-3:]
     ) or "(Start)"
@@ -3933,6 +4276,7 @@ def call_brain(client: anthropic.Anthropic, game: GameState, player_message: str
 - Assess EFFECT based on potential impact:
   limited = minor even on success, standard = meaningful, great = could change everything
 - Formulate a DRAMATIC QUESTION that this scene must answer (1 sentence, yes/no answerable)
+- target_npc: the id (e.g. npc_3) of the ONE known NPC the action is directed at, taken from <npcs>. null if the action targets nobody or a character not in <npcs>. Never a name.
 """ + lang_rules + """
 - Assess time_progression: does this action take significant time? "none"=same moment, "short"=minutes, "moderate"=hours, "long"=half a day or more
 </rules>
@@ -3975,11 +4319,11 @@ time:{game.time_of_day or 'unspecified'} | prev_locations:{', '.join(game.locati
 {_story_context_block(game)}{campaign_ctx}{backstory_ctx}<input>{html.escape(player_message)}</input>"""
 
     try:
-        response = _api_create_with_retry(
-            client, max_retries=2,
-            model=BRAIN_MODEL, max_tokens=BRAIN_MAX_TOKENS, system=system,
+        response = _structured_create(
+            client, _brain_schema_for(game), BRAIN_OUTPUT_SCHEMA, max_retries=2,
+            model=BRAIN_MODEL, max_tokens=BRAIN_MAX_TOKENS,
+            system=_cached_system(system),  # static per game (rules + boundaries)
             messages=[{"role": "user", "content": user_msg}],
-            output_config={"format": {"type": "json_schema", "schema": BRAIN_OUTPUT_SCHEMA}},
         )
         result = json.loads(response.content[0].text)
         log(f"[Brain] Result: move={result['move']}, pos={result['position']}, "
@@ -4104,7 +4448,7 @@ def call_recap(client: anthropic.Anthropic, game: GameState,
     npc_text = ", ".join(
         f'{n["name"]}({n["disposition"]},B{n["bond"]})'
         for n in game.npcs if n.get("status") == "active" and n.get("introduced", True)
-    ) or "(keine)"
+    ) or "(none)"
     # Last narrations for tone/content reference -- these ARE what the player saw
     recent_narrations = "\n---\n".join(
         entry.get("narration", "")[:800]
@@ -4730,9 +5074,7 @@ def call_narrator(client: anthropic.Anthropic, prompt: str,
     # cache_control: ephemeral = 5-minute server-side cache, refreshed on each hit.
     # Requires the system text to be identical across calls — guaranteed because
     # _status_context_block was moved to user prompts, leaving system fully static.
-    system_text = get_narrator_system(config or EngineConfig(), game)
-    system = [{"type": "text", "text": system_text,
-               "cache_control": {"type": "ephemeral"}}]
+    system = _cached_system(get_narrator_system(config or EngineConfig(), game))
 
     response = _api_create_with_retry(
         client, max_retries=5,
@@ -4860,15 +5202,20 @@ new_npcs: ONLY for characters who are PHYSICALLY PRESENT in the scene AND active
 If a NAMED person is mentioned in dialog but a DIFFERENT unnamed person is physically present, create the NPC for the PHYSICAL person with their own appropriate name/description — do NOT assign the mentioned person's name to the physical person's description.
 description must be a PHYSICAL/ROLE description (appearance, occupation, species), NOT what they did in this scene.
 deceased (in new_npcs): set to true if this newly introduced NPC dies in the same scene they first appear. They cannot be added to deceased_npcs by npc_id (no ID has been assigned yet), so this flag is the only way to record an introduction-and-death in the same scene. Omit or set false if they survive.
-memory_updates: for EACH NPC who participated in or witnessed this scene. Use their npc_id from the known list. NEVER create memory_updates for the player character. NEVER create memory_updates for NPCs marked [DECEASED]. For NPCs physically present and alive in the scene, use absent=false (the default case). EXCEPTION — absent=true: You MAY add a single memory_update with absent=true for an off-screen NPC if ALL of the following apply: (1) the narration EXPLICITLY names them, (2) their off-screen situation changed in a narratively significant way (e.g. confirmed transported, captured, endangered, made a decision that affects the story), (3) they are a named NPC already tracked in the known list — lore NPCs are excluded (they have their own tracking system); do not use for unnamed or vaguely-described characters. Limit: at most 2 absent=true entries per scene. Absent memories must describe what happened TO or ABOUT the NPC, not the player's reaction to it. Do NOT use absent=true for NPCs who are merely mentioned in passing conversation.
+memory_updates: for EACH NPC who participated in or witnessed this scene. Use their npc_id from the known list. For a character you are introducing in THIS response (listed in new_npcs), set npc_id to "NEW" and new_npc_name to exactly the name you used in new_npcs; for every other entry new_npc_name is null. NEVER create memory_updates for the player character. NEVER create memory_updates for NPCs marked [DECEASED]. For NPCs physically present and alive in the scene, use absent=false (the default case). EXCEPTION — absent=true: You MAY add a single memory_update with absent=true for an off-screen NPC if ALL of the following apply: (1) the narration EXPLICITLY names them, (2) their off-screen situation changed in a narratively significant way (e.g. confirmed transported, captured, endangered, made a decision that affects the story), (3) they are a named NPC already tracked in the known list — lore NPCs are excluded (they have their own tracking system); do not use for unnamed or vaguely-described characters. Limit: at most 2 absent=true entries per scene. Absent memories must describe what happened TO or ABOUT the NPC, not the player's reaction to it. Do NOT use absent=true for NPCs who are merely mentioned in passing conversation.
 NPC DISAMBIGUATION: The known_npcs list shows each NPC's last known location [at:...] and a short description. When the narration uses a name or descriptor that could match multiple NPCs, prefer the NPC whose location matches <current_location> or who is described as being physically present. An NPC [at:FarAwayPlace] is unlikely to appear at <current_location> without the narration explicitly describing their arrival.
-about_npc (in memory_updates): If the memory is primarily ABOUT ANOTHER NPC (not the player), set about_npc to that other NPC's npc_id. Examples: NPC A is told something about NPC B → memory on A with about_npc=B's id. NPC A witnesses NPC B doing something → memory on A with about_npc=B's id. If the memory is about the player or a general event, set about_npc to null.
+about_npc (in memory_updates): If the memory is primarily ABOUT ANOTHER NPC (not the player), set about_npc to that other NPC's npc_id from the known list (characters new in this scene cannot be referenced here — use null). Examples: NPC A is told something about NPC B → memory on A with about_npc=B's id. NPC A witnesses NPC B doing something → memory on A with about_npc=B's id. If the memory is about the player or a general event, set about_npc to null.
 IMPORTANT: If the player directly tells an NPC something about another NPC (gossip, warning, lie, compliment, romantic suggestion), this MUST be captured as its own memory_update with about_npc set — even if other events also happened to that NPC in the same scene. An NPC can have multiple memories per scene if distinctly different events occurred.
 deceased_npcs: list NPCs (by npc_id) whose death is DEPICTED BY THE NARRATOR as it happens. This includes BOTH explicit deaths AND deaths described through physical sensation or literary language. Qualifying descriptions include: they collapse / are killed / stop breathing / go limp / their movement stops and does not resume / resistance ceases permanently / consumed by fire / destroyed / pulled under with no return described / body goes still / the struggle ended. LITERARY deaths count: e.g. "the legs kicked twice and then were still" or "the resistance left them" or "they ceased" — if the prose makes clear that a living character has become permanently non-living, mark them deceased. The death does not need to use the words "dead" or "died" — physical cessation described as final qualifies.
 CRITICAL: Do NOT mark an NPC as deceased if their death is only CLAIMED, REPORTED, or ALLEGED by another character in dialog (e.g. someone says "Leo is dead"). Dialog claims about death are unreliable — characters lie, bluff, or may be wrong. Only narrator-confirmed deaths count — the player character need not have directly witnessed the death; it suffices that the narrator depicts or unambiguously confirms the outcome (e.g. an NPC goes permanently silent after a lethal event at their location, the narrator describes the absence of a presence that was there before). Never include NPCs already marked [DECEASED].
 lore_npcs: ONLY for named persons established in this scene as historically or narratively significant, but who have NEVER been and are NOT NOW physically present. Use this for dead mentors whose legacy drives the story, missing persons whose fate is central, historical figures whose past actions echo into the present. Rules: (1) They must be NAMED and clearly significant — not just mentioned in passing. (2) Do NOT use for corpses or physically present characters — use new_npcs for those, even if dead. (3) Do NOT include NPCs already marked [LORE] or any other marker in the known_npcs list — they are already tracked. (4) Only add when the narration establishes them as relevant to the ongoing story. NPCs marked [LORE] in known_npcs can receive memory_updates using their npc_id.
 exited_npc_ids: list the npc_id of each NPC whose PHYSICAL DEPARTURE from the scene was explicitly described in this narration — they walked out, left through a door, were escorted away, said goodbye and left. Use their npc_id from the known_npcs list. Do NOT include: NPCs who are merely mentioned or talked about; NPCs who were never present; NPCs who only paused at a door but the narration ends with them still present. Empty list if no explicit departures occurred.
 CROSS-FIELD CONSISTENCY — check before submitting: If your scene_context describes an NPC as dying or dead (e.g. "while X dies", "X's last breath", "X stirbt", "während X stirbt", "X ist tot", "X's breathing stops", "X ceased", "X's struggle ended"), that NPC MUST appear in deceased_npcs. Your own scene_context is authoritative evidence — if you wrote that someone is in the act of dying there, they belong in deceased_npcs. This catches slow or literary deaths that span multiple scenes: even if the character was only "dying" last turn, once the final cessation is depicted (breathing stops, body stills, the transition completes), mark them deceased now."""
+
+    # Static per session (only the narration language varies per game) → cacheable.
+    # Currently below Haiku's cache floor (CACHE_MIN_TOKENS_HAIKU); marking it costs
+    # nothing and activates automatically if the instructions grow past the floor.
+    system = _cached_system(system)
 
     prompt = f"""<narration>{narration}</narration>
 <player_character>{html.escape(game.player_name)}</player_character>
@@ -4878,15 +5225,12 @@ CROSS-FIELD CONSISTENCY — check before submitting: If your scene_context descr
 Extract all metadata from the narration above. Remember: {html.escape(game.player_name)} is the PLAYER CHARACTER, not an NPC."""
 
     try:
-        response = _api_create_with_retry(
-            client, max_retries=2,
+        dyn_schema = _metadata_schema_for(game)
+        response = _structured_create(
+            client, dyn_schema, NARRATOR_METADATA_SCHEMA, max_retries=2,
             model=BRAIN_MODEL, max_tokens=METADATA_MAX_TOKENS,
             system=system,
             messages=[{"role": "user", "content": prompt}],
-            output_config={"format": {
-                "type": "json_schema",
-                "schema": NARRATOR_METADATA_SCHEMA,
-            }},
         )
         metadata = json.loads(response.content[0].text)
         # Guard: schema minLength:1 is not enforced server-side when the model
@@ -4894,15 +5238,11 @@ Extract all metadata from the narration above. Remember: {html.escape(game.playe
         # sufficient — if it fails again the exception fallback below handles it.
         if not metadata.get("scene_context", "").strip():
             log("[Metadata] scene_context empty on first attempt — retrying", level="warning")
-            response2 = _api_create_with_retry(
-                client, max_retries=1,
+            response2 = _structured_create(
+                client, dyn_schema, NARRATOR_METADATA_SCHEMA, max_retries=1,
                 model=BRAIN_MODEL, max_tokens=METADATA_MAX_TOKENS,
                 system=system,
                 messages=[{"role": "user", "content": prompt}],
-                output_config={"format": {
-                    "type": "json_schema",
-                    "schema": NARRATOR_METADATA_SCHEMA,
-                }},
             )
             metadata2 = json.loads(response2.content[0].text)
             if metadata2.get("scene_context", "").strip():
@@ -5194,7 +5534,8 @@ def _apply_narrator_metadata(game: GameState, metadata: dict,
     # for NPCs that were just created in this same metadata cycle.
     # The Extractor can't know the assigned npc_ids for new NPCs, so it
     # invents slugs like "frau_seidlitz" or "moderator_headset" instead.
-    mem_updates = metadata.get("memory_updates", [])
+    # npc_id="NEW" entries (enum schema) → name refs for the NPCs just created
+    mem_updates = _resolve_new_npc_refs(metadata.get("memory_updates", []) or [])
     if mem_updates and new_npcs:
         freshly_created = [n for n in game.npcs if n["id"] not in pre_npc_ids
                            and n["id"] in post_new_npc_ids]
@@ -5676,12 +6017,11 @@ def call_director(client: anthropic.Anthropic, game: GameState,
     prompt = build_director_prompt(game, latest_narration, config)
 
     try:
-        response = _api_create_with_retry(
-            client, max_retries=1,
+        response = _structured_create(
+            client, _director_schema_for(game), DIRECTOR_OUTPUT_SCHEMA, max_retries=1,
             model=DIRECTOR_MODEL, max_tokens=DIRECTOR_MAX_TOKENS,
-            system=DIRECTOR_SYSTEM,
+            system=_cached_system(DIRECTOR_SYSTEM),
             messages=[{"role": "user", "content": prompt}],
-            output_config={"format": {"type": "json_schema", "schema": DIRECTOR_OUTPUT_SCHEMA}},
         )
         guidance = json.loads(response.content[0].text)
 
@@ -7038,40 +7378,31 @@ SAVE_FIELDS = [
     "director_guidance",
     # v5.12: Last turn snapshot (persisted to allow ## correction after reload)
     "last_turn_snapshot",
+    # 0.9.96: version history lives in GameState (no read-before-write in save_game)
+    "version_history",
 ]
+
+# Compact JSON for game saves and chapter archives: no indentation/spaces. Saves
+# carry the whole chat history and are written twice per turn — compact output is
+# markedly smaller and faster to write on a Pi's SD card. Pretty-print for manual
+# inspection with:  python -m json.tool users/<name>/saves/<slot>.json
+_SAVE_JSON_KW = {"ensure_ascii": False, "separators": (",", ":")}
 
 def save_game(game: GameState, username: str, chat_messages: list = None,
               name: str = "autosave") -> Path:
     """Save game state and chat history. UI layer must provide username and chat_messages."""
     save_dir = _get_save_dir(username)
     save_dir.mkdir(parents=True, exist_ok=True)
-    # --- Version history: read existing save to carry forward ---
-    # New games (scene_count ≤ 1 AND chapter 1) always start a fresh version history —
-    # they must not inherit the history of a previous game stored in the same slot.
-    # Chapter transitions also reset scene_count to 1 but chapter_number > 1 — excluded.
-    version_history = []
     path = save_dir / f"{name}.json"
-    is_new_game = (getattr(game, "scene_count", 0) <= 1
-                   and getattr(game, "chapter_number", 1) <= 1)
-    if path.exists() and not is_new_game:
-        try:
-            existing = json.loads(path.read_text(encoding="utf-8"))
-            version_history = existing.get("version_history", [])
-            # Backfill: if old save had no version_history but had engine_version
-            if not version_history and existing.get("engine_version"):
-                version_history = [existing["engine_version"]]
-        except Exception:
-            pass
-    # Append current version only if it differs from last entry
-    if not version_history or version_history[-1] != VERSION:
-        version_history.append(VERSION)
+    # Version history travels with the GameState: new games start with an empty
+    # list, chapters and "Save As" copies inherit it — no read of the old file.
+    if not game.version_history or game.version_history[-1] != VERSION:
+        game.version_history.append(VERSION)
     data = {"saved_at": datetime.now().isoformat()}
     data["engine_version"] = VERSION
-    data["version_history"] = version_history
     data.update({k: getattr(game, k) for k in SAVE_FIELDS})
     # last_turn_snapshot may contain a RollResult dataclass — serialize to plain dict
     if data.get("last_turn_snapshot") and data["last_turn_snapshot"].get("roll") is not None:
-        import dataclasses
         data["last_turn_snapshot"] = dict(data["last_turn_snapshot"])
         data["last_turn_snapshot"]["roll"] = dataclasses.asdict(data["last_turn_snapshot"]["roll"])
     # Chat history for visual restoration (strip audio binary data and transient recaps)
@@ -7081,7 +7412,7 @@ def save_game(game: GameState, username: str, chat_messages: list = None,
         for msg in raw_messages
         if not msg.get("recap")
     ]
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    _atomic_write_text(path, json.dumps(data, **_SAVE_JSON_KW))
     log(f"[Save] Game saved: {username}/{name} (Scene {game.scene_count}, {len(data['chat_messages'])} chat msgs)")
     return path
 
@@ -7093,11 +7424,21 @@ def load_game(username: str, name: str = "autosave") -> tuple[Optional[GameState
     if not path.exists():
         log(f"[Load] Save not found: {username}/{name}", level="warning")
         return None, []
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
+        log(f"[Load] Save unreadable: {username}/{name} ({type(e).__name__}: {e})", level="warning")
+        return None, []
     game = GameState()
     for k, v in data.items():
         if k not in ("saved_at", "chat_messages") and hasattr(game, k):
             setattr(game, k, v)
+    # Backward compatibility: saves before version_history existed carried only
+    # engine_version (or nothing). Seed the list so history is not lost.
+    if not isinstance(game.version_history, list):
+        game.version_history = []
+    if not game.version_history and data.get("engine_version"):
+        game.version_history = [data["engine_version"]]
     # Reconstruct RollResult dataclass from plain dict (was serialized in save_game)
     if (game.last_turn_snapshot is not None
             and isinstance(game.last_turn_snapshot.get("roll"), dict)):
@@ -7223,12 +7564,36 @@ def list_saves(username: str) -> list[str]:
     return sorted([p.stem for p in save_dir.glob("*.json")])
 
 
+# Save-slot metadata cache: path → (mtime_ns, size, info). The sidebar lists every
+# slot on each render; without the cache every full save file (chat history
+# included, often several MB) was re-parsed each time — slow on a Raspberry Pi.
+_SAVE_INFO_CACHE: dict[str, tuple[int, int, dict]] = {}
+_SAVE_INFO_CACHE_LOCK = threading.Lock()
+
+
 def get_save_info(username: str, name: str) -> dict | None:
     """Read save metadata without loading full game state.
-    Returns dict with player_name, scene_count, saved_at, chapter_number or None."""
+    Returns dict with player_name, scene_count, saved_at, chapter_number or None.
+    Results are cached per file and invalidated by mtime/size changes."""
     path = _get_save_dir(username) / f"{name}.json"
-    if not path.exists():
+    try:
+        st = path.stat()
+    except OSError:
         return None
+    key = str(path)
+    with _SAVE_INFO_CACHE_LOCK:
+        cached = _SAVE_INFO_CACHE.get(key)
+    if cached and cached[0] == st.st_mtime_ns and cached[1] == st.st_size:
+        return dict(cached[2])
+    info = _read_save_info(path, name)
+    if info.get("saved_at"):  # don't cache unreadable/partial files
+        with _SAVE_INFO_CACHE_LOCK:
+            _SAVE_INFO_CACHE[key] = (st.st_mtime_ns, st.st_size, info)
+    return dict(info)
+
+
+def _read_save_info(path: Path, name: str) -> dict:
+    """Parse save metadata from disk (uncached helper for get_save_info)."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return {
@@ -7299,7 +7664,7 @@ def save_chapter_archive(username: str, save_name: str, chapter_number: int,
         ],
     }
     path = chapter_dir / f"chapter_{chapter_number}.json"
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    _atomic_write_text(path, json.dumps(data, **_SAVE_JSON_KW))
     log(f"[ChapterArchive] Saved ch{chapter_number} for {username}/{save_name} "
         f"({len(data['chat_messages'])} msgs, title={title!r})")
     return path
@@ -7720,7 +8085,7 @@ def call_chapter_summary(client: anthropic.Anthropic, game: GameState,
     npc_text = ", ".join(
         f'{n["name"]}({n["disposition"]},B{n["bond"]})'
         for n in game.npcs if n.get("status") == "active"
-    ) or "(keine)"
+    ) or "(none)"
 
     bp = game.story_blueprint or {}
     conflict = bp.get("central_conflict", "")
@@ -7937,6 +8302,15 @@ creativity_seed: {seed} (Use as loose inspiration for NPC names, locations, and 
 def start_new_chapter(client: anthropic.Anthropic, game: GameState,
                       config: Optional[EngineConfig] = None,
                       username: str = "") -> tuple[GameState, str]:
+    """Transactional wrapper — see _start_new_chapter_impl(). On any exception the
+    GameState is rolled back to its state at call time (_rollback_on_error)."""
+    with _rollback_on_error(game, "Chapter"):
+        return _start_new_chapter_impl(client=client, game=game, config=config, username=username)
+
+
+def _start_new_chapter_impl(client: anthropic.Anthropic, game: GameState,
+                      config: Optional[EngineConfig] = None,
+                      username: str = "") -> tuple[GameState, str]:
     """Start a new chapter: keep character/world/NPCs, reset mechanics, new story arc."""
     log(f"[Campaign] Starting chapter {game.chapter_number + 1} for {game.player_name}")
 
@@ -8009,6 +8383,21 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
             npc["memory"] = sorted(scored[:5], key=lambda m: m.get("scene", 0) or 0)
         # Run full consolidation to ensure memory limits are respected
         _consolidate_memory(npc)
+
+    # Rebase scene-relative NPC fields: scene_count restarts at 1, so carried-over
+    # memories with chapter-N scene numbers would otherwise collide with new-chapter
+    # scenes (burn memory purge and death corroboration filter by scene == current),
+    # get a permanent recency of 1.0 (negative gap clamped to 0), and block staleness
+    # retirement. Scene 0 = "before this chapter" (same convention as seed memories).
+    for npc in game.npcs:
+        for m in npc.get("memory", []):
+            if isinstance(m, dict):
+                m["scene"] = 0
+        npc["last_memory_scene"] = 0
+        npc["last_reflection_scene"] = 0
+
+    # A ## correction must never roll back into the previous chapter's last turn.
+    game.last_turn_snapshot = None
 
     # Update situation context for new chapter
     threads = chapter_summary.get("unresolved_threads", [])
@@ -8222,6 +8611,15 @@ def start_new_chapter(client: anthropic.Anthropic, game: GameState,
 
 
 def process_turn(client: anthropic.Anthropic, game: GameState,
+                 player_message: str,
+                 config: Optional[EngineConfig] = None) -> tuple[GameState, str, Optional[RollResult], Optional[dict], Optional[dict]]:
+    """Transactional wrapper — see _process_turn_impl(). On any exception the
+    GameState is rolled back to its state at call time (_rollback_on_error)."""
+    with _rollback_on_error(game, "Turn"):
+        return _process_turn_impl(client=client, game=game, player_message=player_message, config=config)
+
+
+def _process_turn_impl(client: anthropic.Anthropic, game: GameState,
                  player_message: str,
                  config: Optional[EngineConfig] = None) -> tuple[GameState, str, Optional[RollResult], Optional[dict], Optional[dict]]:
     log(f"[Turn] Scene {game.scene_count + 1} | Player: {player_message[:100]}")
@@ -8478,7 +8876,10 @@ def run_deferred_director(client: anthropic.Anthropic, game: GameState,
         narration = director_ctx["narration"]
         config = director_ctx.get("config")
         guidance = call_director(client, game, narration, config)
-        _apply_director_guidance(game, guidance)
+        # Transactional: a failure halfway through applying guidance must not leave
+        # half-updated NPCs/clocks behind.
+        with _rollback_on_error(game, "Director"):
+            _apply_director_guidance(game, guidance)
     except Exception as e:
         log(f"[Director] Deferred call failed gracefully: {e}", level="warning")
 
@@ -8745,7 +9146,6 @@ npcs:
 
 def _apply_correction_ops(game: GameState, ops: list) -> None:
     """Apply the atomic state_ops returned by call_correction_brain."""
-    import uuid
     for op_dict in ops:
         op = op_dict.get("op")
 
@@ -8764,6 +9164,17 @@ def _apply_correction_ops(game: GameState, ops: list) -> None:
                         log(f"[Correction] npc_edit: ignoring invalid status "
                             f"'{edits['status']}' for {npc.get('name','?')}", level="warning")
                         del edits["status"]
+                    elif edits["status"] == "inactive":
+                        edits["status"] = "background"  # legacy value — three-tier system
+                if "disposition" in edits:
+                    edits["disposition"] = _normalize_disposition(str(edits["disposition"]))
+                if "bond" in edits:
+                    try:
+                        edits["bond"] = max(0, min(int(edits["bond"]), npc.get("bond_max", 4)))
+                    except (TypeError, ValueError):
+                        del edits["bond"]
+                if "aliases" in edits and not isinstance(edits["aliases"], list):
+                    del edits["aliases"]
                 # Capture old name BEFORE applying edits — needed for alias bookkeeping
                 old_name = npc["name"] if "name" in edits else None
                 # If renaming, discard any aliases Haiku may have supplied in the same op.
@@ -8802,7 +9213,7 @@ def _apply_correction_ops(game: GameState, ops: list) -> None:
             if existing:
                 new_name = op_dict.get("split_name") or "Unknown"
                 new_desc = op_dict.get("split_description") or ""
-                new_id = f"npc_{uuid.uuid4().hex[:8]}"
+                new_id, _ = _next_npc_id(game)
                 new_npc = {
                     "id": new_id,
                     "name": new_name,
@@ -8817,7 +9228,9 @@ def _apply_correction_ops(game: GameState, ops: list) -> None:
                     "details": {},
                     "agenda": "",
                     "instinct": "",
+                    "last_location": game.current_location,
                 }
+                _ensure_npc_memory_fields(new_npc)
                 game.npcs.append(new_npc)
                 log(f"[Correction] npc_split: '{existing['name']}' → also '{new_name}' ({new_id})")
 
@@ -8839,7 +9252,7 @@ def _apply_correction_ops(game: GameState, ops: list) -> None:
                         f"'{source['name']}' is richer than '{target['name']}'")
                     target, source = source, target
                 # Absorb memories and aliases, then remove source
-                target["memory"].extend(source.get("memory", []))
+                target.setdefault("memory", []).extend(source.get("memory", []))
                 target_alias_norms = {_normalize_for_match(a) for a in target.get("aliases", [])}
                 for alias in source.get("aliases", []):
                     if _normalize_for_match(alias) not in target_alias_norms:
@@ -8857,6 +9270,20 @@ def _apply_correction_ops(game: GameState, ops: list) -> None:
                 # Sanitize: strip any parenthetical annotations the source name
                 # may have introduced as aliases (e.g. "Ein Mann im braunen Wams")
                 _apply_name_sanitization(target)
+                # Re-point references to the absorbed NPC: about_npc tags in other
+                # NPCs' memories and clock ownership (owner is stored as a name).
+                src_id, tgt_id = source["id"], target["id"]
+                src_norms = {_normalize_for_match(source["name"])}
+                src_norms.update(_normalize_for_match(a) for a in source.get("aliases", []))
+                for other in game.npcs:
+                    for m in other.get("memory", []):
+                        if isinstance(m, dict) and m.get("about_npc") == src_id:
+                            m["about_npc"] = None if other is target else tgt_id
+                for clock in game.clocks:
+                    if _normalize_for_match(clock.get("owner", "")) in src_norms:
+                        clock["owner"] = target["name"]
+                target["bond"] = max(target.get("bond", 0), source.get("bond", 0))
+                _consolidate_memory(target)
                 game.npcs = [n for n in game.npcs if n["id"] != source["id"]]
                 log(f"[Correction] npc_merge: '{source['name']}' absorbed into '{target['name']}'")
 
@@ -8871,8 +9298,10 @@ def _apply_correction_ops(game: GameState, ops: list) -> None:
                 log(f"[Correction] scene_context updated")
 
         elif op == "time_edit":
-            if op_dict.get("value"):
-                game.time_of_day = op_dict["value"]
+            _tv = str(op_dict.get("value") or "").strip().lower().replace(" ", "_")
+            if _tv in TIME_PHASES:
+                game.time_of_day = _tv
+                game.time_unchanged_scenes = 0
                 log(f"[Correction] time_of_day → {game.time_of_day}")
 
         elif op == "backstory_append":
@@ -8883,53 +9312,24 @@ def _apply_correction_ops(game: GameState, ops: list) -> None:
 
 
 def _restore_from_snapshot(game: GameState, snap: dict) -> None:
-    """Fully restore all turn-mutable GameState fields from a last_turn_snapshot.
+    """Fully restore all turn-mutable GameState fields from a last_turn_snapshot,
+    including removal of the turn's session_log / narration_history entries.
     Used by the ## correction flow for input_misread corrections."""
-    game.health = snap["health"]
-    game.spirit = snap["spirit"]
-    game.supply = snap["supply"]
-    game.momentum = snap.get("momentum", game.momentum)
-    game.max_momentum = snap.get("max_momentum", game.max_momentum)
-    game.scene_count = snap.get("scene_count", game.scene_count)
-    game.chaos_factor = snap.get("chaos_factor", game.chaos_factor)
-    game.crisis_mode = snap.get("crisis_mode", game.crisis_mode)
-    game.game_over = snap.get("game_over", game.game_over)
-    game.epilogue_shown = snap.get("epilogue_shown", game.epilogue_shown)
-    game.epilogue_dismissed = snap.get("epilogue_dismissed", game.epilogue_dismissed)
-    game.current_location = snap.get("current_location", game.current_location)
-    game.current_scene_context = snap.get("current_scene_context", game.current_scene_context)
-    game.time_of_day = snap.get("time_of_day", game.time_of_day)
-    game.location_history = list(snap.get("location_history", game.location_history))
-    game.director_guidance = copy.deepcopy(snap.get("director_guidance", game.director_guidance))
-    game.scene_intensity_history = list(snap.get("scene_intensity_history", game.scene_intensity_history))
-    if "npcs" in snap:
-        game.npcs = copy.deepcopy(snap["npcs"])
-    if "clocks" in snap:
-        game.clocks = copy.deepcopy(snap["clocks"])
-    # Restore blueprint sub-fields that may have mutated during the turn:
-    # revelation marks, act transitions, story_complete flag, and phase-Director marks.
-    if game.story_blueprint is not None:
-        if "bp_revealed" in snap:
-            game.story_blueprint["revealed"] = list(snap["bp_revealed"])
-        if "bp_triggered_transitions" in snap:
-            game.story_blueprint["triggered_transitions"] = list(snap["bp_triggered_transitions"])
-        if "bp_story_complete" in snap:
-            if snap["bp_story_complete"]:
-                game.story_blueprint["story_complete"] = True
-            else:
-                game.story_blueprint.pop("story_complete", None)
-        if "bp_triggered_director_phases" in snap:
-            game.story_blueprint["triggered_director_phases"] = list(snap["bp_triggered_director_phases"])
-    # Trim session_log and narration_history back by one entry
-    # (the turn being corrected will be re-appended by the re-run)
-    if snap.get("session_log_tail") is not None and game.session_log:
-        game.session_log.pop()
-    if snap.get("narration_history_tail") is not None and game.narration_history:
-        game.narration_history.pop()
+    _restore_snapshot(game, snap, logs=True)
     log("[Correction] State fully restored from snapshot")
 
 
 def process_correction(client: anthropic.Anthropic, game: GameState,
+                        correction_text: str,
+                        config: Optional[EngineConfig] = None
+                        ) -> tuple[GameState, str, Optional[dict]]:
+    """Transactional wrapper — see _process_correction_impl(). On any exception the
+    GameState is rolled back to its state at call time (_rollback_on_error)."""
+    with _rollback_on_error(game, "Correction"):
+        return _process_correction_impl(client=client, game=game, correction_text=correction_text, config=config)
+
+
+def _process_correction_impl(client: anthropic.Anthropic, game: GameState,
                         correction_text: str,
                         config: Optional[EngineConfig] = None
                         ) -> tuple[GameState, str, Optional[dict]]:
@@ -8959,11 +9359,11 @@ def process_correction(client: anthropic.Anthropic, game: GameState,
 
         # Re-run Brain with the corrected input interpretation
         brain = call_brain(client, game, corrected_input, _cfg)
-        _apply_brain_location_time(game, brain)
+        # Scene advance + targeted-NPC reactivation + location/time (shared helper)
+        _reapply_turn_structure(game, brain)
 
         if analysis.get("reroll_needed") and brain.get("stat", "none") != "none":
             # Full action path with new roll
-            game.scene_count += 1
             stat_name = brain.get("stat", "wits")
             roll = roll_action(stat_name, game.get_stat(stat_name), brain.get("move", "face_danger"))
             _raw = roll.d1 + roll.d2 + roll.stat_value
@@ -8980,7 +9380,6 @@ def process_correction(client: anthropic.Anthropic, game: GameState,
         else:
             # Dialog / intent-only path — no new roll
             roll = None
-            game.scene_count += 1
             activated_npcs, mentioned_npcs, _ = activate_npcs_for_prompt(game, brain, corrected_input)
             prompt = build_dialog_prompt(game, brain, player_words=corrected_input,
                                          activated_npcs=activated_npcs,
@@ -9001,7 +9400,9 @@ def process_correction(client: anthropic.Anthropic, game: GameState,
         if roll:
             consequences = _last_log.get("consequences", [])
             clock_events = _last_log.get("clock_events", [])
-            npc_agency, agency_clock_events = check_npc_agency(game)
+            # tick=False: the original turn already advanced NPC-owned clocks —
+            # re-ticking here would double-advance them on every 5th scene.
+            npc_agency, _ = check_npc_agency(game, tick=False)
             prompt = build_action_prompt(game, brain, roll, consequences, clock_events, npc_agency,
                                          player_words=snap.get("player_input", ""), config=_cfg,
                                          activated_npcs=activated_npcs, mentioned_npcs=mentioned_npcs)
@@ -9122,48 +9523,31 @@ def process_momentum_burn(client: anthropic.Anthropic, game: GameState,
                           config: Optional[EngineConfig] = None,
                           pre_snapshot: Optional[dict] = None,
                           chaos_interrupt: Optional[str] = None) -> tuple[GameState, str]:
+    """Transactional wrapper — see _process_momentum_burn_impl(). On any exception the
+    GameState is rolled back to its state at call time (_rollback_on_error)."""
+    with _rollback_on_error(game, "Burn"):
+        return _process_momentum_burn_impl(client=client, game=game, old_roll=old_roll, new_result=new_result, brain_data=brain_data, player_words=player_words, config=config, pre_snapshot=pre_snapshot, chaos_interrupt=chaos_interrupt)
+
+
+def _process_momentum_burn_impl(client: anthropic.Anthropic, game: GameState,
+                          old_roll: RollResult, new_result: str,
+                          brain_data: dict, player_words: str = "",
+                          config: Optional[EngineConfig] = None,
+                          pre_snapshot: Optional[dict] = None,
+                          chaos_interrupt: Optional[str] = None) -> tuple[GameState, str]:
     """Re-narrate a scene after momentum burn upgrades the result.
     Fully restores game state from pre_snapshot before applying new consequences."""
-    # Remove NPC memories from THIS scene (they came from the pre-burn narration
-    # and will be replaced by the new narration's memory updates)
-    current_scene = game.scene_count
-    for npc in game.npcs:
-        if npc.get("memory"):
-            npc["memory"] = [
-                m for m in npc["memory"]
-                if not (isinstance(m, dict) and m.get("scene") == current_scene)
-            ]
-
+    # NPC memories from the pre-burn narration disappear with the full NPC restore
+    # below (the snapshot predates them) — no separate purge needed.
     # --- Restore state from pre-consequence snapshot ---
-    # Full restoration using last_turn_snapshot (authoritative, taken before any mutations)
-    game.health = pre_snapshot["health"]
-    game.spirit = pre_snapshot["spirit"]
-    game.supply = pre_snapshot["supply"]
-    game.momentum = pre_snapshot["momentum"]
-    game.max_momentum = pre_snapshot["max_momentum"]
-    game.chaos_factor = pre_snapshot["chaos_factor"]
-    game.crisis_mode = pre_snapshot["crisis_mode"]
-    game.game_over = pre_snapshot["game_over"]
-    game.epilogue_shown = pre_snapshot["epilogue_shown"]
-    game.epilogue_dismissed = pre_snapshot["epilogue_dismissed"]
-    game.current_location = pre_snapshot["current_location"]
-    game.current_scene_context = pre_snapshot["current_scene_context"]
-    game.time_of_day = pre_snapshot["time_of_day"]
-    game.location_history = list(pre_snapshot["location_history"])
-    game.director_guidance = copy.deepcopy(pre_snapshot["director_guidance"])
-    # Restore full NPC state — removes any NPCs introduced in MISS narration
-    game.npcs = copy.deepcopy(pre_snapshot["npcs"])
-    game.clocks = copy.deepcopy(pre_snapshot["clocks"])
-    game.scene_count = pre_snapshot["scene_count"]
-    game.scene_intensity_history = list(pre_snapshot["scene_intensity_history"])
-    # Restore blueprint sub-fields (revelation marks, act transitions, story_complete)
-    if game.story_blueprint is not None:
-        game.story_blueprint["revealed"] = list(pre_snapshot["bp_revealed"])
-        game.story_blueprint["triggered_transitions"] = list(pre_snapshot["bp_triggered_transitions"])
-        if pre_snapshot["bp_story_complete"]:
-            game.story_blueprint["story_complete"] = True
-        else:
-            game.story_blueprint.pop("story_complete", None)
+    # Spec-driven full restore (all turn-mutable fields). logs=False: the turn's
+    # session_log / narration_history entries are edited in place further below.
+    _restore_snapshot(game, pre_snapshot, logs=False)
+    # Re-apply the structural effects of the turn that the pre-turn snapshot rolled
+    # back (scene advance, targeted-NPC reactivation, Brain location/time change,
+    # chaos release of a reused interrupt) — shared with the ## re-run path.
+    _reapply_turn_structure(game, brain_data, chaos_interrupt)
+
     # Reset momentum to burn-reset value (Ironsworn: cost of burning is momentum → 2)
     # This must happen before apply_consequences so the upgraded result's momentum
     # gain (+2/+3) is applied on top of the reset value, not on top of the old peak.
@@ -9177,9 +9561,11 @@ def process_momentum_burn(client: anthropic.Anthropic, game: GameState,
 
     # Apply new consequences
     consequences, clock_events = apply_consequences(game, upgraded, brain_data)
+    # NPC agency ticks were rolled back with the clocks — re-apply them for this scene
+    npc_agency, agency_clock_events = check_npc_agency(game)
     # Re-run NPC activation for the re-narrated scene
     activated_npcs, mentioned_npcs, _ = activate_npcs_for_prompt(game, brain_data, player_words)
-    prompt = build_action_prompt(game, brain_data, upgraded, consequences, clock_events, [],
+    prompt = build_action_prompt(game, brain_data, upgraded, consequences, clock_events, npc_agency,
                                 player_words=player_words, chaos_interrupt=chaos_interrupt,
                                 activated_npcs=activated_npcs, mentioned_npcs=mentioned_npcs,
                                 config=config)
@@ -9194,6 +9580,15 @@ def process_momentum_burn(client: anthropic.Anthropic, game: GameState,
 
     # Update chaos after burn (new result counts)
     update_chaos_factor(game, new_result)
+    # Autonomous world clock ticks were rolled back as well — roll them again
+    auto_clock_events = _tick_autonomous_clocks(game)
+    clock_events = clock_events + agency_clock_events + auto_clock_events
+
+    # Keep the correction snapshot in sync with what the player now sees, so a
+    # follow-up ## state_error correction re-narrates the upgraded result.
+    if game.last_turn_snapshot is not None:
+        game.last_turn_snapshot["roll"] = upgraded
+        game.last_turn_snapshot["narration"] = narration
 
     # Replace last narration history entry with burned version
     if game.narration_history:
@@ -9215,6 +9610,9 @@ def process_momentum_burn(client: anthropic.Anthropic, game: GameState,
         # revelation that was never checked against the new narration.
         # The revelation stays pending and will be re-checked on the next turn.
         game.session_log[-1].pop("revelation_check", None)
+
+    # story_complete was rolled back with the blueprint — re-evaluate for this scene
+    _check_story_completion(game)
 
     # Note: UI layer handles save_game()
     return game, narration
