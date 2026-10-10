@@ -42,7 +42,7 @@ Auto-install: `_ensure_requirements()` checks and installs 9 mandatory packages 
 ### Editing Rules
 - `str_replace` preferred: target the exact function or section; never modify unrelated code.
 - `old_str` must match the raw file content exactly (whitespace included) — always `view` immediately before editing.
-- **Version strings** in `engine.py` and `README.md` are updated manually by Lars — never touch them.
+- **Version strings**: when preparing a release, Claude updates `VERSION` in `engine.py`, the version badge in `README.md`, the Quick Reference version here and the CHANGELOG section heading together (one release branch + PR). Never bump them outside a release.
 - After a successful `str_replace`, re-view the file before further edits to the same file.
 
 ### Mandatory Session-End Steps
