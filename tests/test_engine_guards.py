@@ -226,3 +226,42 @@ def test_act_transition_check_precedes_boolean_and_is_kept(game):
     E._apply_director_guidance(game, _guidance(act_transition_check="Core event happened in scene 3."))
     assert game.director_guidance["act_transition_check"] == "Core event happened in scene 3."
     assert game.story_blueprint["triggered_transitions"] == ["act_0"]
+
+
+# --- act trigger due ----------------------------------------------------------------
+
+def test_act_trigger_due_window(game):
+    game.scene_count = 6 - E.ACT_TRIGGER_DUE_SCENES - 1      # before the window
+    assert E._act_trigger_due(game) is None
+    game.scene_count = 6 - E.ACT_TRIGGER_DUE_SCENES          # window opens
+    assert E._act_trigger_due(game) == "act_0"
+    game.story_blueprint["triggered_transitions"] = ["act_0"]
+    assert E._act_trigger_due(game) is None                   # already transitioned
+
+
+def test_act_trigger_due_never_for_final_act(game):
+    game.scene_count = 15                                      # climax act, no trigger
+    assert E._act_trigger_due(game) is None
+
+
+def test_act_due_director_fires_once_per_act(game):
+    game.scene_count = 5                                       # odd → no interval run
+    reason = E._should_call_director(game)
+    assert reason == "act_due:act_0"
+    E._mark_director_reason(game, reason)
+    assert "due:act_0" in game.story_blueprint["triggered_director_phases"]
+    assert E._should_call_director(game) is None
+
+
+def test_due_trigger_marked_in_director_prompt(game):
+    game.scene_count = 2
+    assert '<transition_trigger act="1">' in E.build_director_prompt(game, "Text")
+    game.scene_count = 5
+    assert '<transition_trigger act="1" due="true">' in E.build_director_prompt(game, "Text")
+
+
+def test_mark_director_reason_phase_and_others(game):
+    E._mark_director_reason(game, "phase:climax")
+    E._mark_director_reason(game, "interval")
+    E._mark_director_reason(game, None)
+    assert game.story_blueprint["triggered_director_phases"] == ["climax"]
