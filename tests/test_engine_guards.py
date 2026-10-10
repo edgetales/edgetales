@@ -120,3 +120,37 @@ def test_forward_time_update_is_applied(game):
     game.time_unchanged_scenes = 4
     E._apply_narrator_metadata(game, make_metadata(time_update="early_morning"))
     assert game.time_of_day == "early_morning" and game.time_unchanged_scenes == 0
+
+
+def test_time_auto_advances_after_long_standstill(game):
+    game.time_of_day = "deep_night"
+    game.time_unchanged_scenes = E.TIME_AUTO_ADVANCE_SCENES - 1
+    E._apply_narrator_metadata(game, make_metadata(time_update=None))
+    assert game.time_of_day == "early_morning"
+    assert game.time_unchanged_scenes == 0
+
+
+def test_no_auto_advance_before_threshold(game):
+    game.time_of_day = "evening"
+    game.time_unchanged_scenes = E.TIME_AUTO_ADVANCE_SCENES - 3
+    E._apply_narrator_metadata(game, make_metadata(time_update=None))
+    assert game.time_of_day == "evening"
+
+
+def _guidance(**over):
+    g = {"narrator_guidance": "", "npc_guidance": [], "pacing": "steady", "arc_notes": "",
+         "act_transition": True, "scene_summary": "", "new_clocks": [], "npc_reflections": []}
+    g.update(over)
+    return g
+
+
+def test_premature_act_transition_is_ignored(game):
+    game.scene_count = 1
+    E._apply_director_guidance(game, _guidance())
+    assert not game.story_blueprint.get("triggered_transitions")
+
+
+def test_act_transition_after_min_scenes_is_recorded(game):
+    game.scene_count = 1 + E.ACT_MIN_SCENES
+    E._apply_director_guidance(game, _guidance())
+    assert game.story_blueprint["triggered_transitions"] == ["act_0"]

@@ -401,7 +401,7 @@ EdgeTales is configured via a single `config.json` file in the project root.
 
 ### Choosing Models and Effort
 
-By default EdgeTales uses `claude-sonnet-4-6` for narration and `claude-haiku-4-5-20251001` for the fast structured calls. Both roles can be switched in `config.json` without touching code:
+By default EdgeTales uses `claude-sonnet-4-6` for narration and `claude-haiku-5-5` (thinking disabled) for the fast structured calls. Both roles can be switched in `config.json` without touching code:
 
 ```json
 {

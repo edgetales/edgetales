@@ -66,7 +66,7 @@ except ImportError:
 # ===============================================================
 
 VERSION = "0.9.96"
-BRAIN_MODEL = "claude-haiku-4-5-20251001"
+BRAIN_MODEL = "claude-haiku-5-5"
 NARRATOR_MODEL = "claude-sonnet-4-6"
 _SCRIPT_DIR = Path(__file__).resolve().parent
 USERS_DIR = _SCRIPT_DIR / "users"
@@ -132,6 +132,7 @@ MAX_ACTIVE_NPCS = 12               # Soft limit; excess NPCs get retired
 MAX_ACTIVE_CLOCKS = 6              # Hard cap; Director cannot add clocks beyond this
 ARC_MAX_CHARS = 300                # NPC arc length; longer Director arcs are trimmed at a sentence end
 LOCATION_MAX_CHARS = 40            # Longer location strings are cut to a short place label
+ACT_MIN_SCENES = 2                 # Director act_transition is ignored earlier than this many scenes into an act's range
 NPC_STALE_SCENES = 8               # Scenes without any memory update before retirement-eligible
 MAX_NPC_MEMORY_ENTRIES = 25        # Per NPC (total: observations + reflections)
 MAX_NPC_OBSERVATIONS = 15          # Max observation memories per NPC
@@ -3370,6 +3371,10 @@ TIME_PHASES = ["early_morning", "morning", "midday", "afternoon",
 # (wrapping past midnight). Larger jumps are 1-3 phases BACKWARD in disguise
 # (e.g. deep_night → late_evening) and are rejected.
 TIME_MAX_FORWARD_STEPS = 4
+# After this many scenes without any time change, the engine advances one phase
+# itself — time passes even when neither Brain nor Extractor notices it. Must be
+# above TIME_STALE_THRESHOLD so the Narrator gets a chance to show it first.
+TIME_AUTO_ADVANCE_SCENES = 7
 
 
 def _is_forward_time(old: str, new: str) -> bool:
@@ -4203,8 +4208,12 @@ def _npc_relations_block(game: GameState, present_npc_ids: set) -> str:
 # Minimum prefix length (tokens) Anthropic caches per model family. Shorter
 # prefixes marked with cache_control are processed uncached — no error, no cache
 # write surcharge — so marking a prompt that is (currently) below the floor is free.
-CACHE_MIN_TOKENS_HAIKU = 4096
-CACHE_MIN_TOKENS_SONNET = 1024
+CACHE_MIN_TOKENS = {
+    "claude-haiku-5-5": 512,
+    "claude-sonnet-5-5": 512,
+    "claude-sonnet-4-6": 1024,
+    "claude-haiku-4-5-20251001": 4096,
+}
 
 
 def _cached_system(text: str) -> list:
@@ -4249,6 +4258,9 @@ def _log_usage(kwargs: dict, response) -> None:
 MODEL_ROLES = ("narrator", "brain")
 _MODEL_ROLE_BY_DEFAULT = {NARRATOR_MODEL: "narrator", BRAIN_MODEL: "brain"}
 _ROLE_DEFAULT_MODEL = {"narrator": NARRATOR_MODEL, "brain": BRAIN_MODEL}
+# Role defaults applied when config.json leaves the option empty. The brain role
+# runs many short structured calls per turn — thinking only adds latency there.
+_ROLE_DEFAULT_THINKING = {"brain": "disabled"}
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 THINKING_MODES = ("disabled", "adaptive", "between_tools")
 
@@ -4266,7 +4278,8 @@ def configure_models(cfg: Optional[dict] = None) -> dict:
     for role in MODEL_ROLES:
         model = str(cfg.get(f"{role}_model") or "").strip() or _ROLE_DEFAULT_MODEL[role]
         effort = str(cfg.get(f"{role}_effort") or "").strip().lower() or None
-        thinking = str(cfg.get(f"{role}_thinking") or "").strip().lower() or None
+        thinking = (str(cfg.get(f"{role}_thinking") or "").strip().lower()
+                    or _ROLE_DEFAULT_THINKING.get(role))
         if effort and effort not in EFFORT_LEVELS:
             log(f"[Models] Ignoring invalid {role}_effort '{effort}' "
                 f"(allowed: {', '.join(EFFORT_LEVELS)})", level="warning")
@@ -5383,7 +5396,7 @@ All text fields (event, description, scene_context) MUST be in {lang}.
 scene_context: 1 sentence capturing current situation AND dominant mood/tension — not just where/who, but the atmosphere. Example: "Negotiations at a standstill, the guard's suspicion barely concealed." Extract from the narration; do not invent.
 emotional_weight must be ONE of: neutral, curious, wary, angry, grateful, suspicious, terrified, loyal, conflicted, betrayed, devastated, euphoric.
 disposition must be ONE of: neutral, friendly, distrustful, hostile, loyal.
-time_update must be ONE of: early_morning, morning, midday, afternoon, evening, late_evening, night, deep_night — or null if no time change. Detect time shifts from ANY atmospheric cue in the narration, not only explicit clock references. Qualifying signals include: light quality changing (dimming, brightening, lengthening shadows, flat grey replacing direct sunlight), temperature shift (air cooling, ground still warm from earlier sun), ambient sound changing (different insect or bird pattern, silence taking on a different character, guns sounding farther or nearer), or a character noticing the time implicitly ("it had grown darker", "the cold was settling in"). Do NOT require the words "evening" or "night" — sensory evidence is sufficient. Return null only when the scene is explicitly immediate (seconds after the last scene) with no environmental time signal at all.
+time_update must be ONE of: early_morning, morning, midday, afternoon, evening, late_evening, night, deep_night — or null if no time change. Detect time shifts from ANY atmospheric cue in the narration, not only explicit clock references. Qualifying signals include: light quality changing (dimming, brightening, lengthening shadows, flat grey replacing direct sunlight), temperature shift (air cooling, ground still warm from earlier sun), ambient sound changing (different insect or bird pattern, silence taking on a different character, guns sounding farther or nearer), or a character noticing the time implicitly ("it had grown darker", "the cold was settling in"). Do NOT require the words "evening" or "night" — sensory evidence is sufficient. Also advance by one phase when the scene covers activity that plainly takes an hour or more (a long search, waiting, travel, extended work), even without light or sound cues. Return null only when the scene is explicitly immediate (seconds after the last scene) with no environmental time signal and no time-consuming activity.
 location_update: new location name if the character MOVED to a different place, null if they stayed. IMPORTANT: if no movement occurred, always return null — do NOT add city names, qualifiers, or extra words to the existing location. If a move did occur, use the exact place name as it appears in the narration (short and specific, e.g. "The Cathedral", not "The Cathedral in Lyon").
 npc_renames: for identity REVEALS — when an NPC's true or personal name is established for the first time. Covers: spy unmasked, alias discovered, AND descriptor-named NPCs who receive a real name (e.g. "The Woman in the Wool Hat" → "Hanna", "The Unknown Man" → "Klaus", "The Engineer" → "Sara Novak"). Use the npc_id of the descriptor NPC from the known list and set new_name to the revealed personal name. NOT for surname additions to an already-named NPC (use npc_details for that).
 npc_details: for newly established facts about ALREADY KNOWN NPCs only (surname addition, role change). full_name if name extended, description if role/situation changed. NEVER use npc_details to introduce a character who is new to the story — even if they share role similarities with an existing NPC. Characters new to the story always go into new_npcs with a full description.
@@ -5406,8 +5419,8 @@ exited_npc_ids: list the npc_id of each NPC whose PHYSICAL DEPARTURE from the sc
 CROSS-FIELD CONSISTENCY — check before submitting: If your scene_context describes an NPC as dying or dead (e.g. "while X dies", "X's last breath", "X stirbt", "während X stirbt", "X ist tot", "X's breathing stops", "X ceased", "X's struggle ended"), that NPC MUST appear in deceased_npcs. Your own scene_context is authoritative evidence — if you wrote that someone is in the act of dying there, they belong in deceased_npcs. This catches slow or literary deaths that span multiple scenes: even if the character was only "dying" last turn, once the final cessation is depicted (breathing stops, body stills, the transition completes), mark them deceased now."""
 
     # Static per session (only the narration language varies per game) → cacheable.
-    # Currently below Haiku's cache floor (CACHE_MIN_TOKENS_HAIKU); marking it costs
-    # nothing and activates automatically if the instructions grow past the floor.
+    # Cached from 512 tokens on Haiku 5.5 (see CACHE_MIN_TOKENS); on models with a
+    # higher floor the marker costs nothing and the prompt is processed uncached.
     system = _cached_system(system)
 
     prompt = f"""<narration>{narration}</narration>
@@ -5683,6 +5696,12 @@ def _apply_narrator_metadata(game: GameState, metadata: dict,
             log(f"[Time] Rejected backward time_update {game.time_of_day} → {new_time}",
                 level="warning")
         game.time_unchanged_scenes += 1
+        if game.time_of_day in TIME_PHASES and \
+                game.time_unchanged_scenes >= TIME_AUTO_ADVANCE_SCENES:
+            old_time = game.time_of_day
+            advance_time(game, "moderate")
+            log(f"[Time] Auto-advanced {old_time} → {game.time_of_day} after "
+                f"{TIME_AUTO_ADVANCE_SCENES} scenes without a time change")
 
     # NPC renames (delegate to existing logic via JSON roundtrip)
     renames = metadata.get("npc_renames", [])
@@ -6201,7 +6220,7 @@ Field instructions:
   - disposition_shift: Set to "improve" or "worsen" ONLY when the NPC's accumulated story arc clearly justifies a one-step organic change in their relationship to the player — e.g. an NPC who has consistently helped and trusted over many scenes should shift from neutral to friendly, or a betrayal should shift from friendly to neutral. This is NOT a reward for a single good roll; it reflects a relationship that has genuinely changed through narrative accumulation. Leave null in the vast majority of cases. One step only per reflection. The direction must match the tone of the reflection.
 - arc_notes: Brief story arc progress observation
 - act_transition: Evaluate whether the current act's <transition_trigger> has been fulfilled by recent events. Set to true if:
-  (a) the narrative condition described in the trigger has clearly been met, OR
+  (a) the trigger's core condition has been substantially met — the story has clearly moved into the situation the trigger describes, even if not every detail matches (do not wait for a perfect match), OR
   (b) the story has moved PAST the act's scene_range (PAST_RANGE="true") and the trigger's spirit has been approximately met.
   Set to false only if the trigger condition is clearly unmet AND we are still within scene_range. The scene_range is a fallback — content-driven transitions via this flag produce better pacing.
 - new_clocks: Propose new threat clocks ONLY when ALL conditions are met: (1) a concrete new danger has emerged in the last 1-2 scenes that is NOT already tracked by an existing clock in <clocks>, (2) the threat is specific enough to have a concrete, narratively meaningful trigger_description (what happens when the clock fills), (3) the threat is genuinely new — not a re-framing of an existing one. Leave this array EMPTY when any condition is unmet. When creating a clock: name (short, evocative), clock_type ("threat" or "scheme"), segments (4–8 based on urgency — 4 for imminent, 6 for medium, 8 for slow-burn), filled (1 to show the threat has already begun, 0 only if it is entirely latent), trigger_description (the concrete consequence when filled), owner ("world" or the NPC name driving this threat). Maximum 2 new clocks per Director run — default is empty array.{clock_cap_rule}
@@ -6318,9 +6337,16 @@ def _apply_director_guidance(game: GameState, guidance: dict):
         # If the Director fires act_transition=true while in the final act
         # (e.g. with PAST_RANGE=true), silently ignore — recording it would
         # pollute triggered_transitions without any effect on get_current_act().
+        cur_sr = _safe_sr(acts[act_idx], fallback_start=act_idx * 5 + 1) \
+            if act_idx < len(acts) else [1, 20]
         if act_idx >= len(acts) - 1:
             log(f"[Director] Ignoring act_transition=true for final act "
                 f"(act_{act_idx}) — final acts have no transition by design")
+        elif game.scene_count < cur_sr[0] + ACT_MIN_SCENES:
+            # Premature: e.g. act_0 "fulfilled" right after the opening scene would
+            # skip the whole introduction. scene_range still advances the act later.
+            log(f"[Director] Ignoring premature act_transition for act_{act_idx} at scene "
+                f"{game.scene_count} (earliest {cur_sr[0] + ACT_MIN_SCENES})")
         else:
             # Back-fill: any intermediate acts skipped via scene_range fallback
             # (never explicitly triggered) should be marked before recording this one.

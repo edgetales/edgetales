@@ -107,3 +107,16 @@ def test_response_text_skips_thinking_blocks():
     ])
     assert E._response_text(resp) == '{"a": 1}'
     assert E._response_text(SimpleNamespace(content=[])) == ""
+
+
+def test_brain_defaults_to_haiku_5_5_without_thinking():
+    s = E.get_model_settings()["brain"]
+    assert s["model"] == "claude-haiku-5-5" == E.BRAIN_MODEL
+    assert s["thinking"] == "disabled"
+    kw, _ = E._apply_model_settings({"model": E.BRAIN_MODEL})
+    assert kw["thinking"] == {"type": "disabled"}
+
+
+def test_brain_thinking_can_be_overridden():
+    _write_cfg(brain_thinking="adaptive")
+    assert E.get_model_settings()["brain"]["thinking"] == "adaptive"
