@@ -7,6 +7,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+- **More varied narration over long sessions:** scene endings now rotate between four kinds (inner state, an image or sound left hanging, an NPC's unanswered line, an action in progress), never repeat the previous kind and end on a short sentence; recurring body and prop details (an injury, a hand on a weapon, a recurring object) appear at most once per scene and only when they change. Test sessions had ended nearly every scene on the same long inner-state sentence and repeated the same physical details scene after scene.
+
 ### Fixed
 - **Threat clocks could fill without ever happening in the story:** autonomous world ticks, WEAK_HIT ticks and NPC agency in dialog scenes were applied after the scene had been narrated, and the Narrator only ever sees unfired clocks — the trigger was never told. All clock movement of a scene is now decided before narration in every path (turn, dialog, momentum burn, `##` correction) and filled clocks reach the Narrator as `<clock_fired>` (or `<npc_agency>` for NPC schemes, now also in dialog scenes).
 - **`##` corrections that reinterpret the input skipped parts of the turn:** the re-run after the restore did not re-apply autonomous world ticks, NPC agency (without re-roll) or the story-completion check — clocks fell behind and an epilogue offer could arrive one turn late.
