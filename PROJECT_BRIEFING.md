@@ -261,7 +261,7 @@ Players prefix `##` to correct the previous turn. Error type auto-detected; repa
 
 **Turn Snapshot** (`_build_turn_snapshot()`): Created at every `process_turn()` start. **Spec-driven** — every turn-mutable field is listed exactly once in `_SNAPSHOT_SCALAR_FIELDS` (copied), `_SNAPSHOT_DEEP_FIELDS` (deep-copied) or `_SNAPSHOT_BP_KEYS` (blueprint sub-keys → snapshot key `bp_<key>`). To add a turn-mutable field, append it there — nothing else. `tests/test_snapshot.py::test_every_gamestate_field_is_classified` fails until every new `GameState` field is classified. Snapshot key names are persisted — never rename them.
 - `_restore_snapshot(game, snap, logs=True|False)` is the only restore implementation. `logs=True` (`_restore_from_snapshot()`, `## input_misread`) also removes the turn's log entries via `_truncate_log_to_tail()` (pops everything after the pre-turn tail; empty pre-turn log handled; bounded fallback when the list was trimmed at its cap). `logs=False` (momentum burn) keeps them for in-place editing. Missing keys in old snapshots leave the current value untouched. Empty blueprint lists restore as *absent* keys (all readers use `.get(k) or []`).
-- `_reapply_turn_structure(game, brain, chaos_interrupt)` re-applies scene advance, targeted-NPC reactivation, Brain location/time and the chaos release after a restore — shared by burn and `## input_misread`.
+- `_reapply_turn_structure(game, brain, chaos_interrupt)` re-applies scene advance, targeted-NPC reactivation, Brain location/time and the chaos release after a restore — shared by burn and `## input_misread`. The `## input_misread` re-run also re-applies NPC agency (no-reroll branch), autonomous world ticks and `_check_story_completion()`, which the restore rolled back.
 
 **Transactional pipelines** (`_rollback_on_error(game, label)`): `process_turn`, `process_momentum_burn`, `process_correction` and `start_new_chapter` are thin wrappers around `_<name>_impl()`; `run_deferred_director()` wraps `_apply_director_guidance()`. On any exception the full `GameState` (deepcopy taken at entry, ~5 ms x86 for a large game) is restored field-by-field **into the same object** and the exception re-raised — the UI retry then starts from clean state. Never mutate `GameState` outside these wrappers in a multi-call flow.
 
@@ -293,7 +293,7 @@ Players prefix `##` to correct the previous turn. Error type auto-detected; repa
 
 **Clocks**: Progress clocks (1–12 segments). `_purge_old_fired_clocks(game, keep_scenes=3)` runs at `process_turn()` start — removes clocks fired >3 scenes ago.
 
-**Clock advancement — four mechanisms (owner-aware)**:
+**Clock advancement — four mechanisms (owner-aware)**. All four run BEFORE the Narrator call in every path (turn, dialog, burn, `## input_misread`), so a clock that fills in a scene is narrated in that scene: MISS ticks via `clock_triggered` on `<result>`, NPC agency via `<npc_agency>` (`CLOCK FILLED …`, now also in dialog prompts), WEAK_HIT and autonomous fills via `<clock_fired>` (`_clock_fired_block()`; events use `fired` or `triggered`). Before, autonomous, WEAK_HIT and dialog-agency fills completed off-page:
 - `apply_consequences()` on MISS: ticks first unfilled threat clock by 1 (or 2 on desperate)
 - `apply_consequences()` on WEAK_HIT: position-scaled probabilistic tick (controlled=0%, risky=50%, desperate=100%)
 - `_tick_autonomous_clocks()` (every scene, 20%): world-owned threat clocks only — NPC-owned excluded to prevent double-ticking

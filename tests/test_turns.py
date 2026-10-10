@@ -289,3 +289,101 @@ def test_new_chapter_post_story_location_is_shortened(game, ai, monkeypatch):
     g, _ = E.start_new_chapter(None, game, CFG, "u")
     assert len(g.current_location) <= E.LOCATION_MAX_CHARS
     assert g.current_location.startswith("Die alte Leuchtturmwärterhütte")
+
+
+# --- clock events reach the Narrator ----------------------------------------------
+
+def _capture_prompts(monkeypatch, ai):
+    prompts = []
+    def narrator(client, prompt, game, config=None):
+        prompts.append(prompt)
+        return ai.narration
+    monkeypatch.setattr(E, "call_narrator", narrator)
+    return prompts
+
+
+def _fill_world_clock(game):
+    """Stand-in for an autonomous tick that fills the world clock this scene."""
+    events = []
+    for c in game.clocks:
+        if c.get("owner") in ("", "world") and not c.get("fired"):
+            c["filled"] = c["segments"]; c["fired"] = True
+            c["fired_at_scene"] = game.scene_count
+            events.append({"clock": c["name"], "trigger": c.get("trigger_description", ""),
+                           "autonomous": True, "triggered": True})
+    return events
+
+
+def test_autonomous_clock_fill_reaches_narrator_in_action(game, ai, monkeypatch):
+    prompts = _capture_prompts(monkeypatch, ai)
+    monkeypatch.setattr(E, "_tick_autonomous_clocks", _fill_world_clock)
+    ai.roll = roll("STRONG_HIT", c1=1, c2=2, d1=6, d2=6)
+    E.process_turn(None, game, "x", CFG)
+    assert '<clock_fired name="Sturmflut">Das Hafenviertel läuft voll' in prompts[-1]
+
+
+def test_autonomous_clock_fill_reaches_narrator_in_dialog(game, ai, monkeypatch):
+    prompts = _capture_prompts(monkeypatch, ai)
+    monkeypatch.setattr(E, "_tick_autonomous_clocks", _fill_world_clock)
+    ai.brain = make_brain(type="dialog", move="dialog", dialog_only=True, stat=None)
+    E.process_turn(None, game, "Hallo Mara", CFG)
+    assert '<clock_fired name="Sturmflut">' in prompts[-1]
+    assert sum(1 for e in game.session_log[-1]["clock_events"] if e.get("triggered")) == 1
+
+
+def test_weak_hit_clock_fill_reaches_narrator(game, ai, monkeypatch):
+    prompts = _capture_prompts(monkeypatch, ai)
+    game.clocks[0]["filled"] = 5                          # 5/6 → desperate WEAK_HIT fills it
+    ai.brain = make_brain(position="desperate")
+    ai.roll = roll("WEAK_HIT", c1=9, c2=1, d1=3, d2=3)
+    E.process_turn(None, game, "x", CFG)
+    assert game.clocks[0]["fired"]
+    assert '<clock_fired name="Sturmflut">' in prompts[-1]
+
+
+def test_dialog_npc_agency_reaches_narrator(game, ai, monkeypatch):
+    prompts = _capture_prompts(monkeypatch, ai)
+    game.scene_count = 4                                   # dialog scene 5 → agency scene
+    game.npcs[0]["agenda"] = "Hafen kontrollieren"
+    game.clocks.append({"id": "clock_2", "name": "Plan", "clock_type": "scheme",
+                        "segments": 2, "filled": 1, "owner": "Mara Voss",
+                        "trigger_description": "Mara übernimmt den Hafen", "fired": False})
+    ai.brain = make_brain(type="dialog", move="dialog", dialog_only=True, stat=None)
+    E.process_turn(None, game, "Hallo Mara", CFG)
+    assert "<npc_agency>" in prompts[-1] and 'CLOCK FILLED &quot;Plan&quot;' in prompts[-1]
+    assert [e["clock"] for e in game.session_log[-1]["clock_events"]] == ["Plan"]
+
+
+# --- ## input_misread re-run completes the turn -----------------------------------
+
+def test_input_misread_rerun_reapplies_agency_and_world_ticks(game, ai, monkeypatch):
+    game.scene_count = 4
+    game.npcs[0]["agenda"] = "Hafen kontrollieren"
+    game.clocks.append({"id": "clock_2", "name": "Plan", "clock_type": "scheme",
+                        "segments": 6, "filled": 0, "owner": "Mara Voss",
+                        "trigger_description": "x", "fired": False})
+    ai.roll = roll("STRONG_HIT", c1=1, c2=2, d1=6, d2=6)
+    E.process_turn(None, game, "x", CFG)
+    assert game.clocks[-1]["filled"] == 1
+    ticks = []
+    monkeypatch.setattr(E, "_tick_autonomous_clocks", lambda g: ticks.append(g.scene_count) or [])
+    _patch_correction(monkeypatch, {
+        "correction_source": "input_misread", "corrected_input": "ich rede nur",
+        "reroll_needed": False, "corrected_stat": "none",
+        "narrator_guidance": "g", "director_useful": False, "state_ops": []})
+    E.process_correction(None, game, "war nur Gerede", CFG)
+    assert game.clocks[-1]["filled"] == 1                  # agency re-applied once, not lost
+    assert ticks == [5]                                     # world ticks rolled for the scene
+
+
+def test_input_misread_rerun_rechecks_story_completion(game, ai, monkeypatch):
+    game.scene_count = 15                                   # re-run scene 16 = final range end
+    ai.roll = roll("STRONG_HIT", c1=1, c2=2, d1=6, d2=6)
+    E.process_turn(None, game, "x", CFG)
+    assert game.story_blueprint.get("story_complete")
+    _patch_correction(monkeypatch, {
+        "correction_source": "input_misread", "corrected_input": "y",
+        "reroll_needed": False, "corrected_stat": "none",
+        "narrator_guidance": "g", "director_useful": False, "state_ops": []})
+    E.process_correction(None, game, "y", CFG)
+    assert game.story_blueprint.get("story_complete")

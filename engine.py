@@ -6973,10 +6973,32 @@ def _npcs_present_string(game: GameState) -> str:
     return ", ".join(parts) or "none"
 
 
+def _clock_fired_block(events: Optional[list]) -> str:
+    """<clock_fired> elements for clocks that filled during this scene.
+    Clock events use "fired" (consequences, NPC agency) or "triggered"
+    (autonomous ticks). Without this the Narrator never learned about clocks that
+    filled through autonomous ticks, WEAK_HIT ticks or dialog-scene NPC agency —
+    the threat completed without ever happening in the story."""
+    seen, out = set(), []
+    for e in events or []:
+        if not (e.get("fired") or e.get("triggered")):
+            continue
+        name = e.get("clock", "")
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(f'\n<clock_fired name="{_xa(name)}">{html.escape(e.get("trigger", ""))} '
+                   f'— this happens NOW, within this scene: show it concretely on the page, '
+                   f'without game terms.</clock_fired>')
+    return "".join(out)
+
+
 def build_dialog_prompt(game: GameState, brain: dict, player_words: str = "",
                         chaos_interrupt: Optional[str] = None,
                         activated_npcs: list = None, mentioned_npcs: list = None,
-                        config: Optional[EngineConfig] = None) -> str:
+                        config: Optional[EngineConfig] = None,
+                        npc_agency: Optional[list] = None,
+                        clock_events: Optional[list] = None) -> str:
     _cfg = config or EngineConfig()
     lang = get_narration_lang(_cfg)
     context_text = f"{player_words} {brain.get('player_intent') or ''} {game.current_scene_context or ''}"
@@ -7034,11 +7056,15 @@ def build_dialog_prompt(game: GameState, brain: dict, player_words: str = "",
         if dg.get("arc_notes"):                      # independent — survives empty narrator_guidance
             director_block += f'\n<arc_notes>{html.escape(dg["arc_notes"])}</arc_notes>'
 
+    agency = (f'\n<npc_agency>{"| ".join(html.escape(a) for a in npc_agency)}</npc_agency>'
+              if npc_agency else "")
+    fired = _clock_fired_block(clock_events)
+
     return f"""<scene type="dialog" n="{game.scene_count}">
 {_scene_header(game)}
 <intent>{html.escape(brain.get('player_intent', ''))}</intent>{pw}
 <location>{html.escape(game.current_location)}</location>{_loc_hist(game)}{_time_ctx(game)}
-{npc}{npcs_section}{wl}{crisis}
+{npc}{npcs_section}{wl}{crisis}{agency}{fired}
 {pacing}{director_block}
 {_status_context_block(game)}{_story_context_block(game)}{_recent_events_block(game)}{_narrator_clocks_block(game)}{_npc_relations_block(game, _present_ids)}</scene>
 <task>2-3 paragraphs of immersive narration. Let the world breathe around the conversation — small details of place, light, sound, and texture that make this moment feel inhabited. Something between the characters should shift by the end. Let the current act's mood (from <story_arc>) shape the undertone of the exchange — even a quiet conversation carries the weight of the surrounding phase. If <director_guidance> is present, follow its direction while maintaining your creative voice.</task>"""
@@ -7049,7 +7075,8 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
                         player_words: str = "",
                         chaos_interrupt: Optional[str] = None,
                         activated_npcs: list = None, mentioned_npcs: list = None,
-                        config: Optional[EngineConfig] = None) -> str:
+                        config: Optional[EngineConfig] = None,
+                        world_events: Optional[list] = None) -> str:
     _cfg = config or EngineConfig()
     lang = get_narration_lang(_cfg)
     context_text = f"{player_words} {brain.get('player_intent') or ''} {game.current_scene_context or ''}"
@@ -7121,6 +7148,10 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
 
     flags = f'\n<flags>{",".join(status_flags)}</flags>' if status_flags else ""
     agency = f'\n<npc_agency>{"| ".join(html.escape(a) for a in npc_agency)}</npc_agency>' if npc_agency else ""
+    # MISS already names its clock events in clock_triggered; other results (WEAK_HIT
+    # tick) and autonomous world ticks get explicit <clock_fired> elements.
+    fired = _clock_fired_block(([] if roll.result == "MISS" else list(clock_events or []))
+                               + list(world_events or []))
     pacing = _pacing_block(game, chaos_interrupt, brain.get("dramatic_question", ""))
 
     # Director guidance injection
@@ -7142,7 +7173,7 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
 {position_tag}
 <status h="{game.health}" sp="{game.spirit}" su="{game.supply}" m="{game.momentum}"/>
 <location>{html.escape(game.current_location)}</location>{_loc_hist(game)}{_time_ctx(game)}
-{npc}{npcs_section}{wl}{flags}{agency}
+{npc}{npcs_section}{wl}{flags}{agency}{fired}
 {pacing}{director_block}
 {_status_context_block(game)}{_story_context_block(game)}{_recent_events_block(game)}{_narrator_clocks_block(game)}{_npc_relations_block(game, _present_ids)}</scene>
 <task>2-4 paragraphs of immersive narration. Let the roll consequence open new story questions rather than just closing old ones — the scene should end in motion, with something shifted. Let the current act's mood (from <story_arc>) shape the texture of this moment — a STRONG_HIT in a desperate phase still tastes of the surrounding darkness. If <director_guidance> is present, follow its direction while maintaining your creative voice.</task>"""
@@ -9035,11 +9066,16 @@ def _process_turn_impl(client: anthropic.Anthropic, game: GameState,
     # Dialog
     if brain.get("dialog_only") or brain.get("move") == "dialog":
         game.scene_count += 1
+        # Clock movement of this scene is decided BEFORE narration so the Narrator
+        # can show it (NPC agency on agency scenes, autonomous world ticks).
+        npc_agency, agency_clock_events = check_npc_agency(game)
+        auto_clock_events = _tick_autonomous_clocks(game)
         prompt = build_dialog_prompt(game, brain, player_words=player_message,
                                      chaos_interrupt=chaos_interrupt,
                                      activated_npcs=activated_npcs,
                                      mentioned_npcs=mentioned_npcs,
-                                     config=config)
+                                     config=config, npc_agency=npc_agency,
+                                     clock_events=auto_clock_events)
         raw = call_narrator(client, prompt, game, config)
         narration = parse_narrator_response(game, raw)
         if game.last_turn_snapshot is not None:
@@ -9081,12 +9117,9 @@ def _process_turn_impl(client: anthropic.Anthropic, game: GameState,
                 "id": pending_revs[0].get("id"),
                 "confirmed": revelation_confirmed,
             }
-        # NPC agency ticks — fires on scene multiples regardless of action/dialog
-        _, agency_clock_events = check_npc_agency(game)
+        # NPC agency + autonomous ticks were applied before narration (see above)
         if agency_clock_events and game.session_log:
             game.session_log[-1]["clock_events"].extend(agency_clock_events)
-        # Autonomous clock ticks — world moves forward independent of player rolls
-        auto_clock_events = _tick_autonomous_clocks(game)
         if auto_clock_events and game.session_log:
             game.session_log[-1]["clock_events"].extend(auto_clock_events)
         # Check story completion
@@ -9144,10 +9177,13 @@ def _process_turn_impl(client: anthropic.Anthropic, game: GameState,
 
     consequences, clock_events = apply_consequences(game, roll, brain)
     npc_agency, agency_clock_events = check_npc_agency(game)
+    # Autonomous world ticks happen BEFORE narration so a clock that fills now
+    # reaches the Narrator (<clock_fired>) instead of completing off-page.
+    auto_clock_events = _tick_autonomous_clocks(game)
     prompt = build_action_prompt(game, brain, roll, consequences, clock_events, npc_agency,
                                 player_words=player_message, chaos_interrupt=chaos_interrupt,
                                 activated_npcs=activated_npcs, mentioned_npcs=mentioned_npcs,
-                                config=config)
+                                config=config, world_events=auto_clock_events)
     raw = call_narrator(client, prompt, game, config)
     narration = parse_narrator_response(game, raw)
     if game.last_turn_snapshot is not None:
@@ -9205,8 +9241,7 @@ def _process_turn_impl(client: anthropic.Anthropic, game: GameState,
             "id": pending_revs[0].get("id"),
             "confirmed": revelation_confirmed,
         }
-    # Autonomous clock ticks — world moves forward independent of player rolls
-    auto_clock_events = _tick_autonomous_clocks(game)
+    # Autonomous ticks were applied before narration (see above)
     if agency_clock_events and game.session_log:
         game.session_log[-1]["clock_events"].extend(agency_clock_events)
     if auto_clock_events and game.session_log:
@@ -9714,7 +9749,8 @@ def _process_correction_impl(client: anthropic.Anthropic, game: GameState,
         return game, "(Keine Korrektur möglich — kein letzter Zug im Speicher.)", None
 
     _cfg = config or EngineConfig()
-    agency_clock_events: list[dict] = []  # populated by check_npc_agency() in action sub-paths
+    agency_clock_events: list[dict] = []  # populated by check_npc_agency() in input_misread re-runs
+    auto_clock_events: list[dict] = []    # autonomous ticks of an input_misread re-run
 
     # Step 1: Analyse the correction
     analysis = call_correction_brain(client, game, correction_text, _cfg)
@@ -9741,17 +9777,24 @@ def _process_correction_impl(client: anthropic.Anthropic, game: GameState,
                 f"vs [{roll.c1},{roll.c2}] \u2192 {roll.result} (correction re-roll)")
             consequences, clock_events = apply_consequences(game, roll, brain)
             npc_agency, agency_clock_events = check_npc_agency(game)
+            # The restore rolled back the original turn's world ticks — roll them again
+            auto_clock_events = _tick_autonomous_clocks(game)
             activated_npcs, mentioned_npcs, _ = activate_npcs_for_prompt(game, brain, corrected_input)
             prompt = build_action_prompt(game, brain, roll, consequences, clock_events, npc_agency,
                                          player_words=corrected_input, config=_cfg,
-                                         activated_npcs=activated_npcs, mentioned_npcs=mentioned_npcs)
+                                         activated_npcs=activated_npcs, mentioned_npcs=mentioned_npcs,
+                                         world_events=auto_clock_events)
         else:
-            # Dialog / intent-only path — no new roll
+            # Dialog / intent-only path — no new roll. NPC agency and world ticks of
+            # the original turn were rolled back with the clocks — apply them again.
             roll = None
+            npc_agency, agency_clock_events = check_npc_agency(game)
+            auto_clock_events = _tick_autonomous_clocks(game)
             activated_npcs, mentioned_npcs, _ = activate_npcs_for_prompt(game, brain, corrected_input)
             prompt = build_dialog_prompt(game, brain, player_words=corrected_input,
                                          activated_npcs=activated_npcs,
-                                         mentioned_npcs=mentioned_npcs, config=_cfg)
+                                         mentioned_npcs=mentioned_npcs, config=_cfg,
+                                         npc_agency=npc_agency, clock_events=auto_clock_events)
 
     # Step 2b: state_error → patch state in-place, no re-roll
     # IMPORTANT: do NOT call apply_consequences() here — consequences from the
@@ -9838,6 +9881,10 @@ def _process_correction_impl(client: anthropic.Anthropic, game: GameState,
             game.session_log = game.session_log[-MAX_SESSION_LOG:]
         if agency_clock_events and game.session_log:
             game.session_log[-1]["clock_events"].extend(agency_clock_events)
+        if auto_clock_events and game.session_log:
+            game.session_log[-1]["clock_events"].extend(auto_clock_events)
+        # The restore also rolled back story_complete — re-evaluate for this scene
+        _check_story_completion(game)
     else:
         # state_error: no rollback → chaos/intensity already recorded by original turn.
         # Only update narration text; preserve original consequences/clock_events.
@@ -9934,12 +9981,15 @@ def _process_momentum_burn_impl(client: anthropic.Anthropic, game: GameState,
     consequences, clock_events = apply_consequences(game, upgraded, brain_data)
     # NPC agency ticks were rolled back with the clocks — re-apply them for this scene
     npc_agency, agency_clock_events = check_npc_agency(game)
+    # Autonomous world ticks were rolled back as well — roll them again, before
+    # narration so a filling clock reaches the Narrator.
+    auto_clock_events = _tick_autonomous_clocks(game)
     # Re-run NPC activation for the re-narrated scene
     activated_npcs, mentioned_npcs, _ = activate_npcs_for_prompt(game, brain_data, player_words)
     prompt = build_action_prompt(game, brain_data, upgraded, consequences, clock_events, npc_agency,
                                 player_words=player_words, chaos_interrupt=chaos_interrupt,
                                 activated_npcs=activated_npcs, mentioned_npcs=mentioned_npcs,
-                                config=config)
+                                config=config, world_events=auto_clock_events)
     prompt = prompt.replace('<task>', '<momentum_burn>Character digs deep, turns the tide.</momentum_burn>\n<task>')
 
     raw = call_narrator(client, prompt, game, config)
@@ -9951,8 +10001,6 @@ def _process_momentum_burn_impl(client: anthropic.Anthropic, game: GameState,
 
     # Update chaos after burn (new result counts)
     update_chaos_factor(game, new_result)
-    # Autonomous world clock ticks were rolled back as well — roll them again
-    auto_clock_events = _tick_autonomous_clocks(game)
     clock_events = clock_events + agency_clock_events + auto_clock_events
 
     # Keep the correction snapshot in sync with what the player now sees, so a
