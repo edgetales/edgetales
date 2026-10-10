@@ -5,7 +5,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## [0.9.96]
+## [0.9.96] - 2026-10-10
 
 ### Added
 - **Configurable models per role:** `config.json` accepts `narrator_model` / `brain_model`, `narrator_effort` / `brain_effort` (`low`–`max`, sent as `output_config.effort`) and `narrator_thinking` / `brain_thinking` (`disabled`, `adaptive`, `between_tools`). Call sites keep passing `NARRATOR_MODEL` / `BRAIN_MODEL` as role tokens; `_api_create_with_retry()` swaps in the configured model and options. Empty values keep the previous behaviour. If the API rejects an effort or thinking option for a model, the call is retried without it and the option stays off for that role for the rest of the process. New tests in `tests/test_models.py`.
