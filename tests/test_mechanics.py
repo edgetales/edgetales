@@ -4,17 +4,26 @@ from conftest import make_npc, roll
 
 
 def test_roll_action_outcomes(monkeypatch):
-    seq = iter([5, 5, 3, 4])  # d1, d2, c1, c2
+    seq = iter([5, 3, 4])  # action die, c1, c2
     monkeypatch.setattr(E.random, "randint", lambda a, b: next(seq))
     r = E._real_roll_action("iron", 2, "clash")
-    assert r.action_score == 10 and r.result == "STRONG_HIT" and not r.match
+    assert r.action_score == 7 and r.d2 == 0 and r.result == "STRONG_HIT" and not r.match
 
 
-def test_action_score_capped_at_10(monkeypatch):
-    seq = iter([6, 6, 10, 10])
-    monkeypatch.setattr(E.random, "randint", lambda a, b: next(seq))
+def test_roll_action_uses_one_d6(monkeypatch):
+    calls = []
+    def randint(a, b):
+        calls.append((a, b))
+        return b
+    monkeypatch.setattr(E.random, "randint", randint)
     r = E._real_roll_action("iron", 3, "clash")
-    assert r.action_score == 10 and r.result == "MISS" and r.match
+    assert calls == [(1, 6), (1, 10), (1, 10)]
+    assert r.action_score == 9 and r.result == "MISS" and r.match   # 6+3 vs 10|10
+
+
+def test_action_dice_text_old_and_new():
+    assert E.action_dice_text(4) == "4" and E.action_dice_text(4, 0) == "4"
+    assert E.action_dice_text(3, 5) == "3+5"                         # pre-switch saves
 
 
 def test_miss_consequences_and_clock_tick(game):

@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Changed
+- **Action rolls use the Ironsworn rule: 1d6 + stat vs two d10.** The engine rolled 2d6 + stat, which made rolls far too easy (at stat 2: 58 % strong hits and 10 % misses instead of Ironsworn's 23 % and 33 %) — momentum sat at its maximum, chaos at its minimum and setbacks were rare. Saved games stay compatible: rolls stored with two action dice are still shown as such. The help text (DE/EN) and the detailed dice display show one action die.
 - **More varied narration over long sessions:** scene endings now rotate between four kinds (inner state, an image or sound left hanging, an NPC's unanswered line, an action in progress), never repeat the previous kind and end on a short sentence; recurring body and prop details (an injury, a hand on a weapon, a recurring object) appear at most once per scene and only when they change. Test sessions had ended nearly every scene on the same long inner-state sentence and repeated the same physical details scene after scene.
 
 ### Fixed

@@ -3747,7 +3747,10 @@ def choose_story_structure(tone: str) -> str:
 # ===============================================================
 
 def roll_action(stat_name: str, stat_value: int, move: str) -> RollResult:
-    d1, d2 = random.randint(1, 6), random.randint(1, 6)
+    """Ironsworn action roll: 1d6 + stat (max 10) vs two d10 challenge dice.
+    RollResult keeps its d2 field for saves made with the former 2d6 roll;
+    new rolls set it to 0 (see action_dice_text())."""
+    d1, d2 = random.randint(1, 6), 0
     c1, c2 = random.randint(1, 10), random.randint(1, 10)
     score = min(d1 + d2 + stat_value, 10)
     if score > c1 and score > c2:
@@ -3757,6 +3760,12 @@ def roll_action(stat_name: str, stat_value: int, move: str) -> RollResult:
     else:
         result = "MISS"
     return RollResult(d1, d2, c1, c2, stat_name, stat_value, score, result, move, match=(c1 == c2))
+
+
+def action_dice_text(d1: int, d2: int = 0) -> str:
+    """Action die (or dice) as shown in logs and the UI: "4" for the current 1d6
+    roll, "3+5" for rolls stored before the switch from 2d6."""
+    return f"{d1}+{d2}" if d2 else str(d1)
 
 
 COMBAT_MOVES = {"clash", "strike"}
@@ -9151,7 +9160,7 @@ def _process_turn_impl(client: anthropic.Anthropic, game: GameState,
     _raw = roll.d1 + roll.d2 + roll.stat_value
     _score_str = f"{_raw}→10(cap)" if _raw > 10 else str(roll.action_score)
     log(f"[Roll] {roll.move} ({roll.stat_name}={roll.stat_value}): "
-        f"{roll.d1}+{roll.d2}+{roll.stat_value}={_score_str} "
+        f"{action_dice_text(roll.d1, roll.d2)}+{roll.stat_value}={_score_str} "
         f"vs [{roll.c1},{roll.c2}] \u2192 {roll.result}")
     if roll.match:
         log(f"[Turn] MATCH! Both challenge dice show {roll.c1} \u2014 {roll.result}")
@@ -9478,7 +9487,7 @@ def call_correction_brain(client: anthropic.Anthropic, game: GameState,
     roll = snap.get("roll")
     roll_summary = (
         f"{roll.result} ({roll.move}, {roll.stat_name}={roll.stat_value}, "
-        f"d1={roll.d1}+d2={roll.d2} vs c1={roll.c1}/c2={roll.c2})"
+        f"action_die={action_dice_text(roll.d1, roll.d2)} vs c1={roll.c1}/c2={roll.c2})"
         if roll else "dialog (no roll)"
     )
 
@@ -9773,7 +9782,7 @@ def _process_correction_impl(client: anthropic.Anthropic, game: GameState,
             _raw = roll.d1 + roll.d2 + roll.stat_value
             _score_str = f"{_raw}→10(cap)" if _raw > 10 else str(roll.action_score)
             log(f"[Roll] {roll.move} ({roll.stat_name}={roll.stat_value}): "
-                f"{roll.d1}+{roll.d2}+{roll.stat_value}={_score_str} "
+                f"{action_dice_text(roll.d1, roll.d2)}+{roll.stat_value}={_score_str} "
                 f"vs [{roll.c1},{roll.c2}] \u2192 {roll.result} (correction re-roll)")
             consequences, clock_events = apply_consequences(game, roll, brain)
             npc_agency, agency_clock_events = check_npc_agency(game)

@@ -404,7 +404,7 @@ _STRINGS = {
         "chapters.chapter_label": "Kapitel {n}",
 
         # Dice Display
-        "dice.action": "**Aktion:** {d1}+{d2}+{stat_value} = **{score_display}** vs **{c1}|{c2}**",
+        "dice.action": "**Aktion:** {dice}+{stat_value} = **{score_display}** vs **{c1}|{c2}**",
         "dice.match": "\u2604\uFE0F **Schicksalswurf!** Beide Herausforderungsw\u00fcrfel zeigen {value}!",
         "dice.match_short": "\u2604\uFE0F Schicksalswurf!",
         "dice.chaos_short": "\u26A1 Chaos!",
@@ -427,9 +427,9 @@ _STRINGS = {
                              "einen Geheimgang erfinden oder einen alten Freund auftauchen lassen.",
         "help.probe_title": "**W\u00fcrfelproben**",
         "help.probe_text": "Wenn deine Aktion riskant ist oder scheitern k\u00f6nnte, wird automatisch gew\u00fcrfelt:",
-        "help.probe_detail": "<b>2W6 + Attribut</b> gegen <b>2W10</b><br>"
+        "help.probe_detail": "<b>W6 + Attribut</b> gegen <b>2W10</b><br>"
                              "W6 = sechsseitiger W\u00fcrfel, W10 = zehnseitiger. "
-                             "Dein Wurf (max. 10) muss die W10 schlagen.",
+                             "Dein Wurf muss die beiden W10 schlagen.",
         "help.results_title": "**Ergebnisse**",
         "help.results_text": "Jeder Wurf hat drei m\u00f6gliche Ausg\u00e4nge:",
         "help.result_strong": "<b>Voller Erfolg</b>",
@@ -810,7 +810,7 @@ _STRINGS = {
         "chapters.chapter_label": "Chapter {n}",
 
         # Dice Display
-        "dice.action": "**Action:** {d1}+{d2}+{stat_value} = **{score_display}** vs **{c1}|{c2}**",
+        "dice.action": "**Action:** {dice}+{stat_value} = **{score_display}** vs **{c1}|{c2}**",
         "dice.match": "\u2604\uFE0F **Fateful Roll!** Both challenge dice show {value}!",
         "dice.match_short": "\u2604\uFE0F Fateful Roll!",
         "dice.chaos_short": "\u26A1 Chaos!",
@@ -833,9 +833,9 @@ _STRINGS = {
                              "inventing a secret passage or having an old friend show up.",
         "help.probe_title": "**Dice Rolls**",
         "help.probe_text": "When your action is risky or could fail, dice are rolled automatically:",
-        "help.probe_detail": "<b>2d6 + Attribute</b> vs <b>2d10</b><br>"
+        "help.probe_detail": "<b>d6 + Attribute</b> vs <b>2d10</b><br>"
                              "d6 = six-sided die, d10 = ten-sided. "
-                             "Your roll (max 10) needs to beat the d10s.",
+                             "Your roll needs to beat both d10s.",
         "help.results_title": "**Results**",
         "help.results_text": "Every roll has three possible outcomes:",
         "help.result_strong": "<b>Strong Hit</b>",

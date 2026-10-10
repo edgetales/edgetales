@@ -44,7 +44,7 @@ EdgeTales is a self-hosted, AI-driven solo tabletop RPG engine. Type what your c
 
 EdgeTales doesn't invent its own rules from scratch. It draws on proven, beloved tabletop systems and adapts them for AI-driven solo play:
 
-- **Action Roll (from Ironsworn / Starforged by Shawn Tomkin):** Roll 2d6 + a character stat, compare against two separate 2d10 challenge dice. Beat both = strong hit. Beat one = weak hit with a cost. Beat neither = miss. This two-dice challenge system creates a nuanced outcome space that the AI narrator uses to calibrate how well things go - not just pass/fail.
+- **Action Roll (from Ironsworn / Starforged by Shawn Tomkin):** Roll 1d6 + a character stat, compare against two separate d10 challenge dice. Beat both = strong hit. Beat one = weak hit with a cost. Beat neither = miss. This two-dice challenge system creates a nuanced outcome space that the AI narrator uses to calibrate how well things go - not just pass/fail.
 
 - **Stats / Character Attributes (from Ironsworn):** Five stats - Heart, Iron, Wits, Shadow, Edge - map to different approaches: social, forceful, careful, deceptive, fast. You distribute points between them at character creation, shaping what your character is good at.
 
@@ -222,7 +222,7 @@ Player types action
   full context vs. name-only in the narrator prompt
          │
          ▼
-  Dice rolled (2d6+stat vs 2d10)    ← action turns only
+  Dice rolled (d6+stat vs 2d10)     ← action turns only
   (dialog turns skip this step)
          │  result + full context including:
          │  · active threat clocks + urgency level
@@ -602,6 +602,6 @@ EdgeTales was conceptually inspired by V2.1 of the design document [Narrative RP
 
 EdgeTales builds on the creative work of these tabletop RPG designers:
 
-- **Shawn Tomkin** - [Ironsworn](https://www.ironswornrpg.com/) and [Starforged](https://www.ironswornrpg.com/product-ironsworn-starforged): Action roll system (2d6+stat vs 2d10), stats, momentum, fateful roll / match mechanic, NPC bonds. Ironsworn is free to use under a Creative Commons Attribution 4.0 license.
+- **Shawn Tomkin** - [Ironsworn](https://www.ironswornrpg.com/) and [Starforged](https://www.ironswornrpg.com/product-ironsworn-starforged): Action roll system (d6+stat vs 2d10), stats, momentum, fateful roll / match mechanic, NPC bonds. Ironsworn is free to use under a Creative Commons Attribution 4.0 license.
 - **Tana Pigeon** - [Mythic Game Master Emulator](https://www.wordmillgames.com/mythic-game-master-emulator.html): Chaos factor, the concept of emergent solo play driven by a dynamic tension tracker.
 - **John Harper** - [Blades in the Dark](https://bladesinthedark.com/): Position & Effect framework for assessing risk and narrative consequence before an action roll. Threat and progress clocks — EdgeTales extends the original concept with autonomous world-ticking and Director-driven narrative pressure.
