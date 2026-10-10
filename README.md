@@ -194,6 +194,7 @@ edgetales/
 ├── voice.py            # TTS/STT backends: EdgeTTS, Chatterbox, Whisper (framework-independent)
 ├── i18n.py             # All UI strings, labels, translations (DE + EN)
 ├── custom_head.html    # CSS, meta tags, PWA manifest injected at startup
+├── tests/              # Offline pytest suite (fake AI, no API key needed)
 │
 ├── config.json         # Server config: API key, invite code, HTTPS, port (chmod 600)
 ├── users/              # Per-user data (auto-created)
@@ -528,6 +529,19 @@ Environment=ANTHROPIC_API_KEY=sk-ant-YOUR-KEY-HERE
 
 ---
 
+
+## 🧪 Tests
+
+The engine ships with an offline test suite — every AI call is replaced by a deterministic fake, so no API key or network access is needed and no tokens are spent.
+
+```bash
+pip install pytest jsonschema
+python -m pytest tests -q
+```
+
+Covered: dice and consequences, the turn pipeline (including rollback when an API call fails mid-turn), momentum burn, `##` corrections, chapter transitions, save/load compatibility, user-name validation, structured-output schemas (NPC-ID enums and API limits) and DE/EN translation completeness.
+
+---
 
 ## 🤝 Contributing
 

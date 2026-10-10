@@ -9,8 +9,7 @@ Voice Module (Framework-Independent)
 import re
 import io
 import asyncio
-import tempfile
-import logging
+import threading
 import concurrent.futures
 from pathlib import Path
 from dataclasses import dataclass
@@ -128,11 +127,15 @@ class EdgeTTSBackend:
         if len(clean) > EDGE_TTS_MAX_TEXT_CHARS:
             cut = clean[:EDGE_TTS_MAX_TEXT_CHARS].rfind('.')
             clean = clean[:cut + 1] if cut > 0 else clean[:EDGE_TTS_MAX_TEXT_CHARS]
+        # Manual pool management: a `with ThreadPoolExecutor()` block calls
+        # shutdown(wait=True) on exit, which blocks until the hung synthesis finishes
+        # and makes the timeout below ineffective. shutdown(wait=False) lets us
+        # return immediately; the orphaned worker ends when edge-tts gives up.
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                audio = pool.submit(
-                    self._run_tts_in_thread, clean, voice, rate
-                ).result(timeout=EDGE_TTS_TIMEOUT_SEC)
+            audio = pool.submit(
+                self._run_tts_in_thread, clean, voice, rate
+            ).result(timeout=EDGE_TTS_TIMEOUT_SEC)
             if audio and len(audio) > 100:
                 return audio
             log("TTS: No audio data received.", level="warning")
@@ -144,6 +147,8 @@ class EdgeTTSBackend:
         except Exception as e:
             log(f"TTS error (edge-tts): {e}", level="warning")
             return None
+        finally:
+            pool.shutdown(wait=False)
 
 
 # ===============================================================
@@ -416,7 +421,6 @@ class ChatterboxBackend:
 
             wav_parts = []
             _silence_samples = int(self._model.sr * 0.3)
-            _silence = torch.zeros(1, _silence_samples)
 
             _t_total = _time.monotonic()
             for i, chunk in enumerate(chunks):
@@ -427,7 +431,10 @@ class ChatterboxBackend:
                       f"shape={wav.shape}")
                 wav_parts.append(wav)
                 if i < len(chunks) - 1:
-                    wav_parts.append(_silence)
+                    # Silence must live on the same device/dtype as the generated audio —
+                    # a CPU tensor here makes torch.cat fail on CUDA/MPS.
+                    wav_parts.append(torch.zeros(1, _silence_samples,
+                                                 dtype=wav.dtype, device=wav.device))
 
             final_wav = wav_parts[0] if len(wav_parts) == 1 else torch.cat(wav_parts, dim=1)
 
@@ -505,6 +512,10 @@ class VoiceEngine:
     def __init__(self):
         self._whisper_model = None
         self._whisper_size = None
+        # Serialises Whisper model (re)loading and transcription: the singleton
+        # engine is shared across browser tabs, and faster-whisper models are not
+        # safe to load twice concurrently on a memory-constrained Pi.
+        self._whisper_lock = threading.Lock()
         self._edge_tts = EdgeTTSBackend()
         self._chatterbox = None  # Lazy: only created when first needed
 
@@ -553,7 +564,11 @@ class VoiceEngine:
         return self._get_backend(config.tts_backend).audio_format
 
     def speech_to_text(self, audio_bytes: bytes, config: VoiceConfig) -> str:
-        """Transcribe audio to text using Whisper."""
+        """Transcribe audio to text using Whisper (thread-safe)."""
+        with self._whisper_lock:
+            return self._speech_to_text_locked(audio_bytes, config)
+
+    def _speech_to_text_locked(self, audio_bytes: bytes, config: VoiceConfig) -> str:
         model_size = config.whisper_size
         if self._whisper_model is None or self._whisper_size != model_size:
             try:

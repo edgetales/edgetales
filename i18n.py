@@ -158,6 +158,7 @@ _STRINGS = {
         "user.yes": "Ja",
         "user.no": "Nein",
         "user.exists": 'Spieler "{name}" existiert bereits.',
+        "user.invalid_name": "Ungültiger Name — bitte keine Sonderzeichen wie / \\ : * ? \" < > | und keinen führenden Punkt verwenden.",
         "user.api_hint": "API Key nach Spielerauswahl in den Einstellungen hinterlegen.",
         "user.api_missing": "Bitte API Key in den Einstellungen eingeben.",
 
@@ -378,6 +379,7 @@ _STRINGS = {
         "gameover.chapter_msg": "Kapitel {n}...",
         "gameover.flavor": "{name} liegt reglos. Die Geschichte verstummt.",
         "gameover.flavor_kid": "Das war ein hartes Abenteuer — aber jedes Ende ist ein neuer Anfang.",
+        "gameover.overlay_title": "ABENTEUER ZU ENDE",
 
         # Epilogue
         "epilogue.offer_title": "Die Geschichte hat ihr Ziel erreicht",
@@ -561,6 +563,7 @@ _STRINGS = {
         "user.yes": "Yes",
         "user.no": "No",
         "user.exists": 'Player "{name}" already exists.',
+        "user.invalid_name": "Invalid name — please avoid special characters like / \\ : * ? \" < > | and a leading dot.",
         "user.api_hint": "Set your API key in the settings after selecting a player.",
         "user.api_missing": "Please enter your API key in the settings.",
 
@@ -782,6 +785,7 @@ _STRINGS = {
         "gameover.chapter_msg": "Chapter {n}...",
         "gameover.flavor": "{name} lies still. The story falls silent.",
         "gameover.flavor_kid": "That was a tough adventure — but every ending is a new beginning.",
+        "gameover.overlay_title": "ADVENTURE OVER",
 
         # Epilogue
         "epilogue.offer_title": "The story has reached its conclusion",
