@@ -175,6 +175,8 @@ Player Input
 
 `call_story_architect()` runs at game start and chapter start. Runs **in parallel** with the opening Narrator via `concurrent.futures.ThreadPoolExecutor(max_workers=2)` — halves startup wait (~15s vs ~30s). Thread receives a `copy.copy(game)` snapshot to prevent race conditions from `parse_narrator_response()` mutations.
 
+**Retry**: an answer with too few acts or unparseable JSON gets one more attempt with an explicit correction (`ARCHITECT_ATTEMPTS = 2`) before the generic context-aware fallback blueprint; API errors go straight to the fallback.
+
 **Output**: Story blueprint with `central_conflict`, `antagonist_force`, `thematic_thread`, Acts (3-act or Kishōtenketsu) with `transition_trigger` per act, revelations, and possible endings.
 
 **3-act prompt key rules**: (1) anti-escalation — confrontation→climax trigger must be a REFRAMING EVENT (a concrete discovery, confession or act); all triggers must be OBSERVABLE on the page; (2) dual-layer `central_conflict` (SURFACE + HIDDEN); (3) `thematic_thread` as a genuine open philosophical question; (4) at least one revelation must recontextualize something already seen.
