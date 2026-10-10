@@ -154,3 +154,123 @@ def test_act_transition_after_min_scenes_is_recorded(game):
     game.scene_count = 1 + E.ACT_MIN_SCENES
     E._apply_director_guidance(game, _guidance())
     assert game.story_blueprint["triggered_transitions"] == ["act_0"]
+
+
+# --- stale location -----------------------------------------------------------------
+
+def test_scenes_at_location_counts_and_resets_on_move(game):
+    game.current_location = "Hafenkneipe"
+    game.scenes_at_location = 0
+    E._apply_narrator_metadata(game, make_metadata())
+    E._apply_narrator_metadata(game, make_metadata())
+    assert game.scenes_at_location == 2
+    E._apply_narrator_metadata(game, make_metadata(location_update="Lagerhaus 7"))
+    assert game.current_location == "Lagerhaus 7" and game.scenes_at_location == 0
+
+
+def test_brain_move_counts_the_new_scene(game):
+    game.current_location = "Hafenkneipe"
+    game.scenes_at_location = 6
+    E._apply_brain_location_time(game, {"location_change": "Lagerhaus 7"})
+    E._apply_narrator_metadata(game, make_metadata())
+    assert game.scenes_at_location == 1
+
+
+def test_qualifier_variant_is_not_a_move(game):
+    game.current_location = "Hafenkneipe"
+    game.scenes_at_location = 3
+    E._apply_narrator_metadata(game, make_metadata(location_update="Hafenkneipe in Hamburg"))
+    assert game.scenes_at_location == 4
+
+
+def test_location_stale_hint_in_narrator_and_director(game):
+    game.current_location = "Hafenkneipe"
+    game.scenes_at_location = E.LOCATION_STALE_THRESHOLD - 1
+    assert "<location_stale" not in E._loc_hist(game)
+    assert 'stale_scenes' not in E.build_director_prompt(game, "Text").split("<scene_history>")[0]
+    game.scenes_at_location = E.LOCATION_STALE_THRESHOLD
+    assert f'<location_stale scenes="{E.LOCATION_STALE_THRESHOLD}">' in E._loc_hist(game)
+    assert (f'<current_location stale_scenes="{E.LOCATION_STALE_THRESHOLD}">Hafenkneipe'
+            in E.build_director_prompt(game, "Text"))
+
+
+# --- chaos damping ------------------------------------------------------------------
+
+def test_strong_hit_lowers_chaos_only_with_chance(game, monkeypatch):
+    game.chaos_factor = 5
+    monkeypatch.setattr(E.random, "random", lambda: E.CHAOS_STRONG_HIT_DROP_CHANCE)
+    E.update_chaos_factor(game, "STRONG_HIT")
+    assert game.chaos_factor == 5
+    monkeypatch.setattr(E.random, "random", lambda: 0.0)
+    E.update_chaos_factor(game, "STRONG_HIT")
+    assert game.chaos_factor == 4
+
+
+def test_chaos_bounds(game, monkeypatch):
+    monkeypatch.setattr(E.random, "random", lambda: 0.0)
+    game.chaos_factor = 3
+    E.update_chaos_factor(game, "STRONG_HIT")
+    assert game.chaos_factor == 3
+    game.chaos_factor = 9
+    E.update_chaos_factor(game, "MISS")
+    assert game.chaos_factor == 9
+    E.update_chaos_factor(game, "WEAK_HIT")
+    assert game.chaos_factor == 9
+
+
+def test_act_transition_check_precedes_boolean_and_is_kept(game):
+    props = list(E.DIRECTOR_OUTPUT_SCHEMA["properties"])
+    assert props.index("act_transition_check") == props.index("act_transition") - 1
+    assert "act_transition_check" in E.DIRECTOR_OUTPUT_SCHEMA["required"]
+    game.scene_count = 1 + E.ACT_MIN_SCENES
+    E._apply_director_guidance(game, _guidance(act_transition_check="Core event happened in scene 3."))
+    assert game.director_guidance["act_transition_check"] == "Core event happened in scene 3."
+    assert game.story_blueprint["triggered_transitions"] == ["act_0"]
+
+
+# --- act trigger due ----------------------------------------------------------------
+
+def test_act_trigger_due_window(game):
+    game.scene_count = 6 - E.ACT_TRIGGER_DUE_SCENES - 1      # before the window
+    assert E._act_trigger_due(game) is None
+    game.scene_count = 6 - E.ACT_TRIGGER_DUE_SCENES          # window opens
+    assert E._act_trigger_due(game) == "act_0"
+    game.story_blueprint["triggered_transitions"] = ["act_0"]
+    assert E._act_trigger_due(game) is None                   # already transitioned
+
+
+def test_act_trigger_due_never_for_final_act(game):
+    game.scene_count = 15                                      # climax act, no trigger
+    assert E._act_trigger_due(game) is None
+
+
+def test_act_due_director_fires_once_per_act(game):
+    game.scene_count = 5                                       # odd → no interval run
+    reason = E._should_call_director(game)
+    assert reason == "act_due:act_0"
+    E._mark_director_reason(game, reason)
+    assert "due:act_0" in game.story_blueprint["triggered_director_phases"]
+    assert E._should_call_director(game) is None
+
+
+def test_due_trigger_marked_in_director_prompt(game):
+    game.scene_count = 2
+    assert '<transition_trigger act="1">' in E.build_director_prompt(game, "Text")
+    game.scene_count = 5
+    assert '<transition_trigger act="1" due="true">' in E.build_director_prompt(game, "Text")
+
+
+def test_mark_director_reason_phase_and_others(game):
+    E._mark_director_reason(game, "phase:climax")
+    E._mark_director_reason(game, "interval")
+    E._mark_director_reason(game, None)
+    assert game.story_blueprint["triggered_director_phases"] == ["climax"]
+
+
+def test_due_trigger_reaches_narrator_story_block(game):
+    game.story_blueprint["acts"][0]["transition_trigger"] = "Elin findet den Schlüssel."
+    game.scene_count = 2
+    assert "<act_turning_point>" not in E._story_context_block(game)
+    game.scene_count = 5
+    block = E._story_context_block(game)
+    assert "<act_turning_point>" in block and "Elin findet den Schlüssel." in block

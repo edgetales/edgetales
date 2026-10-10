@@ -11,13 +11,13 @@ def _write_cfg(**cfg):
     E.GLOBAL_CONFIG_FILE.write_text(json.dumps(cfg), encoding="utf-8")
 
 
-def test_defaults_without_config_keep_previous_behaviour():
+def test_defaults_without_config():
     assert E.model_for("narrator") == E.NARRATOR_MODEL
     assert E.model_for("brain") == E.BRAIN_MODEL
     kw, role = E._apply_model_settings({"model": E.NARRATOR_MODEL, "max_tokens": 10})
     assert role == "narrator"
     assert kw["model"] == E.NARRATOR_MODEL
-    assert "output_config" not in kw and "thinking" not in kw
+    assert kw["output_config"] == {"effort": "high"} and "thinking" not in kw
 
 
 def test_config_file_maps_roles_and_merges_output_config():
@@ -40,7 +40,14 @@ def test_config_file_maps_roles_and_merges_output_config():
 def test_invalid_values_are_ignored():
     _write_cfg(narrator_effort="turbo", narrator_thinking="always", narrator_model="  ")
     s = E.get_model_settings()["narrator"]
-    assert s == {"model": E.NARRATOR_MODEL, "effort": None, "thinking": None}
+    assert s == {"model": E.NARRATOR_MODEL, "effort": "high", "thinking": None}
+
+
+def test_role_defaults_without_config():
+    _write_cfg()
+    st = E.get_model_settings()
+    assert st["narrator"] == {"model": "claude-sonnet-5-5", "effort": "high", "thinking": None}
+    assert st["brain"] == {"model": "claude-haiku-5-5", "effort": None, "thinking": "disabled"}
 
 
 def test_explicit_model_id_passes_through():

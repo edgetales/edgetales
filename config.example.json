@@ -6,5 +6,11 @@
   "ssl_certfile": "",
   "ssl_keyfile": "",
   "port": 8080,
-  "default_ui_lang": "en"
+  "default_ui_lang": "en",
+  "narrator_model": "claude-sonnet-5-5",
+  "narrator_effort": "high",
+  "narrator_thinking": "",
+  "brain_model": "claude-haiku-5-5",
+  "brain_effort": "",
+  "brain_thinking": "disabled"
 }

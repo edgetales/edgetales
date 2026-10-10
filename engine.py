@@ -67,7 +67,7 @@ except ImportError:
 
 VERSION = "0.9.96"
 BRAIN_MODEL = "claude-haiku-5-5"
-NARRATOR_MODEL = "claude-sonnet-4-6"
+NARRATOR_MODEL = "claude-sonnet-5-5"
 _SCRIPT_DIR = Path(__file__).resolve().parent
 USERS_DIR = _SCRIPT_DIR / "users"
 USERS_DIR.mkdir(exist_ok=True)
@@ -133,6 +133,7 @@ MAX_ACTIVE_CLOCKS = 6              # Hard cap; Director cannot add clocks beyond
 ARC_MAX_CHARS = 300                # NPC arc length; longer Director arcs are trimmed at a sentence end
 LOCATION_MAX_CHARS = 40            # Longer location strings are cut to a short place label
 ACT_MIN_SCENES = 2                 # Director act_transition is ignored earlier than this many scenes into an act's range
+ACT_TRIGGER_DUE_SCENES = 2         # Within this many scenes of an act's range end, the trigger is "due": the Director runs once and steers toward it
 NPC_STALE_SCENES = 8               # Scenes without any memory update before retirement-eligible
 MAX_NPC_MEMORY_ENTRIES = 25        # Per NPC (total: observations + reflections)
 MAX_NPC_OBSERVATIONS = 15          # Max observation memories per NPC
@@ -309,6 +310,10 @@ DIRECTOR_OUTPUT_SCHEMA = {
             },
         },
         "arc_notes": {"type": "string"},
+        # Evidence sentence generated BEFORE the boolean — without it, smaller
+        # models answered act_transition=false by default even when their own
+        # arc_notes described the trigger as fulfilled.
+        "act_transition_check": {"type": "string"},
         "act_transition": {"type": "boolean"},
         "new_clocks": {
             # Director-proposed threat clocks for genuinely new mid-game dangers.
@@ -334,8 +339,8 @@ DIRECTOR_OUTPUT_SCHEMA = {
         },
     },
     "required": ["scene_summary", "narrator_guidance", "npc_guidance",
-                  "pacing", "npc_reflections", "arc_notes", "act_transition",
-                  "new_clocks"],
+                  "pacing", "npc_reflections", "arc_notes", "act_transition_check",
+                  "act_transition", "new_clocks"],
     "additionalProperties": False,
 }
 
@@ -3306,6 +3311,7 @@ class GameState:
     time_of_day: str = ""      # Coarse time: "early_morning","morning","midday","afternoon","evening","late_evening","night","deep_night"
     time_unchanged_scenes: int = 0   # Transient: scenes elapsed without a time_of_day change (not persisted)
     location_history: list = field(default_factory=list)  # Last 3 locations for continuity
+    scenes_at_location: int = 0      # Scenes played at current_location since the last real move
     # v5.9: Epilogue system
     epilogue_shown: bool = False      # True after epilogue has been generated
     epilogue_dismissed: bool = False   # True if player chose "continue playing" instead of epilogue
@@ -3336,13 +3342,21 @@ class RollResult:
 # CHAOS FACTOR SYSTEM
 # ===============================================================
 
+# Probability that a STRONG_HIT lowers the chaos factor by one. Strict Mythic
+# lowers it on every success, which pins chaos at the minimum (0% interrupt
+# chance) after two or three strong hits and drains tension from successful runs.
+CHAOS_STRONG_HIT_DROP_CHANCE = 0.5
+
+
 def update_chaos_factor(game: GameState, result: str):
-    """Adjust chaos factor based on roll result."""
+    """Adjust chaos factor based on roll result.
+    MISS: +1 (max 9). STRONG_HIT: -1 (min 3) with CHAOS_STRONG_HIT_DROP_CHANCE.
+    WEAK_HIT: no change."""
     if result == "MISS":
         game.chaos_factor = min(9, game.chaos_factor + 1)
     elif result == "STRONG_HIT":
-        game.chaos_factor = max(3, game.chaos_factor - 1)
-    # WEAK_HIT: no change
+        if game.chaos_factor > 3 and random.random() < CHAOS_STRONG_HIT_DROP_CHANCE:
+            game.chaos_factor -= 1
 
 
 def check_chaos_interrupt(game: GameState) -> Optional[str]:
@@ -3389,6 +3403,11 @@ def _is_forward_time(old: str, new: str) -> bool:
 # Narrator prompt and Director context.  Chosen to be earlier than the Elvira
 # violation threshold (10) so the engine self-corrects before the warning fires.
 TIME_STALE_THRESHOLD = 5
+
+# Scenes at the same location before the Narrator is asked to open a natural path
+# elsewhere and the Director gets a LOCATION RULE. The player still decides
+# whether to move — the engine never relocates the character on its own.
+LOCATION_STALE_THRESHOLD = 5
 
 # TIME_LABELS (display) are now in i18n.py
 
@@ -3485,6 +3504,7 @@ def update_location(game: GameState, new_location: str):
             game.location_history.append(game.current_location)
         game.location_history = game.location_history[-5:]
     game.current_location = new_location
+    game.scenes_at_location = 0
 
 
 def _apply_brain_location_time(game: GameState, brain: dict):
@@ -3549,7 +3569,7 @@ _SNAPSHOT_SCALAR_FIELDS = (
     "scene_count", "chaos_factor", "crisis_mode", "game_over",
     "epilogue_shown", "epilogue_dismissed",
     "current_location", "current_scene_context",
-    "time_of_day", "time_unchanged_scenes",
+    "time_of_day", "time_unchanged_scenes", "scenes_at_location",
 )
 # Mutable containers — deep-copied on snapshot AND on restore.
 _SNAPSHOT_DEEP_FIELDS = (
@@ -4091,12 +4111,27 @@ def _story_context_block(game: GameState) -> str:
             f'</revelation_ready>'
         )
 
+    # Due act trigger: hand the turning point to the Narrator directly. Director
+    # guidance alone was crowded out by other rules (time, location), so the
+    # act's core event never reached the page and acts only advanced via scene_range.
+    trigger_block = ""
+    if _act_trigger_due(game):
+        trigger_block = (
+            f'\n<act_turning_point>This act is about to end and its turning point has not'
+            f' happened yet: {html.escape(act.get("transition_trigger", ""))} Move this scene'
+            f' toward it as a concrete on-page moment the character can act on (plant the'
+            f' find, bring the confrontation, put the decision in front of them). If the'
+            f' player\'s action reaches it, let it happen fully on the page. Never make the'
+            f' player\'s choices for them.</act_turning_point>'
+        )
+
     return (
         f'<story_arc structure="{_xa(structure)}" act="{act["act_number"]}/{act["total_acts"]}"'
         f' phase="{_xa(act["phase"])}" progress="{act["progress"]}" mood="{_xa(act.get("mood",""))}"'
         f' conflict="{_xa(bp.get("central_conflict",""))}" act_goal="{_xa(act.get("goal",""))}"'
         f'{thematic_attr}/>'
         f'{rev_block}'
+        f'{trigger_block}'
         f'{ending_hint}\n'
     )
 
@@ -4261,6 +4296,8 @@ _ROLE_DEFAULT_MODEL = {"narrator": NARRATOR_MODEL, "brain": BRAIN_MODEL}
 # Role defaults applied when config.json leaves the option empty. The brain role
 # runs many short structured calls per turn — thinking only adds latency there.
 _ROLE_DEFAULT_THINKING = {"brain": "disabled"}
+# Narration quality benefits from high effort; the brain role keeps the API default.
+_ROLE_DEFAULT_EFFORT = {"narrator": "high"}
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 THINKING_MODES = ("disabled", "adaptive", "between_tools")
 
@@ -4278,8 +4315,7 @@ def configure_models(cfg: Optional[dict] = None) -> dict:
     for role in MODEL_ROLES:
         model = str(cfg.get(f"{role}_model") or "").strip() or _ROLE_DEFAULT_MODEL[role]
         effort = str(cfg.get(f"{role}_effort") or "").strip().lower() or None
-        thinking = (str(cfg.get(f"{role}_thinking") or "").strip().lower()
-                    or _ROLE_DEFAULT_THINKING.get(role))
+        thinking = str(cfg.get(f"{role}_thinking") or "").strip().lower() or None
         if effort and effort not in EFFORT_LEVELS:
             log(f"[Models] Ignoring invalid {role}_effort '{effort}' "
                 f"(allowed: {', '.join(EFFORT_LEVELS)})", level="warning")
@@ -4288,6 +4324,9 @@ def configure_models(cfg: Optional[dict] = None) -> dict:
             log(f"[Models] Ignoring invalid {role}_thinking '{thinking}' "
                 f"(allowed: {', '.join(THINKING_MODES)})", level="warning")
             thinking = None
+        # Empty or invalid values fall back to the role default (None = API default).
+        effort = effort or _ROLE_DEFAULT_EFFORT.get(role)
+        thinking = thinking or _ROLE_DEFAULT_THINKING.get(role)
         settings[role] = {"model": model, "effort": effort, "thinking": thinking}
     _MODEL_SETTINGS = settings
     _REJECTED_OPTIONS.clear()
@@ -4726,7 +4765,7 @@ def call_story_architect(client: anthropic.Anthropic, game: GameState,
 - Ten (Twist): A surprising PERSPECTIVE SHIFT {E['dash']} not conflict escalation, but something seemingly unrelated that recontextualizes everything. This is the heart of Kishōtenketsu.
 - Ketsu (Resolution): Reconcile the new understanding with what came before
 - Each act has a GOAL the player should work toward, not a script
-- Each act has a TRANSITION_TRIGGER: a narrative condition that signals this act is complete and the next should begin. This is a PLAYER ACTION or STORY EVENT, not a scene number. Example: "The player discovers the truth about the shrine" or "The protagonist's daily routine is disrupted by an outsider". The scene_range is a fallback estimate; the trigger is the real boundary.
+- Each act has a TRANSITION_TRIGGER: a narrative condition that signals this act is complete and the next should begin. This is a PLAYER ACTION or STORY EVENT, not a scene number. Example: "The player discovers the truth about the shrine" or "The protagonist's daily routine is disrupted by an outsider". The scene_range is a fallback estimate; the trigger is the real boundary. The trigger must be OBSERVABLE ON THE PAGE: something that visibly happens, is found, said or decided in a scene {E['dash']} never a purely inner realization, feeling or understanding, because nobody can tell when a thought has "happened". BAD: "The protagonist realizes the attack was a test". GOOD: "The protagonist finds the log entry proving the attack was a test". It must be ONE single event {E['dash']} not a chain of several required steps joined by "and" (BAD: "finds the file, deletes it, and sees the alarm go off").
 - Include a THEMATIC_THREAD: the emotional/philosophical question that runs through the entire chapter as a vertical narrative layer. This connects to character_growth from previous chapters if available.
 - Include 2-3 key revelations that can be woven in at appropriate moments
 - Define 2-3 possible endings (harmony, bittersweet, melancholy)
@@ -4745,8 +4784,8 @@ def call_story_architect(client: anthropic.Anthropic, game: GameState,
   Confrontation: Deepen and complicate. Plant evidence that challenges the initial frame, even if the player cannot yet see the full picture.
   Climax: Force a REFRAMING {E['dash']} the resolution must answer a different question than Act 1 appeared to pose. Not just "does the protagonist win?" but "what does winning actually mean now?"
 - Each act has a GOAL the player should work toward, not a script
-- Each act has a TRANSITION_TRIGGER: a narrative condition that signals this act is complete and the next should begin. This is a PLAYER ACTION or STORY EVENT, not a scene number. Example: "Mike decides to cooperate with the authorities" or "The first repair attempt fails spectacularly". The scene_range is a fallback estimate; the trigger is the real boundary.
-- The confrontation{E['arrow_r']}climax TRANSITION_TRIGGER must be a REFRAMING EVENT {E['dash']} not merely an escalation of existing tension, but a discovery or realization that changes what the conflict is fundamentally about.
+- Each act has a TRANSITION_TRIGGER: a narrative condition that signals this act is complete and the next should begin. This is a PLAYER ACTION or STORY EVENT, not a scene number. Example: "Mike decides to cooperate with the authorities" or "The first repair attempt fails spectacularly". The scene_range is a fallback estimate; the trigger is the real boundary. The trigger must be OBSERVABLE ON THE PAGE: something that visibly happens, is found, said or decided in a scene {E['dash']} never a purely inner realization, feeling or understanding, because nobody can tell when a thought has "happened". BAD: "The protagonist realizes the attack was a test". GOOD: "The protagonist finds the log entry proving the attack was a test". It must be ONE single event {E['dash']} not a chain of several required steps joined by "and" (BAD: "finds the file, deletes it, and sees the alarm go off").
+- The confrontation{E['arrow_r']}climax TRANSITION_TRIGGER must be a REFRAMING EVENT {E['dash']} not merely an escalation of existing tension, but a concrete discovery, confession or act that changes what the conflict is fundamentally about.
 - central_conflict must have a SURFACE LAYER (what the conflict appears to be at the start) and a HIDDEN LAYER (what it turns out to actually be about). The hidden layer should emerge through Act 2 revelations and reframe the climax.
 - THEMATIC_THREAD: A genuine open philosophical question {E['dash']} not a label ("loyalty") but an unresolved question ("Can loyalty survive when the person you are loyal to may not exist?"). It must surface implicitly in Act 1, be challenged in Act 2, and be CONFRONTED {E['dash']} not necessarily resolved {E['dash']} in Act 3.
 - Include 2-3 key revelations that can be woven in at appropriate moments. At least one must be a PERCEPTION SHIFT {E['dash']} it changes how the player understands something already seen, not just adds new information.
@@ -5680,7 +5719,9 @@ def _apply_narrator_metadata(game: GameState, metadata: dict,
     else:
         log("[Metadata] scene_context empty — current_scene_context unchanged", level="warning")
 
-    # Location update
+    # Location update — count this scene at the current place first; a real move
+    # (here or via the Brain before the Narrator) resets the counter.
+    game.scenes_at_location += 1
     new_loc = metadata.get("location_update")
     if new_loc and new_loc.strip().lower() not in ("none", "null", "same", ""):
         update_location(game, new_loc.strip())
@@ -5976,6 +6017,44 @@ Instead: surface consequences of past events, develop NPC relationships, introdu
 organic new tensions. Think "Season 2 setup", not "Season 1 finale". """
 
 
+def _act_trigger_due(game: GameState) -> Optional[str]:
+    """Act id (e.g. "act_1") whose transition_trigger is due, else None.
+    Due = the current act has a trigger, is not the final act, has not been
+    triggered yet, and the story is within ACT_TRIGGER_DUE_SCENES scenes of the
+    act's scene_range end. Without steering, triggers phrased as story events were
+    rarely produced on the page and acts only advanced via the scene-range fallback."""
+    bp = game.story_blueprint or {}
+    acts = bp.get("acts") or []
+    if not acts or bp.get("story_complete"):
+        return None
+    act = get_current_act(game)
+    idx = act.get("act_number", 1) - 1
+    if idx >= len(acts) - 1 or not act.get("transition_trigger"):
+        return None
+    act_id = f"act_{idx}"
+    if act_id in (bp.get("triggered_transitions") or []):
+        return None
+    sr = _safe_sr(act, fallback_start=1)
+    if 0 <= sr[1] - game.scene_count <= ACT_TRIGGER_DUE_SCENES:
+        return act_id
+    return None
+
+
+def _mark_director_reason(game: GameState, reason: Optional[str]) -> None:
+    """Record once-only Director reasons so _should_call_director() does not re-fire
+    them: "phase:<phase>" → "<phase>", "act_due:<act_id>" → "due:<act_id>" in
+    story_blueprint["triggered_director_phases"] (restored by turn snapshots)."""
+    if not reason or game.story_blueprint is None:
+        return
+    if reason.startswith("phase:"):
+        key = reason[len("phase:"):]
+    elif reason.startswith("act_due:"):
+        key = "due:" + reason[len("act_due:"):]
+    else:
+        return
+    game.story_blueprint.setdefault("triggered_director_phases", []).append(key)
+
+
 def _should_call_director(game: GameState, roll_result: str = "",
                           chaos_used: bool = False,
                           new_npcs_found: bool = False,
@@ -6016,6 +6095,11 @@ def _should_call_director(game: GameState, roll_result: str = "",
             already_fired = set(game.story_blueprint.get("triggered_director_phases") or [])
             if phase not in already_fired:
                 return f"phase:{phase}"
+        # Act trigger due → run once per act so the Director can steer toward it.
+        # _mark_director_reason() records "due:<act_id>" in triggered_director_phases.
+        due = _act_trigger_due(game)
+        if due and f"due:{due}" not in (game.story_blueprint.get("triggered_director_phases") or []):
+            return f"act_due:{due}"
 
     # 4. Regular interval
     if game.scene_count > 0 and game.scene_count % DIRECTOR_INTERVAL == 0:
@@ -6125,8 +6209,9 @@ def build_director_prompt(game: GameState, latest_narration: str,
             story_info += f' thematic_thread="{_xa(thematic)}"'
         story_info += '/>'
         if transition_trigger:
+            _due_attr = ' due="true"' if _act_trigger_due(game) else ""
             story_info += (
-                f'\n<transition_trigger act="{act["act_number"]}">'
+                f'\n<transition_trigger act="{act["act_number"]}"{_due_attr}>'
                 f'{html.escape(transition_trigger)}</transition_trigger>'
             )
 
@@ -6176,6 +6261,12 @@ def build_director_prompt(game: GameState, latest_narration: str,
         _time_block = f'\n<current_time{_stale_attr}>{html.escape(game.time_of_day)}</current_time>'
     else:
         _time_block = ""
+    if game.current_location:
+        _loc_stale = game.scenes_at_location
+        _loc_attr = (f' stale_scenes="{_loc_stale}"'
+                     if _loc_stale >= LOCATION_STALE_THRESHOLD else "")
+        _time_block += (f'\n<current_location{_loc_attr}>'
+                        f'{html.escape(game.current_location)}</current_location>')
 
     return f"""<setting genre="{_xa(game.setting_genre)}" tone="{_xa(game.setting_tone)}"/>{_time_block}
 
@@ -6203,7 +6294,7 @@ TONE RULE: narrator_guidance and npc_guidance MUST honor the story's tone ("{_xa
 
 Field instructions:
 - scene_summary: 2-3 sentence summary of what happened and WHY it matters (in {lang})
-- narrator_guidance: Specific direction for the next 1-2 scenes (in {lang}). When relevant, anchor the guidance to the thematic_thread from <story_arc> — surface the aspect of it most alive in the current moment. TIME RULE: If <current_time stale_scenes> is present in context, time of day has not visibly advanced for that many scenes — your narrator_guidance MUST include a directive to anchor the next scene with at least one concrete atmospheric time cue (a shift in light quality, temperature, or ambient sound). FINAL ACT RULE: When phase is "ketsu_resolution" or "resolution", the insight and revelation phase is over. narrator_guidance MUST push toward a concrete, irreversible action or choice — not toward further reflection on what has already been established. Each scene in the final act should change something permanently: a decision made, a door closed, a relationship transformed. If the player has been circling the same existential question for two or more scenes, name that directly in your guidance and force a new variable into the scene.
+- narrator_guidance: Specific direction for the next 1-2 scenes (in {lang}). When relevant, anchor the guidance to the thematic_thread from <story_arc> — surface the aspect of it most alive in the current moment. TIME RULE: If <current_time stale_scenes> is present in context, time of day has not visibly advanced for that many scenes — your narrator_guidance MUST include a directive to anchor the next scene with at least one concrete atmospheric time cue (a shift in light quality, temperature, or ambient sound). LOCATION RULE: If <current_location stale_scenes> is present, the story has stayed at one place for that many scenes — your narrator_guidance MUST name a concrete reason or opportunity to move to a different place (a lead, a summons, a threat, a need), unless the current confrontation must resolve there first. The player decides whether to go. TRIGGER RULE: If <transition_trigger due="true"> is present and act_transition is false, the act is about to end without its core event — your narrator_guidance MUST steer the next scene toward that core event as a concrete on-page moment (a discovery, a confrontation, a confession, an arrival or a decision put to the player), in the established tone and without making the player's choice for them. FINAL ACT RULE: When phase is "ketsu_resolution" or "resolution", the insight and revelation phase is over. narrator_guidance MUST push toward a concrete, irreversible action or choice — not toward further reflection on what has already been established. Each scene in the final act should change something permanently: a decision made, a door closed, a relationship transformed. If the player has been circling the same existential question for two or more scenes, name that directly in your guidance and force a new variable into the scene.
 - npc_guidance: Array of {{"npc_id": "npc_1", "guidance": "what this NPC should do/feel next"}} — guidance text in {lang}
 - pacing: one of tension_rising, building, climax, breather, resolution
 - npc_reflections: Only for NPCs listed in <reflect> tags. NPCs with status=lore or status=deceased appear in the overview for context only — NEVER include them in npc_reflections. Each object has:
@@ -6219,10 +6310,8 @@ Field instructions:
   - instinct: NPC's psychological signature under real pressure (max 8 words, only if needs_profile="true"), null otherwise. NOT job demeanor or genre convention — the specific human underneath: what they do when their strategy fails, what betrays them, what is slightly irrational but inevitable. BAD: "stays calm under pressure" / "methodical and efficient" / "evaluates before acting". GOOD: "goes quiet and hyper-precise when cornered" / "agrees then quietly does what he intended" / "dark humor until something breaks, then overcorrects". Base on this NPC's description and story observations. IMPORTANT: instinct is set ONCE (first reflection, needs_profile=true) and never updated — it is the NPC's wiring, not their mood.
   - disposition_shift: Set to "improve" or "worsen" ONLY when the NPC's accumulated story arc clearly justifies a one-step organic change in their relationship to the player — e.g. an NPC who has consistently helped and trusted over many scenes should shift from neutral to friendly, or a betrayal should shift from friendly to neutral. This is NOT a reward for a single good roll; it reflects a relationship that has genuinely changed through narrative accumulation. Leave null in the vast majority of cases. One step only per reflection. The direction must match the tone of the reflection.
 - arc_notes: Brief story arc progress observation
-- act_transition: Evaluate whether the current act's <transition_trigger> has been fulfilled by recent events. Set to true if:
-  (a) the trigger's core condition has been substantially met — the story has clearly moved into the situation the trigger describes, even if not every detail matches (do not wait for a perfect match), OR
-  (b) the story has moved PAST the act's scene_range (PAST_RANGE="true") and the trigger's spirit has been approximately met.
-  Set to false only if the trigger condition is clearly unmet AND we are still within scene_range. The scene_range is a fallback — content-driven transitions via this flag produce better pacing.
+- act_transition_check: One sentence (in English) written BEFORE deciding act_transition. Name the CORE EVENT of <transition_trigger> — the single central story development it describes, ignoring secondary details, exact wording and named specifics — then state in which recent scene (<scene_history> or <latest_scene>) that core event happened in any form, or what is still missing. Empty string if there is no <transition_trigger>.
+- act_transition: true if act_transition_check found the core event in the story, even partially, in different words, or via other characters or means than the trigger names (do not wait for a perfect match). If the trigger lists several elements, the act turns once its central discovery or decision has happened — the elements may be spread over several scenes, and secondary details (exact numbers, follow-up steps) are not required. Also true if PAST_RANGE="true" and the trigger's spirit has been approximately met. false only if the core event has clearly not happened yet. Your arc_notes and act_transition must agree: if arc_notes describe the trigger's situation as reached, act_transition is true. The scene_range is only a fallback — content-driven transitions produce better pacing.
 - new_clocks: Propose new threat clocks ONLY when ALL conditions are met: (1) a concrete new danger has emerged in the last 1-2 scenes that is NOT already tracked by an existing clock in <clocks>, (2) the threat is specific enough to have a concrete, narratively meaningful trigger_description (what happens when the clock fills), (3) the threat is genuinely new — not a re-framing of an existing one. Leave this array EMPTY when any condition is unmet. When creating a clock: name (short, evocative), clock_type ("threat" or "scheme"), segments (4–8 based on urgency — 4 for imminent, 6 for medium, 8 for slow-burn), filled (1 to show the threat has already begun, 0 only if it is entirely latent), trigger_description (the concrete consequence when filled), owner ("world" or the NPC name driving this threat). Maximum 2 new clocks per Director run — default is empty array.{clock_cap_rule}
 
 If a <reflect> tag has a last_reflection attribute, write a NEW insight that builds on, deepens, or contradicts it. Do NOT repeat the same theme or emotional tone. If last_tone is present, use it as the emotional register to evolve from — the texture and arc direction of the previous state. If last_tone_key is present, use it as the enum category to move away from when choosing the new tone_key (avoid repeating the identical value unless deliberate stagnation is the point).
@@ -6305,6 +6394,7 @@ def _apply_director_guidance(game: GameState, guidance: dict):
         "pacing":            guidance.get("pacing", ""),
         "arc_notes":         guidance.get("arc_notes", ""),
         "act_transition":    guidance.get("act_transition"),
+        "act_transition_check": guidance.get("act_transition_check", ""),
         "npc_reflections": [
             {
                 "npc_id":           r.get("npc_id", ""),
@@ -6322,6 +6412,9 @@ def _apply_director_guidance(game: GameState, guidance: dict):
 
     # Handle act transition: Director signals that the current act's
     # transition_trigger has been fulfilled → mark in blueprint
+    if game.story_blueprint and guidance.get("act_transition_check"):
+        log(f"[Director] act_transition={bool(guidance.get('act_transition'))} — "
+            f"{guidance['act_transition_check'][:200]}")
     if guidance.get("act_transition") and game.story_blueprint:
         bp = game.story_blueprint
         # Normalize None → [] before setdefault, since setdefault only fires when
@@ -6642,11 +6735,24 @@ def _time_ctx(game: "GameState") -> str:
 
 
 def _loc_hist(game: "GameState") -> str:
-    """Escaped <prev_locations> element, or empty string if location_history is empty."""
-    if not game.location_history:
-        return ""
-    locs = ", ".join(html.escape(loc) for loc in game.location_history[-3:])
-    return f'\n<prev_locations>{locs}</prev_locations>'
+    """Escaped <prev_locations> element (empty if location_history is empty), plus a
+    <location_stale> directive once the story has stayed LOCATION_STALE_THRESHOLD or
+    more scenes at the current place: the Narrator opens a natural path elsewhere
+    but never moves the character without the player's choice."""
+    out = ""
+    if game.location_history:
+        locs = ", ".join(html.escape(loc) for loc in game.location_history[-3:])
+        out = f'\n<prev_locations>{locs}</prev_locations>'
+    stale = game.scenes_at_location
+    if stale >= LOCATION_STALE_THRESHOLD:
+        out += (f'\n<location_stale scenes="{stale}">The story has stayed at this location'
+                f' for {stale} scenes. Open a natural path elsewhere in this scene: a lead'
+                f' that points to another place, a summons, a threat that makes staying'
+                f' costly, or a need that can only be met somewhere else. If the current'
+                f' confrontation must resolve here, resolve it and plant the exit for'
+                f' afterwards. Offer the path — never move the character without the'
+                f' player\'s choice.</location_stale>')
+    return out
 
 
 def build_new_game_prompt(game: GameState) -> str:
@@ -7598,7 +7704,7 @@ SAVE_FIELDS = [
     # v5.7: Content boundaries
     "player_wishes", "content_lines",
     # v5.8: Temporal & spatial consistency
-    "time_of_day", "location_history",
+    "time_of_day", "location_history", "scenes_at_location",
     # v5.9: Epilogue system
     "epilogue_shown",
     "epilogue_dismissed",
@@ -8577,6 +8683,7 @@ def _start_new_chapter_impl(client: anthropic.Anthropic, game: GameState,
     game.time_of_day = ""      # Reset -- new chapter, new time context
     game.time_unchanged_scenes = 0
     game.location_history = []  # Reset -- new chapter, fresh location tracking
+    game.scenes_at_location = 0
     game.director_guidance = {}  # Reset -- old pacing/guidance shouldn't carry over
 
     # Reset exit-suppression flags: scene_count resets to 1 at chapter start, so any
@@ -8961,10 +9068,7 @@ def _process_turn_impl(client: anthropic.Anthropic, game: GameState,
                 game.session_log[-1]["director_trigger"] = director_reason
             # Mark phase trigger used so _should_call_director() doesn't re-fire
             # every subsequent turn while the act stays in the same finale phase.
-            if director_reason.startswith("phase:") and game.story_blueprint is not None:
-                game.story_blueprint.setdefault("triggered_director_phases", []).append(
-                    director_reason[len("phase:"):]
-                )
+            _mark_director_reason(game, director_reason)
         else:
             log(f"[Director] Skipped (no trigger at scene {game.scene_count})")
 
@@ -9087,10 +9191,7 @@ def _process_turn_impl(client: anthropic.Anthropic, game: GameState,
             game.session_log[-1]["director_trigger"] = director_reason
         # Mark phase trigger used so _should_call_director() doesn't re-fire
         # every subsequent turn while the act stays in the same finale phase.
-        if director_reason.startswith("phase:") and game.story_blueprint is not None:
-            game.story_blueprint.setdefault("triggered_director_phases", []).append(
-                director_reason[len("phase:"):]
-            )
+        _mark_director_reason(game, director_reason)
     else:
         log(f"[Director] Skipped (no trigger at scene {game.scene_count})")
 
@@ -9739,10 +9840,7 @@ def _process_correction_impl(client: anthropic.Anthropic, game: GameState,
         if director_reason:
             director_ctx = {"narration": narration, "config": _cfg}
             log(f"[Correction] Director queued (reason: {director_reason})")
-            if director_reason.startswith("phase:") and game.story_blueprint is not None:
-                game.story_blueprint.setdefault("triggered_director_phases", []).append(
-                    director_reason[len("phase:"):]
-                )
+            _mark_director_reason(game, director_reason)
 
     log(f"[Correction] Complete: source={source}, rewrite done")
     return game, narration, director_ctx
