@@ -199,7 +199,9 @@ Player Input
 - `agenda`/`instinct`: fills **only empty fields** (`needs_profile="true"` NPCs)
 - `updated_agenda`: **actively overwrites** when non-null — for NPCs whose goals fundamentally changed
 - `instinct`: locked after first fill — it is the NPC's psychological wiring, not their mood. Never updated after initial fill.
-- `updated_arc`: narrative trajectory, expected to evolve each reflection. 1–2 sentences from the NPC's inside perspective. Written to `npc["arc"]` with 300-char guard. Shown to Narrator in `<target_npc>` and `<activated_npc>` tags.
+- `updated_arc`: narrative trajectory, expected to evolve each reflection. 1–2 sentences from the NPC's inside perspective. Written to `npc["arc"]`; arcs longer than `ARC_MAX_CHARS` (300, also stated in the prompt) are trimmed at a sentence end via `_trim_to_sentence()` — never discarded. Shown to Narrator in `<target_npc>` and `<activated_npc>` tags.
+
+**Director clocks**: up to 2 `new_clocks` per run, hard cap `MAX_ACTIVE_CLOCKS` (6) enforced in `_apply_director_guidance()`. `build_director_prompt()` appends `clock_cap_rule` to the `new_clocks` instruction: an explicit "new_clocks MUST be an empty array" when the cap is reached, otherwise the number of free slots.
 
 **Reflection-Truncation Guard**: `_apply_director_guidance()` tracks `successfully_reflected_ids`. Fallback loop resets `_needs_reflection=False` and `importance_accumulator=0` for rejected/missing reflections — prevents zombie-reflection loop.
 
@@ -238,7 +240,7 @@ When `story_complete=True` + `epilogue_dismissed=True`: `get_current_act()` retu
 - **PHRASE VARIETY**: `[noun] of a [person], who [relative clause]` pattern — AT MOST ONCE per response; ZERO if it appeared in any of the 3 preceding narrations. Same CROSS-RESPONSE rule for recurring atmospheric motifs (e.g. "Stille", "Kälte", "Dunkelheit") — if same motif anchored the last two narrations, switch sensory dimension.
 - **NPC EMOTIONAL RANGE**: `instinct` field determines emotional register. Three NPCs in a scene ≠ three composed people. Volatile, irrational, disproportionate responses are correct when the instinct warrants them.
 - **PRECISION**: Every sentence carries new information, advances tension, reveals character, or deepens atmosphere. No generic atmospheric filler.
-- **TEMPORAL TEXTURE**: Even in static locations, every 2–3 scenes anchor one atmospheric time detail (light quality, temperature, ambient sound). Feeds Extractor's `time_update` detection. **Stale-time self-correction** (`TIME_STALE_THRESHOLD = 5`): `GameState.time_unchanged_scenes` counts consecutive scenes without a `time_of_day` change. At threshold, `_time_ctx()` injects an inline directive into the `<time>` tag in the Narrator prompt; `build_director_prompt()` emits `<current_time stale_scenes="N">` and adds a TIME RULE to the `narrator_guidance` instruction. Counter resets to 0 on any Extractor `time_update`, at chapter start, and when the Opening Extractor sets `time_of_day`.
+- **TEMPORAL TEXTURE**: Even in static locations, every 2–3 scenes anchor one atmospheric time detail (light quality, temperature, ambient sound). Feeds Extractor's `time_update` detection. **Stale-time self-correction** (`TIME_STALE_THRESHOLD = 5`): `GameState.time_unchanged_scenes` counts consecutive scenes without a `time_of_day` change. At threshold, `_time_ctx()` injects an inline directive into the `<time>` tag in the Narrator prompt; `build_director_prompt()` emits `<current_time stale_scenes="N">` and adds a TIME RULE to the `narrator_guidance` instruction. Counter resets to 0 when an Extractor `time_update` actually changes the phase, at chapter start, and when the Opening Extractor sets `time_of_day`. **Forward-only guard**: `_is_forward_time()` accepts at most `TIME_MAX_FORWARD_STEPS` (4) phases forward incl. wrap past midnight; anything else is a backward jump (e.g. `deep_night` → `late_evening`), logged and rejected.
 
 #### Prose Cleanup (`parse_narrator_response()`)
 
@@ -274,7 +276,7 @@ Players prefix `##` to correct the previous turn. Error type auto-detected; repa
 
 ### Game Mechanics
 
-**Stats**: edge, iron, wits, shadow, heart (sum = 7, range 0–3)
+**Stats**: edge, iron, wits, shadow, heart (sum = 7, range 0–3). Setup Brain results with a wrong sum are normalized by `_normalize_stats()` (take from the highest / give to the lowest) — the AI weighting is kept instead of resetting to archetype defaults.
 
 **Rolling** `roll_action()`: 2d10 (challenge dice c1, c2) vs min(2d6+stat, 10) (action score, capped at 10)
 - Action > both challenge → **STRONG_HIT** (+2 momentum)
@@ -467,6 +469,7 @@ MISS (all three): bond -1, spirit -1 or -2. Disposition ladder: `hostile → dis
 | Parallel Narrator + Story Architect at game start | Sequential calls | Halves startup wait (~15s vs ~30s) |
 | `about_npc` field on memories (emergent relationships) | Dedicated NPC relationship data structure | No added complexity; relationships emerge organically from existing memory infrastructure |
 | Fuzzy location matching (`_locations_match()`) | Strict string equality | "Main Hall" vs "the main hall" must not create spatial inconsistencies |
+| Short location labels (`_short_location_name()`, `LOCATION_MAX_CHARS` = 40) in `update_location()` and Setup | Store whatever the model returns | Full descriptions as location broke scene markers and made fuzzy matching swallow real moves |
 | Creativity seeds via `wonderwords` with explicit use-instruction | No seeds / random seeds without instruction | Without explicit instruction, seeds only shift atmosphere — not NPC names (convergence problem) |
 | Shelved: NPC secret alias system | Implement it | Architecturally invasive; would destabilize core NPC/alias/merge systems |
 | Opening Metadata Extractor (Haiku, separate call) | Narrator fills `<game_data>` JSON inline | Inline JSON in prose = entire error class. Separate call with Structured Outputs is clean. |

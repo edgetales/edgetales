@@ -130,6 +130,8 @@ _ARCHETYPE_STAT_DEFAULTS: dict[str, dict] = {
 
 MAX_ACTIVE_NPCS = 12               # Soft limit; excess NPCs get retired
 MAX_ACTIVE_CLOCKS = 6              # Hard cap; Director cannot add clocks beyond this
+ARC_MAX_CHARS = 300                # NPC arc length; longer Director arcs are trimmed at a sentence end
+LOCATION_MAX_CHARS = 40            # Longer location strings are cut to a short place label
 NPC_STALE_SCENES = 8               # Scenes without any memory update before retirement-eligible
 MAX_NPC_MEMORY_ENTRIES = 25        # Per NPC (total: observations + reflections)
 MAX_NPC_OBSERVATIONS = 15          # Max observation memories per NPC
@@ -1934,6 +1936,21 @@ def _process_npc_renames(game, json_text: str):
         log(f"[NPC] Failed to process NPC renames: {e}", level="warning")
 
 
+def _trim_to_sentence(text: str, limit: int) -> str:
+    """Shorten text to at most `limit` chars, preferring the last sentence end;
+    falls back to the last word boundary plus an ellipsis."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    cut = max(head.rfind(". "), head.rfind("! "), head.rfind("? "),
+              head.rfind("."), head.rfind("!"), head.rfind("?"))
+    if cut >= limit // 3:
+        return head[:cut + 1].strip()
+    space = head[:limit - 1].rfind(" ")
+    return (head[:space] if space > 0 else head[:limit - 1]).rstrip(" ,;:—–-") + "…"
+
+
 def _is_complete_description(desc: str) -> bool:
     """Check if a description looks complete (not truncated mid-sentence).
     Incomplete descriptions are discarded in favor of the existing one."""
@@ -3349,6 +3366,19 @@ def check_chaos_interrupt(game: GameState) -> Optional[str]:
 
 TIME_PHASES = ["early_morning", "morning", "midday", "afternoon",
                "evening", "late_evening", "night", "deep_night"]
+# A single Extractor time_update may move at most this many phases forward
+# (wrapping past midnight). Larger jumps are 1-3 phases BACKWARD in disguise
+# (e.g. deep_night → late_evening) and are rejected.
+TIME_MAX_FORWARD_STEPS = 4
+
+
+def _is_forward_time(old: str, new: str) -> bool:
+    """True if `new` lies 1..TIME_MAX_FORWARD_STEPS phases after `old` (cyclic).
+    Unknown/empty old values accept any phase."""
+    if old not in TIME_PHASES or new not in TIME_PHASES:
+        return new in TIME_PHASES
+    step = (TIME_PHASES.index(new) - TIME_PHASES.index(old)) % len(TIME_PHASES)
+    return 1 <= step <= TIME_MAX_FORWARD_STEPS
 
 # Scenes without a time_of_day change before stale-time nudges activate in the
 # Narrator prompt and Director context.  Chosen to be earlier than the Elvira
@@ -3409,12 +3439,30 @@ def _locations_match(loc_a: str, loc_b: str) -> bool:
     return shorter[0] == longer[0]
 
 
+def _short_location_name(name: str) -> str:
+    """Reduce a location to a short label. Models sometimes return a full
+    description ("Colter-Zentrum, ein privates Büro in … — versteckt hinter …");
+    such strings break scene markers and the fuzzy location matching.
+    Cuts at the first descriptive separator once the name exceeds LOCATION_MAX_CHARS."""
+    name = (name or "").replace("_", " ").strip()
+    if len(name) <= LOCATION_MAX_CHARS:
+        return name
+    for sep in (" — ", " – ", " - ", ", ", "; ", " (", ": "):
+        idx = name.find(sep)
+        if 3 <= idx:
+            name = name[:idx].strip()
+            if len(name) <= LOCATION_MAX_CHARS:
+                return name
+    cut = name[:LOCATION_MAX_CHARS].rfind(" ")
+    return (name[:cut] if cut > 3 else name[:LOCATION_MAX_CHARS]).rstrip(" ,;:—–-")
+
+
 def update_location(game: GameState, new_location: str):
     """Update current location and maintain location history."""
     if not new_location:
         return
-    # AI sometimes returns underscores instead of spaces in location names
-    new_location = new_location.replace("_", " ").strip()
+    # AI sometimes returns underscores instead of spaces / full descriptions
+    new_location = _short_location_name(new_location)
     if not new_location or new_location == game.current_location:
         return
     # Skip if new_location is just a qualifier variant of the current location
@@ -4465,6 +4513,24 @@ time:{game.time_of_day or 'unspecified'} | prev_locations:{', '.join(game.locati
                 "time_progression": "none"}
 
 
+def _normalize_stats(stats: dict, keys: tuple, target: int) -> dict:
+    """Bring the stat sum to `target` in place (each stat 0-3): take from the
+    highest stats or give to the lowest, one point at a time."""
+    total = sum(stats[k] for k in keys)
+    while total > target:
+        k = max(keys, key=lambda x: stats[x])
+        stats[k] -= 1
+        total -= 1
+    while total < target:
+        candidates = [x for x in keys if stats[x] < 3]
+        if not candidates:
+            break
+        k = min(candidates, key=lambda x: stats[x])
+        stats[k] += 1
+        total += 1
+    return stats
+
+
 def call_setup_brain(client: anthropic.Anthropic, creation_data: dict,
                      config: Optional[EngineConfig] = None) -> dict:
     """Generate character and world from creation choices."""
@@ -4478,6 +4544,7 @@ def call_setup_brain(client: anthropic.Anthropic, creation_data: dict,
 - character_concept = WHO the character is NOW (identity, role, current situation) — 1 sentence, no backstory
 - Do NOT put backstory details (past events, relationships, family) into character_concept — the player's backstory is stored separately and will be provided to the narrator directly
 - Stats MUST total exactly {STAT_TARGET_SUM}, each 0-3, matched to archetype
+- starting_location = a SHORT place name (2-5 words, like a map label), no description, no commas — atmosphere belongs in setting_description
 - Each archetype has a primary stat that MUST be at least 2: outsider_loner→shadow, investigator→wits, trickster→shadow, protector→iron, hardboiled→iron, scholar→wits, healer→heart, inventor→wits, artist→heart
 - All text fields in {lang}
 </rules>"""
@@ -4522,14 +4589,14 @@ creativity_seed: {seed} (Use as loose inspiration for names, locations, and deta
         for k in stat_keys:
             stats[k] = max(0, min(3, stats[k]))
 
-        # Layer 1: If sum is wrong, reset to archetype-aware defaults
+        # Layer 1: If sum is wrong, normalize to the target while keeping the AI's
+        # weighting (resetting to archetype defaults discarded the character fit).
         total = sum(stats[k] for k in stat_keys)
         if total != STAT_TARGET_SUM:
-            log(f"[Setup] AI returned stats summing to {total}, "
-                f"resetting to archetype defaults for '{raw_archetype}'", level="warning")
-            stats = dict(_ARCHETYPE_STAT_DEFAULTS.get(raw_archetype,
-                         _ARCHETYPE_STAT_DEFAULTS["_default"]))
-            result["stats"] = stats
+            before = {k: stats[k] for k in stat_keys}
+            _normalize_stats(stats, stat_keys, STAT_TARGET_SUM)
+            log(f"[Setup] AI returned stats summing to {total}, normalized "
+                f"{before} → {({k: stats[k] for k in stat_keys})}", level="warning")
 
         # Layer 2: Enforce primary stat ≥ 2 (skip for custom archetype)
         primary = _ARCHETYPE_PRIMARY_STAT.get(raw_archetype)
@@ -4547,6 +4614,7 @@ creativity_seed: {seed} (Use as loose inspiration for names, locations, and deta
             log(f"[Setup] primary-stat fix: {primary}→{stats[primary]} "
                 f"for archetype '{raw_archetype}'", level="warning")
 
+        result["starting_location"] = _short_location_name(result.get("starting_location", ""))
         log(f"[Setup] Success: name={result['character_name']!r}, "
             f"location={result['starting_location']!r}")
         return result
@@ -5605,11 +5673,15 @@ def _apply_narrator_metadata(game: GameState, metadata: dict,
         update_location(game, new_loc.strip())
 
     # Time update
-    new_time = metadata.get("time_update")
-    if new_time and new_time.strip().lower().replace(" ", "_") in TIME_PHASES:
-        game.time_of_day = new_time.strip().lower().replace(" ", "_")
+    new_time = (metadata.get("time_update") or "").strip().lower().replace(" ", "_")
+    if new_time in TIME_PHASES and new_time != game.time_of_day \
+            and _is_forward_time(game.time_of_day, new_time):
+        game.time_of_day = new_time
         game.time_unchanged_scenes = 0
     else:
+        if new_time in TIME_PHASES and new_time != game.time_of_day:
+            log(f"[Time] Rejected backward time_update {game.time_of_day} → {new_time}",
+                level="warning")
         game.time_unchanged_scenes += 1
 
     # NPC renames (delegate to existing logic via JSON roundtrip)
@@ -6069,6 +6141,12 @@ def build_director_prompt(game: GameState, latest_narration: str,
         clocks_lines.append("fired (already triggered, no longer active):")
         for c in fired_clocks:
             clocks_lines.append(f'  - {c["name"]}: {c.get("trigger_description", "")}')
+    _slots_free = MAX_ACTIVE_CLOCKS - len(active_clocks)
+    clock_cap_rule = (
+        f" CLOCK CAP REACHED ({len(active_clocks)}/{MAX_ACTIVE_CLOCKS}): new_clocks MUST be an "
+        f"empty array in this run — express new dangers through narrator_guidance instead."
+        if _slots_free <= 0 else
+        f" Only {_slots_free} more clock(s) fit under the cap of {MAX_ACTIVE_CLOCKS}.")
     clocks_block = (f"<clocks {clock_cap_note}>\n" + "\n".join(clocks_lines) + "\n</clocks>"
                     if clocks_lines else "")
 
@@ -6116,7 +6194,7 @@ Field instructions:
   - tone_key: ONE word from the enum (neutral, curious, wary, suspicious, grateful, terrified, loyal, conflicted, betrayed, devastated, euphoric, defiant, guilty, protective, angry, devoted, impressed, hopeful)
   - updated_description: STRICTLY in {lang}. Max 100 characters. Role + key visual traits + personality. Keep physical details like age, hair, build. Do NOT start with the NPC's name. NO actions, NO posture. Example: 'Grumpy dwarf blacksmith with burn scars, secretly loyal'. null if unchanged.
   - updated_agenda: If this NPC's goals have fundamentally shifted due to recent story events (defeat, revelation, betrayal, alliance formed), write their new driving goal (max 10 words, in {lang}). Use this when the old agenda is clearly obsolete — e.g. an NPC who sought to destroy the player now seeks to understand them. null if the existing agenda still applies.
-  - updated_arc: The NPC's current narrative trajectory — what the story has made of them so far. 1-2 sentences in {lang}, from an inside perspective (their emotional state and what they have become, not what they will do next). Expected to change every reflection as the story develops. The <reflect> tag shows the current arc if set — build on it, deepen it, or shift it based on what just happened. Distinct from instinct (stable wiring) and npc_guidance (scene instruction). Good: "Has seen enough of Janus's chaos to stop treating him as a variable — now calculating whether trust is a liability or an asset." Bad (scene behavior, not trajectory): "Is nervous and looking for an exit." null only if the NPC has had zero meaningful story interaction.
+  - updated_arc: The NPC's current narrative trajectory — what the story has made of them so far. 1-2 sentences in {lang}, at most {ARC_MAX_CHARS} characters, from an inside perspective (their emotional state and what they have become, not what they will do next). Expected to change every reflection as the story develops. The <reflect> tag shows the current arc if set — build on it, deepen it, or shift it based on what just happened. Distinct from instinct (stable wiring) and npc_guidance (scene instruction). Good: "Has seen enough of Janus's chaos to stop treating him as a variable — now calculating whether trust is a liability or an asset." Bad (scene behavior, not trajectory): "Is nervous and looking for an exit." null only if the NPC has had zero meaningful story interaction.
   - about_npc: If this reflection is primarily about the NPC's feelings toward ANOTHER NPC (not the player), set to that NPC's npc_id. Example: Sophie reflects on her growing attraction to Bruce → about_npc="npc_2". null if the reflection is about the player or general.
   - agenda: NPC's hidden goal (max 8 words, only if needs_profile="true"), null otherwise
   - instinct: NPC's psychological signature under real pressure (max 8 words, only if needs_profile="true"), null otherwise. NOT job demeanor or genre convention — the specific human underneath: what they do when their strategy fails, what betrays them, what is slightly irrational but inevitable. BAD: "stays calm under pressure" / "methodical and efficient" / "evaluates before acting". GOOD: "goes quiet and hyper-precise when cornered" / "agrees then quietly does what he intended" / "dark humor until something breaks, then overcorrects". Base on this NPC's description and story observations. IMPORTANT: instinct is set ONCE (first reflection, needs_profile=true) and never updated — it is the NPC's wiring, not their mood.
@@ -6126,7 +6204,7 @@ Field instructions:
   (a) the narrative condition described in the trigger has clearly been met, OR
   (b) the story has moved PAST the act's scene_range (PAST_RANGE="true") and the trigger's spirit has been approximately met.
   Set to false only if the trigger condition is clearly unmet AND we are still within scene_range. The scene_range is a fallback — content-driven transitions via this flag produce better pacing.
-- new_clocks: Propose new threat clocks ONLY when ALL conditions are met: (1) a concrete new danger has emerged in the last 1-2 scenes that is NOT already tracked by an existing clock in <clocks>, (2) the threat is specific enough to have a concrete, narratively meaningful trigger_description (what happens when the clock fills), (3) the threat is genuinely new — not a re-framing of an existing one. Leave this array EMPTY when any condition is unmet. When creating a clock: name (short, evocative), clock_type ("threat" or "scheme"), segments (4–8 based on urgency — 4 for imminent, 6 for medium, 8 for slow-burn), filled (1 to show the threat has already begun, 0 only if it is entirely latent), trigger_description (the concrete consequence when filled), owner ("world" or the NPC name driving this threat). Maximum 2 new clocks per Director run — default is empty array.
+- new_clocks: Propose new threat clocks ONLY when ALL conditions are met: (1) a concrete new danger has emerged in the last 1-2 scenes that is NOT already tracked by an existing clock in <clocks>, (2) the threat is specific enough to have a concrete, narratively meaningful trigger_description (what happens when the clock fills), (3) the threat is genuinely new — not a re-framing of an existing one. Leave this array EMPTY when any condition is unmet. When creating a clock: name (short, evocative), clock_type ("threat" or "scheme"), segments (4–8 based on urgency — 4 for imminent, 6 for medium, 8 for slow-burn), filled (1 to show the threat has already begun, 0 only if it is entirely latent), trigger_description (the concrete consequence when filled), owner ("world" or the NPC name driving this threat). Maximum 2 new clocks per Director run — default is empty array.{clock_cap_rule}
 
 If a <reflect> tag has a last_reflection attribute, write a NEW insight that builds on, deepens, or contradicts it. Do NOT repeat the same theme or emotional tone. If last_tone is present, use it as the emotional register to evolve from — the texture and arc direction of the previous state. If last_tone_key is present, use it as the enum category to move away from when choosing the new tone_key (avoid repeating the identical value unless deliberate stagnation is the point).
 </task>"""
@@ -6357,15 +6435,17 @@ def _apply_director_guidance(game: GameState, guidance: dict):
             log(f"[Director] Agenda updated for {npc['name']}: "
                 f"'{old_agenda[:60]}' → '{new_agenda}'")
         if new_arc:
-            # Reject implausibly long arc text (scene-snapshot contamination)
-            if len(new_arc) > 300:
-                log(f"[Director] Rejected arc for {npc['name']}: "
-                    f"too long ({len(new_arc)} chars)", level="warning")
-            else:
-                old_arc = npc.get("arc", "")
-                npc["arc"] = new_arc
-                log(f"[Director] Arc updated for {npc['name']}: "
-                    f"'{old_arc[:60]}' → '{new_arc[:60]}'")
+            # Over-long arcs (common in German) are trimmed at a sentence end instead
+            # of being discarded — dropping them lost the NPC's development entirely.
+            if len(new_arc) > ARC_MAX_CHARS:
+                trimmed = _trim_to_sentence(new_arc, ARC_MAX_CHARS)
+                log(f"[Director] Arc for {npc['name']} trimmed "
+                    f"{len(new_arc)} → {len(trimmed)} chars")
+                new_arc = trimmed
+            old_arc = npc.get("arc", "")
+            npc["arc"] = new_arc
+            log(f"[Director] Arc updated for {npc['name']}: "
+                f"'{old_arc[:60]}' → '{new_arc[:60]}'")
 
         # Update description if Director provided a meaningful character description
         new_desc = (ref.get("updated_description") or "").strip()
