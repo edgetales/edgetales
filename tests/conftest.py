@@ -149,7 +149,7 @@ def make_npc(npc_id="npc_1", name="Mara Voss", **over):
     return n
 
 
-def roll(result="MISS", c1=9, c2=9, d1=1, d2=1, stat_value=2, match=None):
+def roll(result="MISS", c1=9, c2=9, d1=1, d2=0, stat_value=2, match=None):
     score = min(d1 + d2 + stat_value, 10)
     return E.RollResult(d1, d2, c1, c2, "iron", stat_value, score, result,
                         "face_danger", (c1 == c2) if match is None else match)

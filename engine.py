@@ -132,6 +132,7 @@ MAX_ACTIVE_NPCS = 12               # Soft limit; excess NPCs get retired
 MAX_ACTIVE_CLOCKS = 6              # Hard cap; Director cannot add clocks beyond this
 ARC_MAX_CHARS = 300                # NPC arc length; longer Director arcs are trimmed at a sentence end
 LOCATION_MAX_CHARS = 40            # Longer location strings are cut to a short place label
+ARCHITECT_ATTEMPTS = 2             # Story Architect tries before the generic fallback blueprint (too few acts / unparseable)
 ACT_MIN_SCENES = 2                 # Director act_transition is ignored earlier than this many scenes into an act's range
 ACT_TRIGGER_DUE_SCENES = 2         # Within this many scenes of an act's range end, the trigger is "due": the Director runs once and steers toward it
 NPC_STALE_SCENES = 8               # Scenes without any memory update before retirement-eligible
@@ -3747,7 +3748,10 @@ def choose_story_structure(tone: str) -> str:
 # ===============================================================
 
 def roll_action(stat_name: str, stat_value: int, move: str) -> RollResult:
-    d1, d2 = random.randint(1, 6), random.randint(1, 6)
+    """Ironsworn action roll: 1d6 + stat (max 10) vs two d10 challenge dice.
+    RollResult keeps its d2 field for saves made with the former 2d6 roll;
+    new rolls set it to 0 (see action_dice_text())."""
+    d1, d2 = random.randint(1, 6), 0
     c1, c2 = random.randint(1, 10), random.randint(1, 10)
     score = min(d1 + d2 + stat_value, 10)
     if score > c1 and score > c2:
@@ -3757,6 +3761,12 @@ def roll_action(stat_name: str, stat_value: int, move: str) -> RollResult:
     else:
         result = "MISS"
     return RollResult(d1, d2, c1, c2, stat_name, stat_value, score, result, move, match=(c1 == c2))
+
+
+def action_dice_text(d1: int, d2: int = 0) -> str:
+    """Action die (or dice) as shown in logs and the UI: "4" for the current 1d6
+    roll, "3+5" for rolls stored before the switch from 2d6."""
+    return f"{d1}+{d2}" if d2 else str(d1)
 
 
 COMBAT_MOVES = {"clash", "strike"}
@@ -4828,34 +4838,48 @@ npcs:{npc_text}{campaign_ctx}{backstory_text}"""
 
     # Story Architect uses NARRATOR_MODEL (Sonnet) — called once per game/chapter,
     # cost is negligible (~$0.01), but quality of the blueprint shapes the entire story.
-    try:
-        response = _api_create_with_retry(
-            client, max_retries=2,
-            model=NARRATOR_MODEL, max_tokens=STORY_ARCH_MAX_TOKENS, system=system,
-            messages=[{"role": "user", "content": user_msg}],
-            output_config={"format": {"type": "json_schema", "schema": STORY_ARCHITECT_OUTPUT_SCHEMA}},
-        )
-        blueprint = json.loads(_response_text(response))
-        blueprint["revealed"] = []  # Track which revelations have fired
-        blueprint["structure_type"] = structure_type
+    # An unusable answer (too few acts, unparseable) gets ONE more attempt with an
+    # explicit correction before the generic fallback blueprint is used — the model
+    # occasionally collapses the structure into a single act.
+    expected_acts = 4 if structure_type == "kishotenketsu" else 3
+    attempt_msg = user_msg
+    for attempt in range(1, ARCHITECT_ATTEMPTS + 1):
+        try:
+            response = _api_create_with_retry(
+                client, max_retries=2,
+                model=NARRATOR_MODEL, max_tokens=STORY_ARCH_MAX_TOKENS, system=system,
+                messages=[{"role": "user", "content": attempt_msg}],
+                output_config={"format": {"type": "json_schema", "schema": STORY_ARCHITECT_OUTPUT_SCHEMA}},
+            )
+            blueprint = json.loads(_response_text(response))
+            blueprint["revealed"] = []  # Track which revelations have fired
+            blueprint["structure_type"] = structure_type
 
-        # Validate act count: schema can no longer enforce minItems ≥ 3 (API restriction).
-        # A blueprint with too few acts breaks story logic silently — fall through to fallback.
-        expected_acts = 4 if structure_type == "kishotenketsu" else 3
-        if len(blueprint.get("acts", [])) < expected_acts:
-            log(f"[Story] Architect returned {len(blueprint.get('acts', []))} acts "
-                f"(expected {expected_acts}) — using context-aware fallback", level="warning")
-            raise ValueError("insufficient_acts")
+            # Validate act count: schema can no longer enforce minItems ≥ 3 (API restriction).
+            n_acts = len(blueprint.get("acts", []))
+            if n_acts < expected_acts:
+                log(f"[Story] Architect returned {n_acts} acts (expected {expected_acts}) "
+                    f"on attempt {attempt}/{ARCHITECT_ATTEMPTS}", level="warning")
+                attempt_msg = (user_msg + f"\n\nCORRECTION: your previous blueprint had {n_acts} "
+                               f"act(s). The acts array MUST contain exactly {expected_acts} acts, "
+                               f"one per phase, each with its own scene_range and transition_trigger.")
+                continue
 
-        log(f"[Story] Architect succeeded: "
-            f"conflict={blueprint['central_conflict'][:80]}, "
-            f"acts={len(blueprint['acts'])}, "
-            f"revelations={len(blueprint.get('revelations', []))}")
-        return blueprint
+            log(f"[Story] Architect succeeded: "
+                f"conflict={blueprint['central_conflict'][:80]}, "
+                f"acts={len(blueprint['acts'])}, "
+                f"revelations={len(blueprint.get('revelations', []))}"
+                + (f" (attempt {attempt})" if attempt > 1 else ""))
+            return blueprint
 
-    except Exception as e:
-        log(f"[Story] Architect failed ({type(e).__name__}: {e}), "
-            f"using context-aware fallback", level="warning")
+        except anthropic.APIError as e:
+            # API-level failure: _api_create_with_retry already retried transient errors.
+            log(f"[Story] Architect API error ({type(e).__name__}: {e})", level="warning")
+            break
+        except Exception as e:
+            log(f"[Story] Architect answer unusable on attempt {attempt}/{ARCHITECT_ATTEMPTS} "
+                f"({type(e).__name__}: {e})", level="warning")
+    log("[Story] Architect failed — using context-aware fallback", level="warning")
 
     # Fallback: minimal context-aware blueprint in narration language.
     # Uses actual game info instead of generic English placeholder text.
@@ -9151,7 +9175,7 @@ def _process_turn_impl(client: anthropic.Anthropic, game: GameState,
     _raw = roll.d1 + roll.d2 + roll.stat_value
     _score_str = f"{_raw}→10(cap)" if _raw > 10 else str(roll.action_score)
     log(f"[Roll] {roll.move} ({roll.stat_name}={roll.stat_value}): "
-        f"{roll.d1}+{roll.d2}+{roll.stat_value}={_score_str} "
+        f"{action_dice_text(roll.d1, roll.d2)}+{roll.stat_value}={_score_str} "
         f"vs [{roll.c1},{roll.c2}] \u2192 {roll.result}")
     if roll.match:
         log(f"[Turn] MATCH! Both challenge dice show {roll.c1} \u2014 {roll.result}")
@@ -9478,7 +9502,7 @@ def call_correction_brain(client: anthropic.Anthropic, game: GameState,
     roll = snap.get("roll")
     roll_summary = (
         f"{roll.result} ({roll.move}, {roll.stat_name}={roll.stat_value}, "
-        f"d1={roll.d1}+d2={roll.d2} vs c1={roll.c1}/c2={roll.c2})"
+        f"action_die={action_dice_text(roll.d1, roll.d2)} vs c1={roll.c1}/c2={roll.c2})"
         if roll else "dialog (no roll)"
     )
 
@@ -9773,7 +9797,7 @@ def _process_correction_impl(client: anthropic.Anthropic, game: GameState,
             _raw = roll.d1 + roll.d2 + roll.stat_value
             _score_str = f"{_raw}→10(cap)" if _raw > 10 else str(roll.action_score)
             log(f"[Roll] {roll.move} ({roll.stat_name}={roll.stat_value}): "
-                f"{roll.d1}+{roll.d2}+{roll.stat_value}={_score_str} "
+                f"{action_dice_text(roll.d1, roll.d2)}+{roll.stat_value}={_score_str} "
                 f"vs [{roll.c1},{roll.c2}] \u2192 {roll.result} (correction re-roll)")
             consequences, clock_events = apply_consequences(game, roll, brain)
             npc_agency, agency_clock_events = check_npc_agency(game)

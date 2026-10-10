@@ -8,9 +8,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Changed
+- **Action rolls use the Ironsworn rule: 1d6 + stat vs two d10.** The engine rolled 2d6 + stat, which made rolls far too easy (at stat 2: 58 % strong hits and 10 % misses instead of Ironsworn's 23 % and 33 %) — momentum sat at its maximum, chaos at its minimum and setbacks were rare. Saved games stay compatible: rolls stored with two action dice are still shown as such. The help text (DE/EN) and the detailed dice display show one action die.
 - **More varied narration over long sessions:** scene endings now rotate between four kinds (inner state, an image or sound left hanging, an NPC's unanswered line, an action in progress), never repeat the previous kind and end on a short sentence; recurring body and prop details (an injury, a hand on a weapon, a recurring object) appear at most once per scene and only when they change. Test sessions had ended nearly every scene on the same long inner-state sentence and repeated the same physical details scene after scene.
 
 ### Fixed
+- **Story Architect fell back to a generic blueprint after one bad answer:** when the model returned too few acts (seen once: 1 act instead of 4) or an unparseable blueprint, the chapter used the generic fallback structure with placeholder triggers. It now gets one more attempt with an explicit correction (`ARCHITECT_ATTEMPTS`); API errors still go straight to the fallback.
 - **Threat clocks could fill without ever happening in the story:** autonomous world ticks, WEAK_HIT ticks and NPC agency in dialog scenes were applied after the scene had been narrated, and the Narrator only ever sees unfired clocks — the trigger was never told. All clock movement of a scene is now decided before narration in every path (turn, dialog, momentum burn, `##` correction) and filled clocks reach the Narrator as `<clock_fired>` (or `<npc_agency>` for NPC schemes, now also in dialog scenes).
 - **`##` corrections that reinterpret the input skipped parts of the turn:** the re-run after the restore did not re-apply autonomous world ticks, NPC agency (without re-roll) or the story-completion check — clocks fell behind and an epilogue offer could arrive one turn late.
 - **Deaths in the same scene were undone:** when a known NPC died and the extractor also stored a memory of the dying moment, the memory path resurrected the NPC immediately. All deaths of a scene are now marked after the scene's memories are stored (as already done for NPCs introduced and killed in the same scene). Off-screen mentions no longer count as presence for the death guard, so a dialog claim about an absent NPC still cannot kill them.
@@ -22,6 +24,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **Long post-epilogue location:** the chapter summary's `post_story_location` is shortened like every other location.
 - **Dialog highlight:** the closing quotation mark no longer sits detached from the highlighted speech.
 
+## [0.9.96] - 2026-10-10
 
 ### Added
 - **Configurable models per role:** `config.json` accepts `narrator_model` / `brain_model`, `narrator_effort` / `brain_effort` (`low`–`max`, sent as `output_config.effort`) and `narrator_thinking` / `brain_thinking` (`disabled`, `adaptive`, `between_tools`). Call sites keep passing `NARRATOR_MODEL` / `BRAIN_MODEL` as role tokens; `_api_create_with_retry()` swaps in the configured model and options. Empty values keep the previous behaviour. If the API rejects an effort or thinking option for a model, the call is retried without it and the option stays off for that role for the rest of the process. New tests in `tests/test_models.py`.

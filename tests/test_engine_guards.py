@@ -338,3 +338,35 @@ def test_absent_mention_does_not_confirm_death(game):
                          "emotional_weight": "grief", "about_npc": None, "absent": True}])
     E._apply_narrator_metadata(game, md, scene_present_ids={game.npcs[0]["id"]})
     assert leo["status"] != "deceased"
+
+
+# --- Story Architect retry ----------------------------------------------------------
+
+def _architect_reply(n_acts):
+    import json, types
+    acts = [{"phase": f"p{i}", "title": "T", "goal": "g", "scene_range": [i * 5 + 1, i * 5 + 5],
+             "mood": "m", "transition_trigger": "x"} for i in range(n_acts)]
+    bp = {"central_conflict": "Konflikt", "antagonist_force": "", "thematic_thread": "",
+          "acts": acts, "revelations": [], "possible_endings": []}
+    return types.SimpleNamespace(content=[types.SimpleNamespace(type="text", text=json.dumps(bp))])
+
+
+def test_architect_retries_once_on_too_few_acts(game, monkeypatch):
+    replies = iter([_architect_reply(1), _architect_reply(3)])
+    msgs = []
+    def fake(client, **kw):
+        msgs.append(kw["messages"][0]["content"])
+        return next(replies)
+    monkeypatch.setattr(E, "_api_create_with_retry", fake)
+    bp = E.call_story_architect(None, game, structure_type="3act")
+    assert len(bp["acts"]) == 3 and bp["central_conflict"] == "Konflikt"
+    assert len(msgs) == 2 and "CORRECTION" in msgs[1] and "CORRECTION" not in msgs[0]
+
+
+def test_architect_falls_back_after_two_bad_answers(game, monkeypatch):
+    calls = []
+    monkeypatch.setattr(E, "_api_create_with_retry",
+                        lambda client, **kw: calls.append(1) or _architect_reply(1))
+    bp = E.call_story_architect(None, game, structure_type="3act")
+    assert len(calls) == E.ARCHITECT_ATTEMPTS
+    assert len(bp["acts"]) >= 3                    # generic fallback blueprint

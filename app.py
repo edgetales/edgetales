@@ -132,7 +132,7 @@ from engine import (
     save_game, load_game, list_saves_with_info, delete_save, export_story_pdf,
     save_chapter_archive, load_chapter_archive, list_chapter_archives, delete_chapter_archives,
     replace_chapter_archives,
-    get_current_act, setup_file_logging,
+    get_current_act, setup_file_logging, action_dice_text,
     call_setup_brain, start_new_game, start_new_chapter,
     process_turn, process_momentum_burn, process_correction, call_recap,
     run_deferred_director, generate_epilogue,
@@ -573,6 +573,7 @@ def build_roll_data(roll: RollResult, consequences=None, clock_events=None, brai
         "stat_name": roll.stat_name, "stat_label": sl.get(roll.stat_name, roll.stat_name),
         "stat_value": roll.stat_value,
         "d1": roll.d1, "d2": roll.d2, "c1": roll.c1, "c2": roll.c2,
+        "dice_text": action_dice_text(roll.d1, roll.d2),
         "action_score": roll.action_score,
         "score_display": (
             f"{roll.d1 + roll.d2 + roll.stat_value}\u219210"
@@ -1935,7 +1936,8 @@ def render_dice_display(rd: dict) -> None:
         if rd.get("chaos_interrupt"):
             header += f" {E['dot']} {t('dice.chaos_short', lang)}"
         with ui.expansion(header).classes("w-full"):
-            ui.markdown(t("dice.action", lang, d1=rd['d1'], d2=rd['d2'], stat_value=rd['stat_value'], score_display=rd['score_display'], c1=rd['c1'], c2=rd['c2']))
+            _dice = rd.get('dice_text') or action_dice_text(rd['d1'], rd.get('d2', 0))
+            ui.markdown(t("dice.action", lang, dice=_dice, stat_value=rd['stat_value'], score_display=rd['score_display'], c1=rd['c1'], c2=rd['c2']))
             if is_match:
                 ui.markdown(t("dice.match", lang, value=rd['c1']))
             pl = get_position_labels(lang)
