@@ -154,3 +154,65 @@ def test_act_transition_after_min_scenes_is_recorded(game):
     game.scene_count = 1 + E.ACT_MIN_SCENES
     E._apply_director_guidance(game, _guidance())
     assert game.story_blueprint["triggered_transitions"] == ["act_0"]
+
+
+# --- stale location -----------------------------------------------------------------
+
+def test_scenes_at_location_counts_and_resets_on_move(game):
+    game.current_location = "Hafenkneipe"
+    game.scenes_at_location = 0
+    E._apply_narrator_metadata(game, make_metadata())
+    E._apply_narrator_metadata(game, make_metadata())
+    assert game.scenes_at_location == 2
+    E._apply_narrator_metadata(game, make_metadata(location_update="Lagerhaus 7"))
+    assert game.current_location == "Lagerhaus 7" and game.scenes_at_location == 0
+
+
+def test_brain_move_counts_the_new_scene(game):
+    game.current_location = "Hafenkneipe"
+    game.scenes_at_location = 6
+    E._apply_brain_location_time(game, {"location_change": "Lagerhaus 7"})
+    E._apply_narrator_metadata(game, make_metadata())
+    assert game.scenes_at_location == 1
+
+
+def test_qualifier_variant_is_not_a_move(game):
+    game.current_location = "Hafenkneipe"
+    game.scenes_at_location = 3
+    E._apply_narrator_metadata(game, make_metadata(location_update="Hafenkneipe in Hamburg"))
+    assert game.scenes_at_location == 4
+
+
+def test_location_stale_hint_in_narrator_and_director(game):
+    game.current_location = "Hafenkneipe"
+    game.scenes_at_location = E.LOCATION_STALE_THRESHOLD - 1
+    assert "<location_stale" not in E._loc_hist(game)
+    assert 'stale_scenes' not in E.build_director_prompt(game, "Text").split("<scene_history>")[0]
+    game.scenes_at_location = E.LOCATION_STALE_THRESHOLD
+    assert f'<location_stale scenes="{E.LOCATION_STALE_THRESHOLD}">' in E._loc_hist(game)
+    assert (f'<current_location stale_scenes="{E.LOCATION_STALE_THRESHOLD}">Hafenkneipe'
+            in E.build_director_prompt(game, "Text"))
+
+
+# --- chaos damping ------------------------------------------------------------------
+
+def test_strong_hit_lowers_chaos_only_with_chance(game, monkeypatch):
+    game.chaos_factor = 5
+    monkeypatch.setattr(E.random, "random", lambda: E.CHAOS_STRONG_HIT_DROP_CHANCE)
+    E.update_chaos_factor(game, "STRONG_HIT")
+    assert game.chaos_factor == 5
+    monkeypatch.setattr(E.random, "random", lambda: 0.0)
+    E.update_chaos_factor(game, "STRONG_HIT")
+    assert game.chaos_factor == 4
+
+
+def test_chaos_bounds(game, monkeypatch):
+    monkeypatch.setattr(E.random, "random", lambda: 0.0)
+    game.chaos_factor = 3
+    E.update_chaos_factor(game, "STRONG_HIT")
+    assert game.chaos_factor == 3
+    game.chaos_factor = 9
+    E.update_chaos_factor(game, "MISS")
+    assert game.chaos_factor == 9
+    E.update_chaos_factor(game, "WEAK_HIT")
+    assert game.chaos_factor == 9

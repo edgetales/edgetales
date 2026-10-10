@@ -237,6 +237,7 @@ When `story_complete=True` + `epilogue_dismissed=True`: `get_current_act()` retu
 - **SCENE CONTINUITY**: Begin in motion, not in setup. Same location: at most one bridging sentence. New location: one sensory impression of the new space.
 - **EMOTIONAL CARRY-THROUGH**: Significant beats carry via body language, perception, attention — not narration. Emotional states do not reset between scenes.
 - **SCENE ENDING**: Close with the character's immediate unresolved inner state, unanswered perception, or dominant open condition — not a plot cliffhanger. Mid-breath, not concluded.
+- **STALE LOCATION** (`LOCATION_STALE_THRESHOLD = 5`): `GameState.scenes_at_location` (persisted, scalar snapshot field) is incremented once per scene in `_apply_narrator_metadata()` before the Extractor's `location_update`; every real move in `update_location()` (Brain or Extractor, qualifier variants excluded) resets it to 0, as does chapter start. At threshold `_loc_hist()` appends a `<location_stale scenes="N">` directive (open a natural path elsewhere, never move the character without the player's choice) and `build_director_prompt()` emits `<current_location stale_scenes="N">` with a LOCATION RULE in the `narrator_guidance` instruction.
 - **PHRASE VARIETY**: `[noun] of a [person], who [relative clause]` pattern — AT MOST ONCE per response; ZERO if it appeared in any of the 3 preceding narrations. Same CROSS-RESPONSE rule for recurring atmospheric motifs (e.g. "Stille", "Kälte", "Dunkelheit") — if same motif anchored the last two narrations, switch sensory dimension.
 - **NPC EMOTIONAL RANGE**: `instinct` field determines emotional register. Three NPCs in a scene ≠ three composed people. Volatile, irrational, disproportionate responses are correct when the instinct warrants them.
 - **PRECISION**: Every sentence carries new information, advances tension, reveals character, or deepens atmosphere. No generic atmospheric filler.
@@ -288,7 +289,7 @@ Players prefix `##` to correct the previous turn. Error type auto-detected; repa
 
 **Momentum Burn**: `process_momentum_burn()` fully restores state from `last_turn_snapshot` (all turn-mutable fields including NPCs, clocks, chaos, resources, `triggered_director_phases`, `time_unchanged_scenes`), then **re-applies the turn's structural effects** the pre-turn snapshot rolled back: `scene_count += 1`, `_apply_brain_location_time()`, background→active reactivation of the targeted NPC, and the chaos release of a reused chaos interrupt. After consequences it re-runs `check_npc_agency()` and `_tick_autonomous_clocks()`, re-checks `_check_story_completion()`, and writes the upgraded roll + new narration back into `last_turn_snapshot` so a follow-up `##` sees the burned result.
 
-**Chaos System**: Scene dice vs chaos threshold (3–9). Match on Miss → Chaos Interrupt (10 types).
+**Chaos System**: Scene dice vs chaos threshold (3–9). Match on Miss → Chaos Interrupt (10 types). `update_chaos_factor()`: MISS +1, WEAK_HIT ±0, STRONG_HIT −1 only with `CHAOS_STRONG_HIT_DROP_CHANCE` (0.5) — strict Mythic pinned chaos at the minimum after a few successes. A fired interrupt releases one point.
 
 **Clocks**: Progress clocks (1–12 segments). `_purge_old_fired_clocks(game, keep_scenes=3)` runs at `process_turn()` start — removes clocks fired >3 scenes ago.
 

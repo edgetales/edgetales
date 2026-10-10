@@ -3306,6 +3306,7 @@ class GameState:
     time_of_day: str = ""      # Coarse time: "early_morning","morning","midday","afternoon","evening","late_evening","night","deep_night"
     time_unchanged_scenes: int = 0   # Transient: scenes elapsed without a time_of_day change (not persisted)
     location_history: list = field(default_factory=list)  # Last 3 locations for continuity
+    scenes_at_location: int = 0      # Scenes played at current_location since the last real move
     # v5.9: Epilogue system
     epilogue_shown: bool = False      # True after epilogue has been generated
     epilogue_dismissed: bool = False   # True if player chose "continue playing" instead of epilogue
@@ -3336,13 +3337,21 @@ class RollResult:
 # CHAOS FACTOR SYSTEM
 # ===============================================================
 
+# Probability that a STRONG_HIT lowers the chaos factor by one. Strict Mythic
+# lowers it on every success, which pins chaos at the minimum (0% interrupt
+# chance) after two or three strong hits and drains tension from successful runs.
+CHAOS_STRONG_HIT_DROP_CHANCE = 0.5
+
+
 def update_chaos_factor(game: GameState, result: str):
-    """Adjust chaos factor based on roll result."""
+    """Adjust chaos factor based on roll result.
+    MISS: +1 (max 9). STRONG_HIT: -1 (min 3) with CHAOS_STRONG_HIT_DROP_CHANCE.
+    WEAK_HIT: no change."""
     if result == "MISS":
         game.chaos_factor = min(9, game.chaos_factor + 1)
     elif result == "STRONG_HIT":
-        game.chaos_factor = max(3, game.chaos_factor - 1)
-    # WEAK_HIT: no change
+        if game.chaos_factor > 3 and random.random() < CHAOS_STRONG_HIT_DROP_CHANCE:
+            game.chaos_factor -= 1
 
 
 def check_chaos_interrupt(game: GameState) -> Optional[str]:
@@ -3389,6 +3398,11 @@ def _is_forward_time(old: str, new: str) -> bool:
 # Narrator prompt and Director context.  Chosen to be earlier than the Elvira
 # violation threshold (10) so the engine self-corrects before the warning fires.
 TIME_STALE_THRESHOLD = 5
+
+# Scenes at the same location before the Narrator is asked to open a natural path
+# elsewhere and the Director gets a LOCATION RULE. The player still decides
+# whether to move — the engine never relocates the character on its own.
+LOCATION_STALE_THRESHOLD = 5
 
 # TIME_LABELS (display) are now in i18n.py
 
@@ -3485,6 +3499,7 @@ def update_location(game: GameState, new_location: str):
             game.location_history.append(game.current_location)
         game.location_history = game.location_history[-5:]
     game.current_location = new_location
+    game.scenes_at_location = 0
 
 
 def _apply_brain_location_time(game: GameState, brain: dict):
@@ -3549,7 +3564,7 @@ _SNAPSHOT_SCALAR_FIELDS = (
     "scene_count", "chaos_factor", "crisis_mode", "game_over",
     "epilogue_shown", "epilogue_dismissed",
     "current_location", "current_scene_context",
-    "time_of_day", "time_unchanged_scenes",
+    "time_of_day", "time_unchanged_scenes", "scenes_at_location",
 )
 # Mutable containers — deep-copied on snapshot AND on restore.
 _SNAPSHOT_DEEP_FIELDS = (
@@ -5680,7 +5695,9 @@ def _apply_narrator_metadata(game: GameState, metadata: dict,
     else:
         log("[Metadata] scene_context empty — current_scene_context unchanged", level="warning")
 
-    # Location update
+    # Location update — count this scene at the current place first; a real move
+    # (here or via the Brain before the Narrator) resets the counter.
+    game.scenes_at_location += 1
     new_loc = metadata.get("location_update")
     if new_loc and new_loc.strip().lower() not in ("none", "null", "same", ""):
         update_location(game, new_loc.strip())
@@ -6176,6 +6193,12 @@ def build_director_prompt(game: GameState, latest_narration: str,
         _time_block = f'\n<current_time{_stale_attr}>{html.escape(game.time_of_day)}</current_time>'
     else:
         _time_block = ""
+    if game.current_location:
+        _loc_stale = game.scenes_at_location
+        _loc_attr = (f' stale_scenes="{_loc_stale}"'
+                     if _loc_stale >= LOCATION_STALE_THRESHOLD else "")
+        _time_block += (f'\n<current_location{_loc_attr}>'
+                        f'{html.escape(game.current_location)}</current_location>')
 
     return f"""<setting genre="{_xa(game.setting_genre)}" tone="{_xa(game.setting_tone)}"/>{_time_block}
 
@@ -6203,7 +6226,7 @@ TONE RULE: narrator_guidance and npc_guidance MUST honor the story's tone ("{_xa
 
 Field instructions:
 - scene_summary: 2-3 sentence summary of what happened and WHY it matters (in {lang})
-- narrator_guidance: Specific direction for the next 1-2 scenes (in {lang}). When relevant, anchor the guidance to the thematic_thread from <story_arc> — surface the aspect of it most alive in the current moment. TIME RULE: If <current_time stale_scenes> is present in context, time of day has not visibly advanced for that many scenes — your narrator_guidance MUST include a directive to anchor the next scene with at least one concrete atmospheric time cue (a shift in light quality, temperature, or ambient sound). FINAL ACT RULE: When phase is "ketsu_resolution" or "resolution", the insight and revelation phase is over. narrator_guidance MUST push toward a concrete, irreversible action or choice — not toward further reflection on what has already been established. Each scene in the final act should change something permanently: a decision made, a door closed, a relationship transformed. If the player has been circling the same existential question for two or more scenes, name that directly in your guidance and force a new variable into the scene.
+- narrator_guidance: Specific direction for the next 1-2 scenes (in {lang}). When relevant, anchor the guidance to the thematic_thread from <story_arc> — surface the aspect of it most alive in the current moment. TIME RULE: If <current_time stale_scenes> is present in context, time of day has not visibly advanced for that many scenes — your narrator_guidance MUST include a directive to anchor the next scene with at least one concrete atmospheric time cue (a shift in light quality, temperature, or ambient sound). LOCATION RULE: If <current_location stale_scenes> is present, the story has stayed at one place for that many scenes — your narrator_guidance MUST name a concrete reason or opportunity to move to a different place (a lead, a summons, a threat, a need), unless the current confrontation must resolve there first. The player decides whether to go. FINAL ACT RULE: When phase is "ketsu_resolution" or "resolution", the insight and revelation phase is over. narrator_guidance MUST push toward a concrete, irreversible action or choice — not toward further reflection on what has already been established. Each scene in the final act should change something permanently: a decision made, a door closed, a relationship transformed. If the player has been circling the same existential question for two or more scenes, name that directly in your guidance and force a new variable into the scene.
 - npc_guidance: Array of {{"npc_id": "npc_1", "guidance": "what this NPC should do/feel next"}} — guidance text in {lang}
 - pacing: one of tension_rising, building, climax, breather, resolution
 - npc_reflections: Only for NPCs listed in <reflect> tags. NPCs with status=lore or status=deceased appear in the overview for context only — NEVER include them in npc_reflections. Each object has:
@@ -6642,11 +6665,24 @@ def _time_ctx(game: "GameState") -> str:
 
 
 def _loc_hist(game: "GameState") -> str:
-    """Escaped <prev_locations> element, or empty string if location_history is empty."""
-    if not game.location_history:
-        return ""
-    locs = ", ".join(html.escape(loc) for loc in game.location_history[-3:])
-    return f'\n<prev_locations>{locs}</prev_locations>'
+    """Escaped <prev_locations> element (empty if location_history is empty), plus a
+    <location_stale> directive once the story has stayed LOCATION_STALE_THRESHOLD or
+    more scenes at the current place: the Narrator opens a natural path elsewhere
+    but never moves the character without the player's choice."""
+    out = ""
+    if game.location_history:
+        locs = ", ".join(html.escape(loc) for loc in game.location_history[-3:])
+        out = f'\n<prev_locations>{locs}</prev_locations>'
+    stale = game.scenes_at_location
+    if stale >= LOCATION_STALE_THRESHOLD:
+        out += (f'\n<location_stale scenes="{stale}">The story has stayed at this location'
+                f' for {stale} scenes. Open a natural path elsewhere in this scene: a lead'
+                f' that points to another place, a summons, a threat that makes staying'
+                f' costly, or a need that can only be met somewhere else. If the current'
+                f' confrontation must resolve here, resolve it and plant the exit for'
+                f' afterwards. Offer the path — never move the character without the'
+                f' player\'s choice.</location_stale>')
+    return out
 
 
 def build_new_game_prompt(game: GameState) -> str:
@@ -7598,7 +7634,7 @@ SAVE_FIELDS = [
     # v5.7: Content boundaries
     "player_wishes", "content_lines",
     # v5.8: Temporal & spatial consistency
-    "time_of_day", "location_history",
+    "time_of_day", "location_history", "scenes_at_location",
     # v5.9: Epilogue system
     "epilogue_shown",
     "epilogue_dismissed",
@@ -8577,6 +8613,7 @@ def _start_new_chapter_impl(client: anthropic.Anthropic, game: GameState,
     game.time_of_day = ""      # Reset -- new chapter, new time context
     game.time_unchanged_scenes = 0
     game.location_history = []  # Reset -- new chapter, fresh location tracking
+    game.scenes_at_location = 0
     game.director_guidance = {}  # Reset -- old pacing/guidance shouldn't carry over
 
     # Reset exit-suppression flags: scene_count resets to 1 at chapter start, so any
