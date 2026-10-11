@@ -1373,16 +1373,18 @@ def _find_npc(game, npc_ref: str) -> Optional[dict]:
     for n in game.npcs:
         if n.get("id") == npc_ref:
             return n
-    # 2. Normalized name match — collapses hyphens, underscores, whitespace variants
+    # 2. Normalized name match — collapses hyphens, underscores, whitespace variants.
+    #    A living namesake wins over a dead one: otherwise a reference to the
+    #    living "Ilse" would hit (and resurrect) the deceased "Ilse".
     ref_norm = _normalize_for_match(npc_ref)
-    for n in game.npcs:
-        if _normalize_for_match(n.get("name", "")) == ref_norm:
-            return n
-    # 3. Normalized alias match
-    for n in game.npcs:
-        for alias in n.get("aliases", []):
-            if _normalize_for_match(alias) == ref_norm:
-                return n
+    named = [n for n in game.npcs if _normalize_for_match(n.get("name", "")) == ref_norm]
+    if named:
+        return next((n for n in named if n.get("status") != "deceased"), named[0])
+    # 3. Normalized alias match (same preference)
+    aliased = [n for n in game.npcs
+               if any(_normalize_for_match(a) == ref_norm for a in n.get("aliases", []))]
+    if aliased:
+        return next((n for n in aliased if n.get("status") != "deceased"), aliased[0])
     # 3b. Title-aware core match: finds "Eva" when stored as "Dr. Eva", and vice versa.
     #     Strips _NAME_TITLES from both sides and compares the remaining name cores.
     #     Only fires when there is exactly ONE unambiguous match — if two NPCs share
@@ -1978,6 +1980,7 @@ def _process_npc_renames(game, json_text: str):
                     _reactivate_npc(npc, reason="title variant reappeared")
                 log(f"[NPC] npc_renames: title variant '{old_name}' ↔ '{new_name}' "
                     f"— primary='{titled}', alias='{bare}'")
+                _absorb_duplicate_npc(game, npc, npc["name"])   # "Kress" → existing "Hauptmann Kress"
                 continue
 
             _merge_npc_identity(npc, new_name, r.get("description", ""), game=game)
@@ -2029,7 +2032,9 @@ def _absorb_duplicate_npc(game, original: dict, merged_name: str):
     carried by a rich established character ("Hanna") — the established character's
     data must win."""
     merged_norm = _normalize_for_match(merged_name)
-    for dup in game.npcs:
+    for dup in list(game.npcs):     # every namesake (name or alias) is absorbed
+        if dup not in game.npcs:
+            continue
         dup_name_norm = _normalize_for_match(dup.get("name", ""))
         dup_alias_norms = {_normalize_for_match(a) for a in dup.get("aliases", [])}
         dup_matches = (dup_name_norm == merged_norm or merged_norm in dup_alias_norms)
@@ -2127,7 +2132,6 @@ def _absorb_duplicate_npc(game, original: dict, merged_name: str):
         _apply_name_sanitization(original)
         # Consolidate: merged memory lists may now exceed MAX_NPC_MEMORY_ENTRIES
         _consolidate_memory(original)
-        break  # Only one duplicate expected
 
 
 def _process_npc_details(game, json_text: str, world_addition: str = ""):
@@ -2350,8 +2354,11 @@ def _process_new_npcs(game, json_text: str):
             # Check if this NPC already exists (normalized name match, possibly background)
             if name_norm in existing_names:
                 # Reactivate background/lore/deceased NPCs that reappear in narration
-                existing = next((n for n in game.npcs
-                                 if _normalize_for_match(n["name"]) == name_norm), None)
+                # Prefer a living namesake: a dead "Ilse" must not be resurrected
+                # while a second, living "Ilse" already exists.
+                _same = [n for n in game.npcs if _normalize_for_match(n["name"]) == name_norm]
+                existing = next((n for n in _same if n.get("status") != "deceased"),
+                                _same[0] if _same else None)
                 if existing and existing.get("status") in ("background", "lore"):
                     _reactivate_npc(existing, reason="reappeared in new_npcs")
                 elif existing and existing.get("status") == "deceased":
@@ -2399,6 +2406,7 @@ def _process_new_npcs(game, json_text: str):
                         if fuzzy_hit.get("status") in ("background", "lore"):
                             _reactivate_npc(fuzzy_hit, reason="title variant reappeared")
                         log(f"[NPC] Title variant via fuzzy: primary='{titled}', alias='{bare}'")
+                        _absorb_duplicate_npc(game, fuzzy_hit, fuzzy_hit["name"])
                     else:
                         _merge_npc_identity(fuzzy_hit, nd["name"], nd.get("description", ""), game=game)
                     existing_names.add(name_norm)

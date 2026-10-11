@@ -421,7 +421,7 @@ MISS (all three): bond -1, spirit -1 or -2. Disposition ladder: `hostile → dis
 
 ### Robustness Against Malformed Model Output
 - **NPC names** go through `_sanitize_npc_name()` (whitespace collapsed, parentheticals → aliases, capped at `NPC_NAME_MAX_CHARS` by `_cap_npc_name()`); an empty result means "skip". `_is_descriptor_name()` treats a blank name as a placeholder.
-- **One name, one character:** every rename path ends in `_absorb_duplicate_npc()` (also called by `_merge_npc_identity()` when `game` is passed): a namesake is merged in, `about_npc` references are re-pointed, deceased namesakes are never absorbed.
+- **One name, one character:** every rename path ends in `_absorb_duplicate_npc()` (also called by `_merge_npc_identity()` when `game` is passed): every namesake (name or alias) is merged in, title-variant renames included; `about_npc` references are re-pointed, deceased namesakes are never absorbed. `_find_npc()` prefers a living namesake over a deceased one for name/alias matches, and new/lore NPCs are matched on their stored (sanitized, capped) name.
 - **Clocks** from models pass `_sanitize_new_clock()` (name required, `CLOCK_MIN_SEGMENTS`-`CLOCK_MAX_SEGMENTS`, threat/scheme, `filled < segments`); `load_game()` repairs stored clocks with unusable numbers. `_sync_clock_owners()` runs after metadata, Director and correction batches (and on load) so owners follow renames.
 - **Simulation:** a Monte-Carlo harness with an adversarial fake AI (random/invalid IDs, blank and overlong names, broken clocks, injected API failures, burns, corrections, save/load, chapters) found these cases; `tests/test_robustness.py` pins them.
 

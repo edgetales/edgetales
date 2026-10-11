@@ -186,3 +186,38 @@ def test_overlong_name_reappearing_is_not_recreated(game):
     _meta(game, new_npcs=[{"name": long_name + "yy", "description": "x", "disposition": "neutral"}])
     E._process_lore_npcs(game, [{"name": long_name + "z", "description": "x"}])
     assert len([n for n in game.npcs if n["name"].startswith("xxx")]) == 1
+
+
+def test_exact_new_npc_prefers_living_namesake_over_resurrection(game):
+    game.npcs.append(make_npc("npc_2", "Ilse", status="deceased"))
+    game.npcs.append(make_npc("npc_3", "Ilse"))
+    _meta(game, new_npcs=[{"name": "Ilse", "description": "x", "disposition": "neutral"}])
+    assert E._find_npc(game, "npc_2")["status"] == "deceased"
+    assert len(game.npcs) == 3
+
+
+def test_memory_update_reaches_living_namesake_not_the_dead(game):
+    game.npcs.append(make_npc("npc_2", "Ilse", status="deceased"))
+    game.npcs.append(make_npc("npc_3", "Ilse"))
+    assert E._find_npc(game, "Ilse")["id"] == "npc_3"
+    _meta(game, memory_updates=[{"npc_id": "Ilse", "event": "e", "emotional_weight": "neutral",
+                                 "about_npc": None, "absent": None, "new_npc_name": None}])
+    assert E._find_npc(game, "npc_2")["status"] == "deceased"
+
+
+def test_title_variant_rename_onto_existing_name_absorbs(game):
+    game.npcs.append(make_npc("npc_2", "Kress"))
+    game.npcs.append(make_npc("npc_3", "Hauptmann Kress"))
+    _meta(game, npc_renames=[{"npc_id": "npc_2", "new_name": "Hauptmann Kress"}])
+    assert _names(game).count("Hauptmann Kress") == 1
+
+
+def test_absorb_takes_every_namesake(game):
+    game.npcs.append(make_npc("npc_2", "Dr. Mara", aliases=["Ilse Voss"]))
+    game.npcs.append(make_npc("npc_3", "Ilse Voss", status="background"))
+    game.npcs.append(make_npc("npc_4", "Die Fremde"))
+    E._apply_correction_ops(game, [{"op": "npc_edit", "npc_id": "npc_4",
+                                    "fields": {"name": "Ilse Voss"}}])
+    holders = [n for n in game.npcs if n["name"] == "Ilse Voss"
+               or "Ilse Voss" in n.get("aliases", [])]
+    assert len(holders) == 1
