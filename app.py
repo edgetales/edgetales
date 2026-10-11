@@ -138,7 +138,7 @@ from engine import (
     run_deferred_director, generate_epilogue,
     COGM_SIGNALS, coop_state, coop_waiting_for_cogm, coop_submit_answer,
     coop_add_signal, coop_remove_signal, coop_start_session, coop_end_session,
-    coop_public_view, generate_cogm_question,
+    coop_public_view, coop_reveal, generate_cogm_question,
 )
 from i18n import (
     t, UI_LANGUAGES, DEFAULT_LANG,
@@ -3267,6 +3267,8 @@ def open_cockpit(sess: "CoopLive") -> None:
                         extra = t(f"coop.val_{sg['value']}", lang)
                     elif sg.get("npc_name"):
                         extra = sg["npc_name"] + (f" + {sg['npc2_name']}" if sg.get("npc2_name") else "")
+                        if sg.get("text"):
+                            extra += f": {sg['text']}"
                     else:
                         extra = sg.get("text", "")
                     if sg.get("scenes_left"):
@@ -3354,6 +3356,12 @@ def open_cockpit(sess: "CoopLive") -> None:
                     for st in ("push_npc", "prepare_betrayal", "prepare_reconciliation"):
                         ui.button(_coop_signal_label(st, lang),
                                   on_click=lambda x=st: _send(x, npc_id=npc_sel.value)).props("outline dense no-caps size=sm")
+                line_inp = ui.input(t("coop.text_npc_line", lang)).props("maxlength=300 dense").classes("w-full mt-2")
+
+                def _npc_line():
+                    _send("npc_line", npc_id=npc_sel.value, text=line_inp.value or "")
+                    line_inp.value = ""
+                ui.button(_coop_signal_label("npc_line", lang), on_click=_npc_line).props("outline dense no-caps size=sm")
                 npc2_sel = ui.select(npc2_opts, value="player", label=t("coop.npc2_select", lang)).classes("w-full mt-2")
                 ui.button(_coop_signal_label("amplify_chemistry", lang),
                           on_click=lambda: _send("amplify_chemistry", npc_id=npc_sel.value,
@@ -3409,16 +3417,65 @@ def open_coop_menu(s: dict) -> None:
         if role == "host" and sess.host_s is s:
             ui.label(_coop_status_text(sess, lang)).classes("text-sm")
             with ui.column().classes("w-full gap-2 mt-2"):
+                ui.button(t("coop.reveal", lang), icon="theater_comedy",
+                          on_click=lambda: (dlg.close(), open_coop_reveal(sess.game))).props("outline no-caps").classes("w-full")
                 ui.button(t("coop.pause", lang), icon="pause", on_click=lambda: _end("pause")).props("outline no-caps").classes("w-full")
                 ui.button(t("coop.solo", lang), icon="person", on_click=lambda: _end("solo")).props("outline no-caps").classes("w-full")
                 ui.button(t("coop.remove", lang), icon="person_remove", on_click=lambda: _end("remove")).props("flat no-caps").classes("w-full text-red-300")
         elif role == "cogm":
             ui.label(t("coop.cogm_of", lang, host=sess.host)).classes("text-sm")
+            ui.button(t("coop.reveal", lang), icon="theater_comedy",
+                      on_click=lambda: (dlg.close(), open_coop_reveal(sess.game))).props("outline no-caps").classes("w-full mt-2")
             ui.button(t("coop.leave", lang), icon="logout", on_click=lambda: _end("leave")).props("outline no-caps").classes("w-full mt-2")
         elif role == "host":
             ui.label(t("coop.self_busy", lang)).classes("text-sm")
         else:
             _render_invite_form(s, dlg)
+            game = s.get("game")
+            if game is not None and isinstance(game.coop, dict) and game.coop.get("seeds"):
+                ui.separator().classes("my-2")
+                ui.button(t("coop.reveal", lang), icon="theater_comedy",
+                          on_click=lambda: (dlg.close(), open_coop_reveal(game))).props("flat no-caps").classes("w-full")
+    dlg.open()
+
+
+def open_coop_reveal(game: Optional[GameState]) -> None:
+    """"Behind the scenes": the Co-GM's contributions that already surfaced in
+    the story, scene by scene. Unsurfaced seeds are only counted (no spoilers)."""
+    if game is None:
+        return
+    lang = L()
+    data = coop_reveal(game)
+    with ui.dialog() as dlg, ui.card().classes("w-full p-4").style(
+            "max-width: 560px; max-height: 85vh; overflow-y: auto"):
+        dlg.props(f'aria-label="{t("coop.reveal", lang)}"')
+        with ui.row().classes("w-full items-center justify-between"):
+            ui.label(f"{E['mask']} {t('coop.reveal', lang)}").classes("text-lg font-bold")
+            ui.button(icon="close", on_click=dlg.close).props(
+                f'flat round dense aria-label="{t("coop.close", lang)}"')
+        if data["partner"]:
+            ui.label(t("coop.reveal_intro", lang, name=data["partner"])).classes("text-sm").style(
+                "color: var(--text-secondary)")
+        if not data["items"]:
+            ui.label(t("coop.reveal_empty", lang)).classes("text-sm mt-2")
+        for it in data["items"]:
+            kind = it["kind"]
+            if kind == "now":
+                label = t("coop.reveal_answer", lang)
+            elif kind == "answer":
+                label = t("coop.kind_answer", lang)
+            else:
+                label = t(f"coop.sig_{kind}", lang)
+            with ui.column().classes("w-full gap-0 mt-2").style(
+                    "border-left: 3px solid var(--accent-light); padding-left: 0.75rem"):
+                ui.label(f"{t('coop.reveal_scene', lang, chapter=it['chapter'], scene=it['scene'])} - {label}").classes(
+                    "text-xs font-semibold").style("color: var(--accent-light)")
+                if it.get("question"):
+                    ui.markdown(f"*{html_mod.escape(it['question'])}*").classes("text-sm")
+                ui.label(it["text"]).classes("text-sm").style("word-break: break-word")
+        if data["hidden"]:
+            ui.label(t("coop.reveal_hidden", lang, n=data["hidden"])).classes("text-xs mt-3").style(
+                "color: var(--text-secondary)")
     dlg.open()
 
 

@@ -670,6 +670,14 @@ _STRINGS = {
         "aria.coop_status": "Co-op-Status",
         "aria.coop_question": "Frage des Erz\u00e4hlers an dich",
         "aria.remove_signal": "Signal entfernen",
+        "coop.reveal": "Hinter den Kulissen",
+        "coop.reveal_intro": "Was {name} zur Geschichte beigetragen hat - Szene f\u00fcr Szene:",
+        "coop.reveal_empty": "Bisher ist noch nichts vom Co-Spielleiter in der Geschichte aufgetaucht.",
+        "coop.reveal_hidden": "{n} weitere Beitr\u00e4ge warten noch darauf, in der Geschichte aufzutauchen.",
+        "coop.reveal_scene": "Kapitel {chapter}, Szene {scene}",
+        "coop.reveal_answer": "Antwort",
+        "coop.sig_npc_line": "Figur sprechen lassen",
+        "coop.text_npc_line": "Was soll die Figur sagen oder tun?",
     },
 
     # ── ENGLISH ──────────────────────────────────────────────
@@ -1210,6 +1218,14 @@ _STRINGS = {
         "aria.coop_status": "Co-op status",
         "aria.coop_question": "The narrator's question for you",
         "aria.remove_signal": "Remove signal",
+        "coop.reveal": "Behind the scenes",
+        "coop.reveal_intro": "What {name} contributed to the story - scene by scene:",
+        "coop.reveal_empty": "Nothing from the Co-GM has surfaced in the story yet.",
+        "coop.reveal_hidden": "{n} more contributions are still waiting to surface in the story.",
+        "coop.reveal_scene": "Chapter {chapter}, scene {scene}",
+        "coop.reveal_answer": "Answer",
+        "coop.sig_npc_line": "Let a character speak",
+        "coop.text_npc_line": "What should the character say or do?",
     },
 }
 

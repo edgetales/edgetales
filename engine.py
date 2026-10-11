@@ -7295,6 +7295,8 @@ COGM_SIGNALS = {
                           "prompt": "Over many scenes, let small cracks appear in {npc}'s reliability - slow erosion of trust, never a sudden turn."},
     "prepare_reconciliation": {"kind": "persistent", "needs": "npc",
                           "prompt": "Over many scenes, {npc} may slowly open up towards the protagonist - permission for the arc, no forced change."},
+    "npc_line":          {"kind": "once", "needs": "npc_text",
+                          "prompt": "Let {npc} say or do this in this scene, in their own voice - adapt the wording to the moment, keep the intent: {text}"},
     "amplify_chemistry": {"kind": "once", "needs": "npc_pair",
                           "prompt": "Give the relationship between {npc} and {npc2} room in this scene."},
     # World & lore (planted content is stored as seeds, see coop_add_signal)
@@ -7406,7 +7408,8 @@ def coop_submit_answer(game: GameState, text: str = "", passed: bool = False) ->
     if q.get("type") == "seed":
         if not passed:
             _coop_add_seed(c, "answer", text, question=q.get("text", ""),
-                           npc_id=q.get("npc_id", ""), scene=game.scene_count)
+                           npc_id=q.get("npc_id", ""), scene=game.scene_count,
+                           chapter=game.chapter_number)
         c["answer"] = None
     else:
         c["answer"] = {"question_id": q["id"], "question": q.get("text", ""),
@@ -7415,9 +7418,9 @@ def coop_submit_answer(game: GameState, text: str = "", passed: bool = False) ->
 
 
 def _coop_add_seed(c: dict, kind: str, text: str, question: str = "",
-                   npc_id: str = "", scene: int = 0) -> dict:
+                   npc_id: str = "", scene: int = 0, chapter: int = 1) -> dict:
     seed = {"id": _coop_next_id(c, "s"), "kind": kind, "question": question,
-            "text": text, "npc_id": npc_id, "scene": scene,
+            "text": text, "npc_id": npc_id, "scene": scene, "chapter": chapter,
             "used": False, "used_scene": None}
     c["seeds"].append(seed)
     if len(c["seeds"]) > COGM_MAX_SEEDS:
@@ -7443,13 +7446,16 @@ def coop_add_signal(game: GameState, sig_type: str, value: str = "", text: str =
         return None
     if needs == "text" and not text:
         return None
-    if needs in ("npc", "npc_pair") and not _find_npc(game, npc_id):
+    if needs in ("npc", "npc_pair", "npc_text") and not _find_npc(game, npc_id):
+        return None
+    if needs == "npc_text" and not text:
         return None
     if needs == "npc_pair":
         if npc2_id != "player" and (not _find_npc(game, npc2_id) or npc2_id == npc_id):
             return None
     if spec["kind"] == "seed":
-        return _coop_add_seed(c, sig_type, text, scene=game.scene_count)
+        return _coop_add_seed(c, sig_type, text, scene=game.scene_count,
+                              chapter=game.chapter_number)
     if spec["kind"] == "single":
         c["signals"] = [s for s in c["signals"] if s.get("type") != sig_type]
     elif spec["kind"] == "persistent":
@@ -7462,7 +7468,7 @@ def coop_add_signal(game: GameState, sig_type: str, value: str = "", text: str =
     if len(c["signals"]) >= COGM_MAX_SIGNALS:
         return None
     sig = {"id": _coop_next_id(c, "c"), "type": sig_type, "value": value, "text": text,
-           "npc_id": npc_id if needs in ("npc", "npc_pair") else "",
+           "npc_id": npc_id if needs in ("npc", "npc_pair", "npc_text") else "",
            "npc2_id": npc2_id if needs == "npc_pair" else "",
            "scenes_left": spec.get("scenes") if spec["kind"] == "duration" else None,
            "scene": game.scene_count}
@@ -7536,12 +7542,13 @@ def _coop_begin_turn(game: GameState) -> Optional[dict]:
             # A NOW answer the player's action makes unusable must not be forced —
             # keep it as a seed; the question call marks it used if it surfaced.
             seed = _coop_add_seed(c, "now", ans["text"], question=ans.get("question", ""),
-                                  npc_id=(q or {}).get("npc_id", ""), scene=game.scene_count + 1)
+                                  npc_id=(q or {}).get("npc_id", ""), scene=game.scene_count + 1,
+                                  chapter=game.chapter_number)
             inputs["answer"]["seed_id"] = seed["id"]
     keep = []
     for s in c.get("signals", []):
         spec = COGM_SIGNALS.get(s.get("type"), {})
-        if spec.get("needs") in ("npc", "npc_pair") and not _find_npc(game, s.get("npc_id", "")):
+        if spec.get("needs") in ("npc", "npc_pair", "npc_text") and not _find_npc(game, s.get("npc_id", "")):
             continue                                  # NPC gone (merged/removed)
         if spec.get("kind") in ("persistent", "single"):
             npc = _find_npc(game, s.get("npc_id", "")) if s.get("npc_id") else None
@@ -7751,6 +7758,30 @@ def generate_cogm_question(client: anthropic.Anthropic, game: GameState, narrati
         c["questions_asked"] = int(c.get("questions_asked", 0)) + 1
         log(f"[CoGM] {qtype.upper()} question: {q['text'][:100]}")
     return q
+
+
+def coop_reveal(game: GameState) -> dict:
+    """"Behind the scenes": what the Co-GM contributed that already happened in
+    the story — every NOW answer (used in the scene it was given for) and every
+    seed, rumour, secret or false trail that surfaced. Unsurfaced content is
+    only counted, so the reveal never spoils what is still to come."""
+    c = coop_state(game)
+    items, hidden = [], 0
+    for s in c["seeds"]:
+        kind = s.get("kind", "answer")
+        if kind == "now":
+            scene = s.get("scene")
+        elif s.get("used"):
+            scene = s.get("used_scene")
+        else:
+            hidden += 1
+            continue
+        items.append({"chapter": int(s.get("chapter") or 1), "scene": int(scene or 0),
+                      "kind": kind, "question": s.get("question", ""),
+                      "text": s.get("text", ""),
+                      "npc_name": _coop_npc_name(game, s.get("npc_id", ""))})
+    items.sort(key=lambda i: (i["chapter"], i["scene"]))
+    return {"items": items, "hidden": hidden, "partner": c.get("partner", "")}
 
 
 def coop_public_view(game: GameState) -> dict:

@@ -316,3 +316,33 @@ def test_cockpit_labels_exist_in_both_languages():
     for lang in ("de", "en"):
         missing = keys - set(i18n._STRINGS[lang])
         assert not missing, (lang, sorted(missing))
+
+
+# --- NPC line + behind-the-scenes reveal ------------------------------------
+
+def test_npc_line_signal(game, prompts):
+    assert E.coop_add_signal(game, "npc_line", npc_id="npc_1", text="  ") is None
+    assert E.coop_add_signal(game, "npc_line", npc_id="npc_404", text="Hallo") is None
+    assert E.coop_add_signal(game, "npc_line", npc_id="npc_1", text="Ich kenne deinen Vater.")
+    E.process_turn(None, game, "a", CFG)
+    assert 'type="npc_line"' in prompts[-1]
+    assert "Mara Voss" in prompts[-1] and "Ich kenne deinen Vater." in prompts[-1]
+    assert game.coop["signals"] == []                      # once
+
+
+def test_reveal_shows_only_what_happened(game, ai, monkeypatch):
+    game.chapter_number = 2
+    _answer_now(game)                                       # NOW answer → scene 4
+    E.coop_add_signal(game, "false_trail", text="Ein roter Schuh")
+    E.coop_add_signal(game, "rumor", text="Der Bürgermeister schuldet etwas")
+    E.coop_start_session(game, "Jana")
+    E.process_turn(None, game, "x", CFG)
+    trail = next(s for s in game.coop["seeds"] if s["kind"] == "false_trail")
+    monkeypatch.setattr(E, "call_cogm_question", lambda *a, **k: {
+        "question": "Q?", "npc_id": "", "seeds_surfaced": [trail["id"]]})
+    E.generate_cogm_question(None, game, "n", CFG)
+    r = E.coop_reveal(game)
+    kinds = [(i["kind"], i["chapter"], i["scene"]) for i in r["items"]]
+    assert ("now", 2, 4) in kinds and ("false_trail", 2, 4) in kinds
+    assert all(i["kind"] != "rumor" for i in r["items"])    # not surfaced → no spoiler
+    assert r["hidden"] == 1 and r["partner"] == "Jana"
