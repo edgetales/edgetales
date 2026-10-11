@@ -14,6 +14,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - The Co-GM sees the story, characters, the protagonist's stats and location - but not the player's inputs, dice, clocks or chaos factor.
 - **Behind the scenes:** player and Co-GM can open a scene-by-scene list of everything the Co-GM contributed that has already appeared in the story - answers, seeds, rumours, secrets and false trails. Content that has not surfaced yet is only counted, so nothing is spoiled. Also available after the session from the co-op menu.
 
+## [0.9.101] - 2026-10-11
+
 ### Changed
 - **Routine actions no longer roll.** Since the switch to the Ironsworn roll in 0.9.99 every action was rolled, so even simple things (opening a door, riding a known road) could fail badly. The Brain now decides per action whether a roll is needed (`roll_needed`): actions without opposition, danger or time pressure - and skills the character clearly has, in calm conditions - simply succeed and are narrated as a clean success, with no dice, consequences, momentum or chaos change. The situation decides, not the verb: climbing a garden wall is routine when nobody is around and a roll when guards patrol. Fights (clash, strike), endure moves and desperate positions always roll, whatever the Brain says. The dice display shows "Routine - no roll needed" (DE/EN) instead of a result, and the help explains the rule. `##` corrections that turn an action into a routine one do not re-roll.
 
