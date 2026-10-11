@@ -178,3 +178,11 @@ def test_metadata_json_roundtrip_after_cleanup(game):
     _meta(game, new_npcs=[{"name": "Ilse (die Wirtin)", "description": "x", "disposition": "loyal"}])
     json.dumps(game.npcs)
     assert game.npcs[-1]["name"] == "Ilse" and "die Wirtin" in game.npcs[-1]["aliases"]
+
+
+def test_overlong_name_reappearing_is_not_recreated(game):
+    long_name = "x" * 70
+    _meta(game, new_npcs=[{"name": long_name, "description": "x", "disposition": "neutral"}])
+    _meta(game, new_npcs=[{"name": long_name + "yy", "description": "x", "disposition": "neutral"}])
+    E._process_lore_npcs(game, [{"name": long_name + "z", "description": "x"}])
+    assert len([n for n in game.npcs if n["name"].startswith("xxx")]) == 1

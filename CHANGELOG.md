@@ -9,7 +9,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 - **Turns could crash on a blank NPC name.** When the AI returned a name made of spaces, the NPC was created with an empty name, and later renames of it made every such turn fail. Blank names are now rejected everywhere NPCs are created or renamed (new characters, lore figures, renames, surname updates, memory stubs, chapter openings, `##` corrections).
-- **Overlong NPC names** (a whole description returned as the name) are cut to 60 characters at a word boundary.
+- **Overlong NPC names** (a whole description returned as the name) are cut to 60 characters at a word boundary; when the same overlong name comes back, it is recognised instead of creating a second character.
 - **Duplicate characters after renames:** when a surname update, title variant, identity reveal or `##` correction gave a character a name another character already carried, both existed side by side. They are now merged into one (memories, aliases and references to the absorbed character carry over). A living character is never merged into a dead namesake, and a `##` split onto an existing name is refused.
 - **Threat clocks that could never fire:** the Director could add a clock that started full, and chapter openings accepted clocks without checking them (0 segments, unknown clock types, already full). All new clocks are validated: 2-10 segments, threat or scheme, never full at the start. Saves with a broken clock are repaired on load, and the sidebar no longer divides by zero.
 - **Clock owners now follow NPC renames immediately** instead of only after the next load.

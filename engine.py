@@ -2309,10 +2309,13 @@ def _process_new_npcs(game, json_text: str):
             if not isinstance(nd, dict):
                 continue
             nd["name"] = " ".join(str(nd.get("name") or "").split())
-            if not _sanitize_npc_name(nd["name"])[0]:
+            _clean = _sanitize_npc_name(nd["name"])[0]
+            if not _clean:
                 log("[NPC] Skipping new NPC with empty name", level="warning")
                 continue
-            name_norm = _normalize_for_match(nd["name"])
+            # Match on the name as it will be stored (capped, parentheticals
+            # stripped) so an over-long name that reappears is not re-created.
+            name_norm = _normalize_for_match(_clean)
 
             # Skip player character (exact match OR any name part overlap)
             name_parts = set(name_norm.split())
@@ -2468,7 +2471,8 @@ def _process_lore_npcs(game, lore_list: list):
         if not isinstance(entry, dict):
             continue
         entry["name"] = " ".join(str(entry.get("name") or "").split())
-        if not _sanitize_npc_name(entry["name"])[0]:
+        _clean = _sanitize_npc_name(entry["name"])[0]
+        if not _clean:
             continue
         name_norm = _normalize_for_match(entry["name"])
 
@@ -2478,7 +2482,7 @@ def _process_lore_npcs(game, lore_list: list):
             continue
 
         # Already known under any status? Update description if richer, done.
-        existing = _find_npc(game, entry["name"])
+        existing = _find_npc(game, entry["name"]) or _find_npc(game, _clean)
         if existing:
             if not existing.get("description") and entry.get("description"):
                 existing["description"] = entry["description"].strip()
