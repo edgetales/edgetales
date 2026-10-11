@@ -103,6 +103,16 @@ body[data-narrator-font="highlight"] .chat-msg.assistant { font-family: system-u
 .stt-spinner-inline { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--text-secondary); border-top-color: var(--accent); border-radius: 50%; animation: stt-spin 0.8s linear infinite; vertical-align: middle; margin-right: 6px; }
 @keyframes stt-spin { to { transform: rotate(360deg); } }
 .q-footer { padding-bottom: var(--sab) !important; }
+/* APP SHELL: the page container is the scroll container, not the document.
+   iOS 26 Safari keeps fixed footers at the edge of the expanded toolbar while
+   document content scrolls into the area the collapsed toolbar frees up
+   (text visible below the input bar). With a non-scrolling document the
+   toolbar never collapses, and the scroller shares the footer's containing
+   block (position: fixed; inset: 0), so no content can appear below it.
+   Quasar's inline padding-top/-bottom/-left keeps content clear of header,
+   footer and desktop drawer. Scroll helpers in app.py target this element. */
+html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+.q-page-container { position: fixed; inset: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
 .rpg-slim-header.q-header { background: rgba(18,18,18,0.85) !important; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); box-shadow: none !important; border-bottom: 1px solid var(--border) !important; min-height: 48px !important; padding-top: var(--sat) !important; padding-left: var(--sal) !important; padding-right: var(--sar) !important; }
 
 /* ==========================================

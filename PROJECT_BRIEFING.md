@@ -408,6 +408,7 @@ MISS (all three): bond -1, spirit -1 or -2. Disposition ladder: `hostile → dis
 - **Desktop Quasar drawer**: `ui.html()` innerHTML strips `class=` and `style=` on child elements inside a persistent drawer. Use `ui.element()` + `.style()` chain.
 - **Touch tooltips**: `ui.tooltip()` unreliable on touch — use `_info_btn()` (click-to-dismiss `ui.menu()`) for settings UI.
 - **`<h2>` font-size**: Browser default sets `<h2>` to ~1.5rem; `em`-based CSS compounds. Use `<div>` with direct `rem` sizing.
+- **App shell — `.q-page-container` is the scroll container**, not the document (`custom_head.html`: `html, body { overflow: hidden }`, `.q-page-container { position: fixed; inset: 0; overflow-y: auto }`). Reason: iOS 26 Safari keeps `position: fixed; bottom: 0` footers at the edge of the expanded toolbar while document content scrolls into the space the collapsed toolbar frees (text visible below the input bar), and it does not render fixed content behind its controls, so no background trick helps. Any scroll JS must target `.q-page-container` (fallback `document.documentElement`), never `window`/`documentElement` alone — see `_scroll_chat_bottom()`. `scrollIntoView()` works unchanged.
 
 ### AI / Tokens
 - **Never read `response.content[0].text`** — use `_response_text(response)`. Models with thinking return a thinking block before the text.
@@ -465,6 +466,7 @@ MISS (all three): bond -1, spirit -1 or -2. Disposition ladder: `hostile → dis
 
 | Decision | Rejected Alternative | Reason |
 |---|---|---|
+| App-shell layout (page container scrolls, document does not) | Document scrolling with fixed Quasar footer | iOS 26 Safari lets document content scroll below a fixed footer when its toolbar collapses |
 | Server-side Python markup for entity highlighting | JavaScript DOM mutation after render | NiceGUI Vue reconciliation silently overwrites all JS DOM changes |
 | Structured Outputs for all AI JSON calls | JSON repair (`json.loads(repair(text))`) | Eliminates entire error class; guarantees valid schema |
 | Deferred Director (runs after narration is displayed + saved, inline-awaited while the processing lock is held) | Blocking Director before player sees narration / detached background task | Player sees narration at ~2.5s; inline await avoids the GameState race and dropped results of a background task |
