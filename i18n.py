@@ -158,13 +158,13 @@ _STRINGS = {
         "user.yes": "Ja",
         "user.no": "Nein",
         "user.exists": 'Spieler "{name}" existiert bereits.',
-        "user.invalid_name": "Ungültiger Name — bitte keine Sonderzeichen wie / \\ : * ? \" < > | und keinen führenden Punkt verwenden.",
+        "user.invalid_name": "Ungültiger Name - bitte keine Sonderzeichen wie / \\ : * ? \" < > | und keinen führenden Punkt verwenden.",
         "user.api_hint": "API Key nach Spielerauswahl in den Einstellungen hinterlegen.",
         "user.api_missing": "Bitte API Key in den Einstellungen eingeben.",
 
         # Language Onboarding (first-time user)
         "onboarding.title": "Willkommen!",
-        "onboarding.subtitle": "W\u00e4hle deine Sprachen \u2014 du kannst sie sp\u00e4ter in den Einstellungen \u00e4ndern.",
+        "onboarding.subtitle": "W\u00e4hle deine Sprachen - du kannst sie sp\u00e4ter in den Einstellungen \u00e4ndern.",
         "onboarding.confirm": "Los geht\u2019s",
 
         # Sidebar — Status
@@ -229,7 +229,7 @@ _STRINGS = {
         "export.location": "Ort",
         "export.attributes": "Geschick {edge}  |  Herz {heart}  |  St\u00e4rke {iron}  |  Schatten {shadow}  |  Verstand {wits}",
         "export.story": "DIE GESCHICHTE",
-        "export.footer": "Ende \u2014 {scenes} Szenen gespielt",
+        "export.footer": "Ende - {scenes} Szenen gespielt",
         "actions.switch_user": "Spieler wechseln",
         "actions.game_loaded": "Spielstand geladen: {name}, Szene {scene}",
         "actions.save_scene": "Szene {n}",
@@ -305,22 +305,22 @@ _STRINGS = {
         # Character Creation
         "creation.welcome": "**Willkommen!** In welcher Welt soll deine Geschichte spielen?",
         "creation.custom_idea": "Eigene Idee...",
-        "creation.custom_genre_title": "**Eigenes Genre** \u2014 Beschreib deine Welt!",
+        "creation.custom_genre_title": "**Eigenes Genre** - Beschreib deine Welt!",
         "creation.genre_placeholder": "Dein Genre...",
         "creation.next": "Weiter",
         "creation.back": "Zur\u00fcck",
-        "creation.tone_question": "**{genre}** \u2014 Welchen Ton soll die Geschichte haben?",
+        "creation.tone_question": "**{genre}** - Welchen Ton soll die Geschichte haben?",
         "creation.custom_tone_btn": "Eigener Ton...",
-        "creation.custom_tone_title": "**Eigener Ton** \u2014 Beschreib die Stimmung!",
+        "creation.custom_tone_title": "**Eigener Ton** - Beschreib die Stimmung!",
         "creation.tone_placeholder": "Stimmung...",
-        "creation.archetype_question": "**{tone}** \u2014 Was f\u00fcr ein Charakter willst du sein?",
+        "creation.archetype_question": "**{tone}** - Was f\u00fcr ein Charakter willst du sein?",
         "creation.name_question": "**Wie hei\u00dft dein Charakter?**",
         "creation.name_placeholder": "Name deines Charakters...",
         "creation.desc_question": "M\u00f6chtest du noch etwas \u00fcber deinen Charakter erz\u00e4hlen? "
                                   "Wer ist er/sie, woher kommt er/sie? Beziehungen, Vergangenheit, Motivation. "
-                                  "*(Optional \u2014 alles was du hier schreibst gilt als feststehende Vergangenheit)*",
+                                  "*(Optional - alles was du hier schreibst gilt als feststehende Vergangenheit)*",
         "creation.desc_placeholder": "z.B. Ein alter Veteran, der nach dem Krieg seine Frau Sophie in der Heimat zur\u00fccklie\u00df...",
-        "creation.almost_done": "**Fast geschafft!** Noch zwei optionale Fragen \u2014 "
+        "creation.almost_done": "**Fast geschafft!** Noch zwei optionale Fragen - "
                                 "du kannst sie auch einfach leer lassen.",
         "creation.wishes_label": "**W\u00fcnsche:** Was soll *zuk\u00fcnftig* in der Geschichte vorkommen?",
         "creation.wishes_placeholder": "z.B. ein treuer Hund als Begleiter, politische Intrigen, magische Artefakte...",
@@ -335,7 +335,7 @@ _STRINGS = {
         "creation.tone_desc": "Ton-Beschreibung",
         "creation.regenerate": "Mit \u00c4nderungen neu generieren",
         "creation.regenerating": "Neuer Entwurf wird erstellt...",
-        "creation.drafts": "**{n} Entw\u00fcrfe** \u2014 W\u00e4hle deinen Favoriten:",
+        "creation.drafts": "**{n} Entw\u00fcrfe** - W\u00e4hle deinen Favoriten:",
         "creation.start": "Abenteuer beginnen!",
         "creation.reroll": "Neu ausw\u00fcrfeln",
         "creation.world_awakens": "Die Welt erwacht...",
@@ -353,14 +353,14 @@ _STRINGS = {
         "game.input_placeholder": "Was tust du?",
         "game.error": "Fehler: {error}",
         "game.invalid_api_key": "Ung\u00fcltiger API Key!",
-        "game.still_processing": "Einen Moment \u2014 die vorherige Eingabe wird noch verarbeitet.",
+        "game.still_processing": "Einen Moment - die vorherige Eingabe wird noch verarbeitet.",
         "game.retry_tooltip": "Erneut versuchen",
         "game.retry_orphan": "Keine Antwort erhalten.",
-        "game.scene_marker": "Szene {n} \u2014 {location}",
+        "game.scene_marker": "Szene {n} - {location}",
 
         # Correction
         "correction.badge": "\u270e Korrigiert",
-        "correction.no_snapshot": "Kein letzter Zug im Speicher \u2014 Korrektur nicht m\u00f6glich.",
+        "correction.no_snapshot": "Kein letzter Zug im Speicher - Korrektur nicht m\u00f6glich.",
 
         # Momentum Burn
         "momentum.question": "**Momentum einsetzen?** {cost} \u2192 0 = **{result}**",
@@ -378,7 +378,7 @@ _STRINGS = {
         "gameover.restart": "Komplett neu",
         "gameover.chapter_msg": "Kapitel {n}...",
         "gameover.flavor": "{name} liegt reglos. Die Geschichte verstummt.",
-        "gameover.flavor_kid": "Das war ein hartes Abenteuer — aber jedes Ende ist ein neuer Anfang.",
+        "gameover.flavor_kid": "Das war ein hartes Abenteuer - aber jedes Ende ist ein neuer Anfang.",
         "gameover.overlay_title": "ABENTEUER ZU ENDE",
 
         # Epilogue
@@ -408,13 +408,13 @@ _STRINGS = {
         "dice.match": "\u2604\uFE0F **Schicksalswurf!** Beide Herausforderungsw\u00fcrfel zeigen {value}!",
         "dice.match_short": "\u2604\uFE0F Schicksalswurf!",
         "dice.chaos_short": "\u26A1 Chaos!",
-        "dice.position": "**Position:** {position} \u2014 **Effekt:** {effect}",
+        "dice.position": "**Position:** {position} - **Effekt:** {effect}",
         "dice.consequences": "**Konsequenzen:** {text}",
 
         # Help
-        "help.title": "Hilfe \u2014 Spielsystem",
+        "help.title": "Hilfe",
         "help.intro_title": "**Wie spielt man?**",
-        "help.intro_text": "Schreib einfach, was dein Charakter tut oder sagt \u2014 in deinen eigenen Worten. "
+        "help.intro_text": "Schreib einfach, was dein Charakter tut oder sagt - in deinen eigenen Worten. "
                            "\"Ich schleiche mich an der Wache vorbei\", "
                            "\"Ich durchsuche die Truhe nach Hinweisen\", "
                            "oder direkte Rede wie \"Ich will mich ja nicht unbeliebt machen, "
@@ -422,7 +422,7 @@ _STRINGS = {
                            "Der Erz\u00e4hler beschreibt, was daraus passiert.",
         "help.freedom_title": "**Spielerfreiheit**",
         "help.freedom_text": "Du kannst alles tun. Orte erkunden, mit Leuten reden, k\u00e4mpfen, verhandeln, "
-                             "weglaufen \u2014 oder ganz eigene Ideen einbringen. "
+                             "weglaufen - oder ganz eigene Ideen einbringen. "
                              "Du kannst auch neue Elemente in die Welt einf\u00fchren, zum Beispiel "
                              "einen Geheimgang erfinden oder einen alten Freund auftauchen lassen.",
         "help.probe_title": "**W\u00fcrfelproben**",
@@ -440,11 +440,11 @@ _STRINGS = {
         "help.result_miss_desc": "Schl\u00e4gt keinen W10 \u2192 Etwas geht schief",
         "help.match_title": "**Schicksalswurf (Match)**",
         "help.match_text": "Wenn beide Herausforderungsw\u00fcrfel (W10) die gleiche Zahl zeigen, ist es ein "
-                           "Schicksalswurf \u2014 etwas Besonderes geschieht! Bei Erfolg + Match = ein "
+                           "Schicksalswurf - etwas Besonderes geschieht! Bei Erfolg + Match = ein "
                            "unerwarteter Vorteil. Bei Fehlschlag + Match = dramatische Eskalation.",
         "help.position_title": "**Position & Effekt**",
         "help.position_text": "Wie gef\u00e4hrlich ist die Situation? Das Spiel sch\u00e4tzt automatisch ein, "
-                              "wie riskant deine Aktion gerade ist \u2014 das beeinflusst, wie hart ein "
+                              "wie riskant deine Aktion gerade ist - das beeinflusst, wie hart ein "
                               "Fehlschlag ausfallen kann.",
         "help.pos_controlled": "<b>Kontrolliert</b>",
         "help.pos_controlled_desc": "Du hast die Oberhand. Selbst bei einem Fehlschlag passiert nichts Schlimmes.",
@@ -453,21 +453,21 @@ _STRINGS = {
         "help.pos_desperate": "<b>Verzweifelt</b>",
         "help.pos_desperate_desc": "Du steckst in der Klemme. Ein Fehlschlag kann richtig wehtun.",
         "help.stats_title": "**Attribute** (7 Punkte, je 0\u20133)",
-        "help.stats_text": "Dein Charakter hat f\u00fcnf Eigenschaften \u2014 sie bestimmen, "
+        "help.stats_text": "Dein Charakter hat f\u00fcnf Eigenschaften - sie bestimmen, "
                            "wie gut du in bestimmten Situationen bist:",
-        "help.stat_edge": "<b>Geschick</b> \u2014 Schnelligkeit, Heimlichkeit",
-        "help.stat_heart": "<b>Herz</b> \u2014 Empathie, Mut, Charme",
-        "help.stat_iron": "<b>St\u00e4rke</b> \u2014 Kraft, Ausdauer",
-        "help.stat_shadow": "<b>Schatten</b> \u2014 List, T\u00e4uschung",
-        "help.stat_wits": "<b>Verstand</b> \u2014 Wissen, Wahrnehmung",
+        "help.stat_edge": "<b>Geschick</b> - Schnelligkeit, Heimlichkeit",
+        "help.stat_heart": "<b>Herz</b> - Empathie, Mut, Charme",
+        "help.stat_iron": "<b>St\u00e4rke</b> - Kraft, Ausdauer",
+        "help.stat_shadow": "<b>Schatten</b> - List, T\u00e4uschung",
+        "help.stat_wits": "<b>Verstand</b> - Wissen, Wahrnehmung",
         "help.tracks_title": "**Leisten** (je 0\u20135)",
         "help.tracks_text": "Drei Leisten zeigen, wie es deinem Charakter geht:",
-        "help.track_health": "<b>Gesundheit</b> \u2014 K\u00f6rperlicher Zustand",
-        "help.track_spirit": "<b>Willenskraft</b> \u2014 Mentaler Zustand",
-        "help.track_supply": "<b>Vorr\u00e4te</b> \u2014 Ressourcen, Ausr\u00fcstung",
+        "help.track_health": "<b>Gesundheit</b> - K\u00f6rperlicher Zustand",
+        "help.track_spirit": "<b>Willenskraft</b> - Mentaler Zustand",
+        "help.track_supply": "<b>Vorr\u00e4te</b> - Ressourcen, Ausr\u00fcstung",
         "help.momentum_title": "**Momentum** (-6 bis +10)",
         "help.momentum_text": "Startet bei 2 und steigt bei Erfolgen. "
-                              "Bei Fehlschl\u00e4gen verlierst du Momentum \u2014 "
+                              "Bei Fehlschl\u00e4gen verlierst du Momentum - "
                               "es kann sogar ins Negative fallen. "
                               "Wenn ein Wurf schlecht ausgeht, kannst du dein gesammeltes Momentum "
                               "einsetzen: Das Ergebnis wird verbessert und die Szene wird nochmal "
@@ -481,7 +481,7 @@ _STRINGS = {
         "help.clocks_text": "Bedrohungen ticken im Hintergrund. Fehlschl\u00e4ge f\u00fcllen Bedrohungsuhren. "
                             "Wenn eine Uhr voll ist, schl\u00e4gt die Bedrohung zu.",
         "help.crisis_title": "**Krise**",
-        "help.crisis_text": "Gesundheit oder Willenskraft auf 0 bedeutet Krise \u2014 "
+        "help.crisis_text": "Gesundheit oder Willenskraft auf 0 bedeutet Krise - "
                             "dein Charakter ist angeschlagen und jeder weitere Fehlschlag wird gef\u00e4hrlicher. "
                             "Wenn beides auf 0 f\u00e4llt, steuert die Geschichte auf ein dramatisches Finale zu.",
         "help.kid_title": "**Kindermodus**",
@@ -513,7 +513,7 @@ _STRINGS = {
         "aria.chaos_medium": "mittel",
         "aria.chaos_high": "hoch",
         "aria.chaos_critical": "kritisch",
-        "aria.chaos_bar": "Chaos {n} von 9 — {level}",
+        "aria.chaos_bar": "Chaos {n} von 9 - {level}",
         "aria.story_progress": "Akt {n} Fortschritt",
         "aria.stat_item": "{label}: {value}",
         "aria.momentum_stat": "Momentum: {current} von {max}",
@@ -532,7 +532,7 @@ _STRINGS = {
         # Settings
         "settings.sr_chat": "Screenreader im Chat",
         "settings.sr_chat_tooltip": "Wenn deaktiviert, ignoriert der Screenreader den Spielverlauf "
-                                    "(Erz\u00e4hlertext und eigene Eingaben). Ideal wenn TTS aktiviert ist \u2014 "
+                                    "(Erz\u00e4hlertext und eigene Eingaben). Ideal wenn TTS aktiviert ist - "
                                     "die Sprachausgabe liest die Geschichte vor, der Screenreader navigiert nur die Men\u00fcs.",
     },
 
@@ -563,13 +563,13 @@ _STRINGS = {
         "user.yes": "Yes",
         "user.no": "No",
         "user.exists": 'Player "{name}" already exists.',
-        "user.invalid_name": "Invalid name — please avoid special characters like / \\ : * ? \" < > | and a leading dot.",
+        "user.invalid_name": "Invalid name - please avoid special characters like / \\ : * ? \" < > | and a leading dot.",
         "user.api_hint": "Set your API key in the settings after selecting a player.",
         "user.api_missing": "Please enter your API key in the settings.",
 
         # Language Onboarding (first-time user)
         "onboarding.title": "Welcome!",
-        "onboarding.subtitle": "Choose your languages \u2014 you can change them later in the settings.",
+        "onboarding.subtitle": "Choose your languages - you can change them later in the settings.",
         "onboarding.confirm": "Let\u2019s go",
 
         # Sidebar — Status
@@ -634,7 +634,7 @@ _STRINGS = {
         "export.location": "Location",
         "export.attributes": "Finesse {edge}  |  Heart {heart}  |  Iron {iron}  |  Shadow {shadow}  |  Wits {wits}",
         "export.story": "THE STORY",
-        "export.footer": "End \u2014 {scenes} scenes played",
+        "export.footer": "End - {scenes} scenes played",
         "actions.switch_user": "Switch Player",
         "actions.game_loaded": "Game loaded: {name}, Scene {scene}",
         "actions.save_scene": "Scene {n}",
@@ -711,22 +711,22 @@ _STRINGS = {
         # Character Creation
         "creation.welcome": "**Welcome!** What world shall your story take place in?",
         "creation.custom_idea": "Custom Idea...",
-        "creation.custom_genre_title": "**Custom Genre** \u2014 Describe your world!",
+        "creation.custom_genre_title": "**Custom Genre** - Describe your world!",
         "creation.genre_placeholder": "Your genre...",
         "creation.next": "Next",
         "creation.back": "Back",
-        "creation.tone_question": "**{genre}** \u2014 What tone should the story have?",
+        "creation.tone_question": "**{genre}** - What tone should the story have?",
         "creation.custom_tone_btn": "Custom Tone...",
-        "creation.custom_tone_title": "**Custom Tone** \u2014 Describe the mood!",
+        "creation.custom_tone_title": "**Custom Tone** - Describe the mood!",
         "creation.tone_placeholder": "Mood...",
-        "creation.archetype_question": "**{tone}** \u2014 What kind of character do you want to be?",
+        "creation.archetype_question": "**{tone}** - What kind of character do you want to be?",
         "creation.name_question": "**What is your character's name?**",
         "creation.name_placeholder": "Your character's name...",
         "creation.desc_question": "Want to tell us more about your character? "
                                   "Who are they, where do they come from? Relationships, past, motivation. "
-                                  "*(Optional \u2014 everything you write here is treated as established history)*",
+                                  "*(Optional - everything you write here is treated as established history)*",
         "creation.desc_placeholder": "e.g. A grizzled veteran who left his wife Sophie behind after the war...",
-        "creation.almost_done": "**Almost done!** Two more optional questions \u2014 "
+        "creation.almost_done": "**Almost done!** Two more optional questions - "
                                 "feel free to leave them blank.",
         "creation.wishes_label": "**Wishes:** What should appear *in the future* of your story?",
         "creation.wishes_placeholder": "e.g. a loyal dog companion, political intrigue, magical artifacts...",
@@ -741,7 +741,7 @@ _STRINGS = {
         "creation.tone_desc": "Tone Description",
         "creation.regenerate": "Regenerate with Changes",
         "creation.regenerating": "Creating new draft...",
-        "creation.drafts": "**{n} Drafts** \u2014 Pick your favorite:",
+        "creation.drafts": "**{n} Drafts** - Pick your favorite:",
         "creation.start": "Begin Adventure!",
         "creation.reroll": "Reroll",
         "creation.world_awakens": "The world awakens...",
@@ -759,14 +759,14 @@ _STRINGS = {
         "game.input_placeholder": "What do you do?",
         "game.error": "Error: {error}",
         "game.invalid_api_key": "Invalid API Key!",
-        "game.still_processing": "One moment \u2014 still processing your previous input.",
+        "game.still_processing": "One moment - still processing your previous input.",
         "game.retry_tooltip": "Retry",
         "game.retry_orphan": "No response received.",
-        "game.scene_marker": "Scene {n} \u2014 {location}",
+        "game.scene_marker": "Scene {n} - {location}",
 
         # Correction
         "correction.badge": "\u270e Corrected",
-        "correction.no_snapshot": "No last turn in memory \u2014 correction not possible.",
+        "correction.no_snapshot": "No last turn in memory - correction not possible.",
 
         # Momentum Burn
         "momentum.question": "**Burn Momentum?** {cost} \u2192 0 = **{result}**",
@@ -784,7 +784,7 @@ _STRINGS = {
         "gameover.restart": "Start Over",
         "gameover.chapter_msg": "Chapter {n}...",
         "gameover.flavor": "{name} lies still. The story falls silent.",
-        "gameover.flavor_kid": "That was a tough adventure — but every ending is a new beginning.",
+        "gameover.flavor_kid": "That was a tough adventure - but every ending is a new beginning.",
         "gameover.overlay_title": "ADVENTURE OVER",
 
         # Epilogue
@@ -814,13 +814,13 @@ _STRINGS = {
         "dice.match": "\u2604\uFE0F **Fateful Roll!** Both challenge dice show {value}!",
         "dice.match_short": "\u2604\uFE0F Fateful Roll!",
         "dice.chaos_short": "\u26A1 Chaos!",
-        "dice.position": "**Position:** {position} \u2014 **Effect:** {effect}",
+        "dice.position": "**Position:** {position} - **Effect:** {effect}",
         "dice.consequences": "**Consequences:** {text}",
 
         # Help
-        "help.title": "Help \u2014 Game System",
+        "help.title": "Help",
         "help.intro_title": "**How do you play?**",
-        "help.intro_text": "Just write what your character does or says \u2014 in your own words. "
+        "help.intro_text": "Just write what your character does or says - in your own words. "
                            "\"I sneak past the guard\", "
                            "\"I search the chest for clues\", "
                            "or direct speech like \"I don\u2019t mean to be rude, "
@@ -828,7 +828,7 @@ _STRINGS = {
                            "The narrator describes what happens next.",
         "help.freedom_title": "**Player Freedom**",
         "help.freedom_text": "You can do anything. Explore places, talk to people, fight, negotiate, "
-                             "run away \u2014 or come up with your own ideas. "
+                             "run away - or come up with your own ideas. "
                              "You can also introduce new elements into the world, like "
                              "inventing a secret passage or having an old friend show up.",
         "help.probe_title": "**Dice Rolls**",
@@ -846,11 +846,11 @@ _STRINGS = {
         "help.result_miss_desc": "Beats neither d10 \u2192 Something goes wrong",
         "help.match_title": "**Fateful Roll (Match)**",
         "help.match_text": "When both challenge dice (d10) show the same number, it's a fateful roll "
-                           "\u2014 something special happens! On a hit + match = an unexpected advantage. "
+                           "- something special happens! On a hit + match = an unexpected advantage. "
                            "On a miss + match = dramatic escalation.",
         "help.position_title": "**Position & Effect**",
         "help.position_text": "How dangerous is the situation? The game automatically judges "
-                              "how risky your action is \u2014 this affects how bad things can get "
+                              "how risky your action is - this affects how bad things can get "
                               "if you fail.",
         "help.pos_controlled": "<b>Controlled</b>",
         "help.pos_controlled_desc": "You have the upper hand. Even a failure won\u2019t hurt much.",
@@ -859,21 +859,21 @@ _STRINGS = {
         "help.pos_desperate": "<b>Desperate</b>",
         "help.pos_desperate_desc": "You\u2019re in serious trouble. Failure can hit hard.",
         "help.stats_title": "**Attributes** (7 points, 0\u20133 each)",
-        "help.stats_text": "Your character has five traits \u2014 they determine "
+        "help.stats_text": "Your character has five traits - they determine "
                            "how good you are in different situations:",
-        "help.stat_edge": "<b>Finesse</b> \u2014 Speed, stealth",
-        "help.stat_heart": "<b>Heart</b> \u2014 Empathy, courage, charm",
-        "help.stat_iron": "<b>Iron</b> \u2014 Strength, endurance",
-        "help.stat_shadow": "<b>Shadow</b> \u2014 Cunning, deception",
-        "help.stat_wits": "<b>Wits</b> \u2014 Knowledge, perception",
+        "help.stat_edge": "<b>Finesse</b> - Speed, stealth",
+        "help.stat_heart": "<b>Heart</b> - Empathy, courage, charm",
+        "help.stat_iron": "<b>Iron</b> - Strength, endurance",
+        "help.stat_shadow": "<b>Shadow</b> - Cunning, deception",
+        "help.stat_wits": "<b>Wits</b> - Knowledge, perception",
         "help.tracks_title": "**Tracks** (0\u20135 each)",
         "help.tracks_text": "Three tracks show how your character is doing:",
-        "help.track_health": "<b>Health</b> \u2014 Physical condition",
-        "help.track_spirit": "<b>Spirit</b> \u2014 Mental condition",
-        "help.track_supply": "<b>Supply</b> \u2014 Resources, equipment",
+        "help.track_health": "<b>Health</b> - Physical condition",
+        "help.track_spirit": "<b>Spirit</b> - Mental condition",
+        "help.track_supply": "<b>Supply</b> - Resources, equipment",
         "help.momentum_title": "**Momentum** (-6 to +10)",
         "help.momentum_text": "Starts at 2 and rises with successes. "
-                              "On a miss you lose momentum \u2014 "
+                              "On a miss you lose momentum - "
                               "it can even drop into the negatives. "
                               "When a roll goes badly, you can spend your built-up momentum: "
                               "The result is upgraded and the scene is re-narrated "
@@ -886,7 +886,7 @@ _STRINGS = {
         "help.clocks_text": "Threats tick in the background. Misses fill threat clocks. "
                             "When a clock fills up, the threat strikes.",
         "help.crisis_title": "**Crisis**",
-        "help.crisis_text": "Health or Spirit at 0 means crisis \u2014 "
+        "help.crisis_text": "Health or Spirit at 0 means crisis - "
                             "your character is struggling and every further failure becomes more dangerous. "
                             "If both hit 0, the story heads toward a dramatic finale.",
         "help.kid_title": "**Kid Mode**",
@@ -917,7 +917,7 @@ _STRINGS = {
         "aria.chaos_medium": "moderate",
         "aria.chaos_high": "high",
         "aria.chaos_critical": "critical",
-        "aria.chaos_bar": "Chaos {n} of 9 — {level}",
+        "aria.chaos_bar": "Chaos {n} of 9 - {level}",
         "aria.story_progress": "Act {n} progress",
         "aria.stat_item": "{label}: {value}",
         "aria.momentum_stat": "Momentum: {current} of {max}",
@@ -936,7 +936,7 @@ _STRINGS = {
         # Settings
         "settings.sr_chat": "Screen reader in chat",
         "settings.sr_chat_tooltip": "When disabled, the screen reader skips the game log "
-                                    "(narrator text and your inputs). Ideal with TTS enabled \u2014 "
+                                    "(narrator text and your inputs). Ideal with TTS enabled - "
                                     "the voice reads the story, the screen reader navigates only menus.",
     },
 }
@@ -1076,8 +1076,8 @@ _DICE_DISPLAY_OPTIONS = {
 }
 
 _NO_VOICE_SAMPLE_LABEL = {
-    "de": "\u2014 Keine (Standard-Stimme) \u2014",
-    "en": "\u2014 None (Default Voice) \u2014",
+    "de": "- Keine (Standard-Stimme) -",
+    "en": "- None (Default Voice) -",
 }
 
 _WHISPER_MODELS = {

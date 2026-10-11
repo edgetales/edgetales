@@ -1003,9 +1003,9 @@ def render_sidebar_status(game: GameState, session=None) -> None:
     if kid: ui.label(f"{E['green_heart']} {t('sidebar.kid_mode', lang)}").classes("text-xs text-green-400")
     tl = get_time_labels(lang)
     t_label = tl.get(game.time_of_day, "") if game.time_of_day else ""
-    t_disp = f" {E['dash']} {t_label}" if t_label else ""
-    _loc_aria = f"{t('aria.location', lang)}: {game.current_location} {E['dash']} {t('sidebar.scene', lang)} {game.scene_count}{t_disp}".replace('"', '&quot;')
-    ui.label(f"{E['pin']} {game.current_location} {E['dash']} {t('sidebar.scene', lang)} {game.scene_count}{t_disp}").classes("text-xs text-gray-400").props(f'aria-label="{_loc_aria}"')
+    t_disp = f" - {t_label}" if t_label else ""
+    _loc_aria = f"{t('aria.location', lang)}: {game.current_location} - {t('sidebar.scene', lang)} {game.scene_count}{t_disp}".replace('"', '&quot;')
+    ui.label(f"{E['pin']} {game.current_location} - {t('sidebar.scene', lang)} {game.scene_count}{t_disp}").classes("text-xs text-gray-400").props(f'aria-label="{_loc_aria}"')
     if game.crisis_mode and not game.game_over:
         ui.label(f"{E['warn']} {t('sidebar.crisis_kid', lang) if kid else t('sidebar.crisis', lang)}").classes("text-sm text-red-400 font-bold mt-2")
     if game.game_over:
@@ -1077,7 +1077,7 @@ def render_sidebar_status(game: GameState, session=None) -> None:
         ui.separator()
         si = E['cherry'] if st_type=="kishotenketsu" else E['book']
         sl_arc = "Kish\u014dtenketsu" if st_type=="kishotenketsu" else t("sidebar.3act", lang)
-        ch_l = f" {E['dash']} {t('sidebar.chapter', lang)} {game.chapter_number}" if game.chapter_number > 1 else ""
+        ch_l = f" - {t('sidebar.chapter', lang)} {game.chapter_number}" if game.chapter_number > 1 else ""
         ui.label(f"{si} {sl_arc}{ch_l}").classes("text-sm font-semibold")
         act_l = t("sidebar.act", lang)
         pl = get_story_phase_labels(lang)
@@ -1087,7 +1087,7 @@ def render_sidebar_status(game: GameState, session=None) -> None:
             elif an == act["act_number"]:
                 p = max(0,min(100,(game.scene_count-sr[0])/max(1,sr[1]-sr[0])*100))
                 _act_aria = t("aria.story_progress", lang, n=an)
-                ui.label(f"{E['play']} {act_l} {an} {E['dash']} {phase}").classes("text-xs font-bold")
+                ui.label(f"{E['play']} {act_l} {an} - {phase}").classes("text-xs font-bold")
                 with ui.element('div').classes('track-bar w-full') \
                         .props(f'role="progressbar" aria-valuenow="{int(p)}" aria-valuemin="0" aria-valuemax="100" aria-label="{_act_aria}"'):
                     ui.element('div').classes('track-fill progress').style(f'width:{p:.0f}%')
@@ -1113,7 +1113,7 @@ def render_sidebar_status(game: GameState, session=None) -> None:
             for n in active_npcs:
                 disp = dl.get(n.get("disposition", "neutral"), dl["neutral"])
                 bond_max = n.get("bond_max", 4)
-                with ui.expansion(f"{disp} {E['dash']} {n['name']}").classes("w-full"):
+                with ui.expansion(f"{disp} - {n['name']}").classes("w-full"):
                     _da = _display_aliases(n.get("aliases", []))
                     alias_str = f"{aka_label} {', '.join(_da)}" if _da else ""
                     with ui.element('div').classes('npc-card'):
@@ -1128,7 +1128,7 @@ def render_sidebar_status(game: GameState, session=None) -> None:
                 for n in background_npcs:
                     disp = dl.get(n.get("disposition", "neutral"), dl["neutral"])
                     bond_max = n.get("bond_max", 4)
-                    with ui.expansion(f"{disp} {E['dash']} {n['name']}").classes("w-full").style("opacity:0.75"):
+                    with ui.expansion(f"{disp} - {n['name']}").classes("w-full").style("opacity:0.75"):
                         _da = _display_aliases(n.get("aliases", []))
                         alias_str = f"{aka_label} {', '.join(_da)}" if _da else ""
                         with ui.element('div').classes('npc-card'):
@@ -1445,7 +1445,7 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                                     is_viewing = (viewing == ch_n)
                                     lbl = f"{E['book']} {t('chapters.chapter_label', lang, n=ch_n)}"
                                     if ch_title:
-                                        lbl += f" — {ch_title}"
+                                        lbl += f" - {ch_title}"
                                     def make_view_ch(n=ch_n, sn=sname):
                                         async def do_view():
                                             msgs, ttl = load_chapter_archive(username, sn, n)
@@ -1662,10 +1662,10 @@ def render_settings() -> None:
             _tip = t("settings.stt_tooltip", lang)
             _info_btn(_tip)
         wm = get_whisper_models(lang)
-        whisper_display = [f"{k} {E['dash']} {v}" for k, v in wm.items()]
-        whisper_map = {f"{k} {E['dash']} {v}": k for k, v in wm.items()}
+        whisper_display = [f"{k} - {v}" for k, v in wm.items()]
+        whisper_map = {f"{k} - {v}": k for k, v in wm.items()}
         cur_whisper = s.get("whisper_size", "medium")
-        cur_whisper_display = f"{cur_whisper} {E['dash']} {wm.get(cur_whisper, '?')}"
+        cur_whisper_display = f"{cur_whisper} - {wm.get(cur_whisper, '?')}"
         whisper_sel = ui.select(whisper_display, label=t("settings.whisper_model", lang), value=cur_whisper_display).classes("w-full")
         whisper_sel.bind_visibility_from(stt_sw, "value")
         ui.separator()
@@ -1932,7 +1932,7 @@ def render_dice_display(rd: dict) -> None:
         chaos_txt = f" {E['dot']} {t('dice.chaos_short', lang)}" if rd.get("chaos_interrupt") else ""
         ui.html(f'{result_label} {E["dot"]} {stat_label}{ph}{match_txt}{chaos_txt}').classes(f'dice-simple {severity} w-full')
     elif setting == 2:  # Detailed
-        header = f"{E['dice']} {result_label} \u2014 {move_label} ({stat_label})"
+        header = f"{E['dice']} {result_label} - {move_label} ({stat_label})"
         if is_match:
             header += f" {E['comet']}"
         if rd.get("chaos_interrupt"):
