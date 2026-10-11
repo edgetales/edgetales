@@ -5,7 +5,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## [Unreleased]
+## [0.9.100] - 2026-10-11
 
 ### Fixed
 - **Turns could crash on a blank NPC name.** When the AI returned a name made of spaces, the NPC was created with an empty name, and later renames of it made every such turn fail. Blank names are now rejected everywhere NPCs are created or renamed (new characters, lore figures, renames, surname updates, memory stubs, chapter openings, `##` corrections).
