@@ -1781,6 +1781,7 @@ def render_help() -> None:
         ui.markdown(t("help.probe_title", lang))
         ui.label(t("help.probe_text", lang)).classes("text-xs text-gray-400")
         ui.html(t("help.probe_detail", lang)).style("font-size:0.85em; line-height:1.8; padding:0.3em 0")
+        ui.label(t("help.routine_text", lang)).classes("text-xs text-gray-400")
         ui.separator()
 
         ui.markdown(t("help.results_title", lang))
@@ -1916,6 +1917,15 @@ def render_dice_display(rd: dict) -> None:
     if isinstance(setting, str):
         setting = _dice_string_to_index(setting)
     if setting == 0: return  # Off
+    if rd.get("routine"):
+        chaos_txt = f" {E['dot']} {t('dice.chaos_short', lang)}" if rd.get("chaos_interrupt") else ""
+        if setting == 2:
+            _mv = get_move_labels(lang).get(rd.get("move", ""), "")
+            _txt = t("dice.routine_detail", lang, move=_mv) if _mv else t("dice.routine", lang)
+        else:
+            _txt = t("dice.routine", lang)
+        ui.html(f'{html_mod.escape(_txt)}{chaos_txt}').classes('dice-simple info w-full')
+        return
     # Always re-translate from codes — stored labels may be from a different language or old save
     rl = get_result_labels(lang)
     ml = get_move_labels(lang)
@@ -2458,6 +2468,11 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
         if not _is_correction and game.scene_count > 1:
             s["messages"].append({"scene_marker":t("game.scene_marker", L(), n=game.scene_count, location=game.current_location)})
         roll_data=None
+        _ll_last = game.session_log[-1] if game.session_log else {}
+        if not roll and _ll_last.get("result") == "routine":
+            # Routine action: no dice - show why, so a missing roll is not a surprise
+            roll_data = {"routine": True, "move": _ll_last.get("move", ""),
+                         "chaos_interrupt": _ll_last.get("chaos_interrupt", "")}
         if roll:
             ll=game.session_log[-1] if game.session_log else {}
             roll_data=build_roll_data(roll, consequences=ll.get("consequences",[]),
