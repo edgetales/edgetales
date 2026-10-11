@@ -121,7 +121,8 @@ def ai(monkeypatch):
 def make_brain(**over):
     b = {
         "type": "action", "move": "face_danger", "stat": "iron", "approach": "",
-        "target_npc": None, "dialog_only": False, "player_intent": "Ich klettere",
+        "target_npc": None, "dialog_only": False, "roll_needed": True,
+        "player_intent": "Ich klettere",
         "world_addition": None, "position": "risky", "effect": "standard",
         "dramatic_question": "", "location_change": None, "time_progression": "none",
     }
