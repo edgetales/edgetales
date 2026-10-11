@@ -5,7 +5,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## [Unreleased]
+## [0.9.98] - 2026-10-11
 
 ### Fixed
 - **iOS Safari: story text scrolled below the input bar.** On iOS 26 Safari the fixed input bar stayed at the edge of the expanded toolbar while the page content scrolled into the space the collapsed toolbar frees up, so narration was visible underneath the input bar. The chat now scrolls inside the page container instead of the whole document (app-shell layout), so nothing can appear below the input bar and Safari's toolbar stays put. Chrome and desktop browsers behave as before.
