@@ -398,6 +398,12 @@ MISS (all three): bond -1, spirit -1 or -2. Disposition ladder: `hostile → dis
 
 ---
 
+### Robustness Against Malformed Model Output
+- **NPC names** go through `_sanitize_npc_name()` (whitespace collapsed, parentheticals → aliases, capped at `NPC_NAME_MAX_CHARS` by `_cap_npc_name()`); an empty result means "skip". `_is_descriptor_name()` treats a blank name as a placeholder.
+- **One name, one character:** every rename path ends in `_absorb_duplicate_npc()` (also called by `_merge_npc_identity()` when `game` is passed): a namesake is merged in, `about_npc` references are re-pointed, deceased namesakes are never absorbed.
+- **Clocks** from models pass `_sanitize_new_clock()` (name required, `CLOCK_MIN_SEGMENTS`-`CLOCK_MAX_SEGMENTS`, threat/scheme, `filled < segments`); `load_game()` repairs stored clocks with unusable numbers. `_sync_clock_owners()` runs after metadata, Director and correction batches (and on load) so owners follow renames.
+- **Simulation:** a Monte-Carlo harness with an adversarial fake AI (random/invalid IDs, blank and overlong names, broken clocks, injected API failures, burns, corrections, save/load, chapters) found these cases; `tests/test_robustness.py` pins them.
+
 ## Known Pitfalls & Anti-Patterns
 
 *Hard-won lessons. Read before making changes.*
@@ -409,6 +415,8 @@ MISS (all three): bond -1, spirit -1 or -2. Disposition ladder: `hostile → dis
 - **Touch tooltips**: `ui.tooltip()` unreliable on touch — use `_info_btn()` (click-to-dismiss `ui.menu()`) for settings UI.
 - **`<h2>` font-size**: Browser default sets `<h2>` to ~1.5rem; `em`-based CSS compounds. Use `<div>` with direct `rem` sizing.
 - **App shell — `.q-page-container` is the scroll container**, not the document (`custom_head.html`: `html, body { overflow: hidden }`, `.q-page-container { position: fixed; inset: 0; overflow-y: auto }`). Reason: iOS 26 Safari keeps `position: fixed; bottom: 0` footers at the edge of the expanded toolbar while document content scrolls into the space the collapsed toolbar frees (text visible below the input bar), and it does not render fixed content behind its controls, so no background trick helps. Any scroll JS must target `.q-page-container` (fallback `document.documentElement`), never `window`/`documentElement` alone — see `_scroll_chat_bottom()`. `scrollIntoView()` works unchanged.
+
+- **Post-turn errors never offer a retry:** `process_player_input()` sets `_turn_applied` once the engine turn returned; a later failure (render, save, TTS, Director) is only reported, because a retry would play the turn twice.
 
 ### AI / Tokens
 - **Never read `response.content[0].text`** — use `_response_text(response)`. Models with thinking return a thinking block before the text.
