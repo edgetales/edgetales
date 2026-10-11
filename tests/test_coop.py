@@ -400,3 +400,57 @@ def test_cockpit_descriptions_exist(game):
     for lang in ("de", "en"):
         for sig_type in E.COGM_SIGNALS:
             assert f"coop.desc_{sig_type}" in i18n._STRINGS[lang], (lang, sig_type)
+
+
+# --- review fixes ------------------------------------------------------------
+
+def test_seed_from_earlier_chapter_is_eligible(game, prompts):
+    E.coop_set_question(game, "Wovor hat Mara Angst?", "seed", npc_id="npc_1")
+    game.scene_count = 12
+    E.coop_submit_answer(game, "Vor tiefem Wasser")
+    game.chapter_number = 2
+    game.scene_count = 1                                     # new chapter restarts scenes
+    E.process_turn(None, game, "a", CFG)
+    assert "Vor tiefem Wasser" in prompts[-1]
+
+
+def test_seed_offers_rotate(game):
+    for i in range(5):
+        E.coop_add_signal(game, "rumor", text=f"Gerücht {i}")
+    game.scene_count += 2
+    first = [s["id"] for s in E._coop_begin_turn(game)["seeds"]]
+    E._coop_drop_turn(game)
+    second = [s["id"] for s in E._coop_begin_turn(game)["seeds"]]
+    E._coop_drop_turn(game)
+    assert len(first) == E.COGM_SEEDS_IN_PROMPT
+    assert set(second) - set(first)                          # newer seeds get their turn
+
+
+def test_end_session_keeps_given_answer_as_seed(game):
+    _answer_now(game, "Ein Bote mit Siegel")
+    E.coop_end_session(game)
+    assert game.coop["answer"] is None
+    seed = game.coop["seeds"][-1]
+    assert seed["kind"] == "now" and seed["text"] == "Ein Bote mit Siegel"
+
+
+def test_correction_relogs_cogm_inputs(game, ai, monkeypatch):
+    _answer_now(game)
+    ai.roll = roll("MISS")
+    E.process_turn(None, game, "Ich greife an", CFG)
+    monkeypatch.setattr(E, "call_correction_brain", lambda *a, **k: {
+        "correction_source": "input_misread", "corrected_input": "Ich rede",
+        "reroll_needed": False, "corrected_stat": "none", "narrator_guidance": "g",
+        "director_useful": False, "state_ops": []})
+    ai.brain = make_brain(move="dialog", stat="none", dialog_only=True)
+    E.process_correction(None, game, "Ich wollte reden", CFG)
+    entry = game.session_log[-1].get("cogm")
+    assert entry and entry["answer"]["text"] == "Marcy, die Sekretärin"
+    assert entry["answer"]["seed_id"]
+
+
+def test_reveal_hides_answer_that_never_reached_a_scene(game):
+    _answer_now(game, "Ein Bote mit Siegel")
+    E.coop_end_session(game)                                 # paused before the next scene
+    r = E.coop_reveal(game)
+    assert r["items"] == [] and r["hidden"] == 1

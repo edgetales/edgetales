@@ -7479,23 +7479,36 @@ def coop_end_session(game: GameState) -> None:
     environment controls (weather, running tension signals) are dropped, because
     nobody is left to answer or change them."""
     c = coop_state(game)
+    ans = c.get("answer")
+    if ans and not ans.get("passed") and ans.get("text"):
+        # An answer the Co-GM already gave is kept: it can still surface later
+        q = c.get("question") or {}
+        _coop_add_seed(c, "now", ans["text"], question=ans.get("question", ""),
+                       npc_id=q.get("npc_id", ""), scene=game.scene_count + 1,
+                       chapter=game.chapter_number)
     c["question"] = None
     c["answer"] = None
     c["signals"] = [s for s in c["signals"] if s.get("type") not in _COGM_SESSION_ONLY_SIGNALS]
 
 
 def _coop_eligible_seeds(game: GameState, c: dict) -> list:
+    """Unused seeds the next scene may use. Seeds from an earlier chapter are
+    always old enough (scene numbers restart per chapter). Seeds offered least
+    often come first, so a seed the story never finds a place for does not block
+    newer ones forever."""
     out = []
     for s in c.get("seeds", []):
         if s.get("used"):
             continue
         min_age = COGM_SEED_MIN_AGE if s.get("kind") == "answer" else 1
+        same_chapter = int(s.get("chapter") or 1) >= game.chapter_number
         # Age measured against the scene about to be narrated
-        if game.scene_count + 1 - int(s.get("scene") or 0) < min_age:
+        if same_chapter and game.scene_count + 1 - int(s.get("scene") or 0) < min_age:
             continue
         if s.get("npc_id") and not _find_npc(game, s["npc_id"]):
             continue
         out.append(s)
+    out.sort(key=lambda s: int(s.get("offered") or 0))      # stable: oldest first on ties
     return out[:COGM_SEEDS_IN_PROMPT]
 
 
@@ -7523,6 +7536,7 @@ def _coop_begin_turn(game: GameState) -> Optional[dict]:
             seed = _coop_add_seed(c, "now", ans["text"], question=ans.get("question", ""),
                                   npc_id=(q or {}).get("npc_id", ""), scene=game.scene_count + 1,
                                   chapter=game.chapter_number)
+            seed["injected"] = True                   # reached the Narrator in its scene
             inputs["answer"]["seed_id"] = seed["id"]
     keep = []
     for s in c.get("signals", []):
@@ -7545,8 +7559,11 @@ def _coop_begin_turn(game: GameState) -> Optional[dict]:
         else:
             inputs["signals"].append(dict(s))        # once: consumed now
     c["signals"] = keep
-    inputs["seeds"] = [dict(s) for s in _coop_eligible_seeds(game, c)
-                       if s["id"] != (inputs["answer"] or {}).get("seed_id")]
+    offered = [s for s in _coop_eligible_seeds(game, c)
+               if s["id"] != (inputs["answer"] or {}).get("seed_id")]
+    for s in offered:
+        s["offered"] = int(s.get("offered") or 0) + 1
+    inputs["seeds"] = [dict(s) for s in offered]
     if not (inputs["answer"] or inputs["signals"] or inputs["seeds"]):
         return None
     c["_turn"] = inputs
@@ -7752,8 +7769,8 @@ def coop_reveal(game: GameState) -> dict:
     items, hidden = [], 0
     for s in c["seeds"]:
         kind = s.get("kind", "answer")
-        if kind == "now":
-            scene = s.get("scene")
+        if kind == "now" and s.get("injected") and not s.get("used"):
+            scene = s.get("scene")                    # given to the Narrator for this scene
         elif s.get("used"):
             scene = s.get("used_scene")
         else:
@@ -10353,7 +10370,11 @@ def process_correction(client: anthropic.Anthropic, game: GameState,
     with _rollback_on_error(game, "Correction"):
         _coop_resume_turn(game, (game.last_turn_snapshot or {}).get("coop_inputs"))
         try:
-            return _process_correction_impl(client=client, game=game, correction_text=correction_text, config=config)
+            result = _process_correction_impl(client=client, game=game, correction_text=correction_text, config=config)
+            # An input_misread re-run replaced the turn's session_log entry — log the
+            # Co-GM inputs again so surfaced seeds are still recognised afterwards
+            _coop_end_turn(game)
+            return result
         finally:
             _coop_drop_turn(game)
 

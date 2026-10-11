@@ -2942,6 +2942,7 @@ class CoopLive:
         self.cogm = cogm
         self.host_s = host_s
         self.save = save
+        self.game_ref = host_s.get("game")  # the co-op game object (survives turns/chapters)
         self.version = 0              # bumped on every change the other tab must see
         self.typing_at = 0.0          # host's last keystroke
         self.question_pending = False  # question generation running
@@ -4486,13 +4487,16 @@ async def main_page(client: Client):
         if not getattr(client, "has_socket_connection", True):
             return
         phase = s.get("_phase")
-        # The host left the co-op game (switched user or save, new game): end the session
+        # The host left the co-op game (other user, loaded save, new game): end the
+        # session. "Save as" keeps the same game object - the session follows it.
         _hosted = _coop_session_by_tab(s)
-        if _hosted and not s.get("processing") and (
-                phase != "main" or s.get("game") is None
-                or s.get("active_save") != _hosted.save
-                or s.get("current_user") != _hosted.host):
-            _coop_end(_hosted, "save")
+        if _hosted and not s.get("processing"):
+            if (phase != "main" or s.get("game") is None
+                    or s.get("game") is not _hosted.game_ref
+                    or s.get("current_user") != _hosted.host):
+                _coop_end(_hosted, "save")
+            elif s.get("active_save") != _hosted.save:
+                _hosted.save = s.get("active_save", "autosave")
         me = s.get("current_user", "")
         if phase not in ("main", "cogm") or not me:
             return
