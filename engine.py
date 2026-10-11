@@ -7266,7 +7266,9 @@ COGM_PRESSURE_SCENES = 2           # Duration of the "Clock is ticking" signal
 
 # Cockpit signal catalog. Design rule: every option is either concrete (the player
 # notices it in the next scene) or free text written by the Co-GM - nothing that
-# only shifts style. kind: once (next scene) | duration (scenes) | persistent
+# only shifts style. slot: "impulse" signals shape the next scene and only ONE can
+# be pending per scene (a new one replaces it); "background" signals work slowly
+# or atmospherically and are not limited. kind: once (next scene) | duration (scenes) | persistent
 # (until removed, one per NPC) | single (one instance replaces the last) | seed
 # (stored as a seed, see coop_add_signal). needs: what the signal carries besides
 # its type (None | text | optional_text | value | npc | npc_text). Prompt texts are
@@ -7274,33 +7276,33 @@ COGM_PRESSURE_SCENES = 2           # Duration of the "Clock is ticking" signal
 # "prompt_empty" is used when an optional text was left empty.
 COGM_SIGNALS = {
     # Free direction
-    "direction":         {"kind": "once", "needs": "text",
+    "direction":         {"slot": "impulse", "kind": "once", "needs": "text",
                           "prompt": "Make this happen in this scene, in your own words and in a way that fits the story so far: {text}"},
     # Characters
-    "push_npc":          {"kind": "once", "needs": "npc",
+    "push_npc":          {"slot": "impulse", "kind": "once", "needs": "npc",
                           "prompt": "Bring {npc} into this scene - they appear, call or clearly make themselves felt. You decide how."},
-    "npc_line":          {"kind": "once", "needs": "npc_text",
+    "npc_line":          {"slot": "impulse", "kind": "once", "needs": "npc_text",
                           "prompt": "Let {npc} say or do this in this scene, in their own voice - adapt the wording to the moment, keep the intent: {text}"},
-    "secret_intent":     {"kind": "persistent", "needs": "npc_text",
+    "secret_intent":     {"slot": "background", "kind": "persistent", "needs": "npc_text",
                           "prompt": "Hidden intention of {npc}: {text}. Build it up slowly over many scenes through small, consistent hints - never state it outright and never resolve it suddenly."},
     # World (rumor/secret/false trail are stored as seeds)
-    "plant_detail":      {"kind": "once", "needs": "text",
+    "plant_detail":      {"slot": "impulse", "kind": "once", "needs": "text",
                           "prompt": "Place this concrete detail in the scene, unremarked - the protagonist may or may not notice it: {text}"},
-    "rumor":             {"kind": "seed", "needs": "text"},
-    "plant_secret":      {"kind": "seed", "needs": "text"},
-    "false_trail":       {"kind": "seed", "needs": "text"},
-    "weather":           {"kind": "single", "needs": "value",
+    "rumor":             {"slot": "background", "kind": "seed", "needs": "text"},
+    "plant_secret":      {"slot": "background", "kind": "seed", "needs": "text"},
+    "false_trail":       {"slot": "background", "kind": "seed", "needs": "text"},
+    "weather":           {"slot": "background", "kind": "single", "needs": "value",
                           "values": ("rain", "heat", "fog", "night", "storm", "clear", "snow", "wind"),
                           "prompt": "Weather and light: {value}. Let it be present in the scene."},
     # Twists
-    "disruption":        {"kind": "once", "needs": "optional_text",
+    "disruption":        {"slot": "impulse", "kind": "once", "needs": "optional_text",
                           "prompt": "Something unexpected bursts into this scene: {text}",
                           "prompt_empty": "Something unexpected bursts into this scene - a person, an event or a discovery that changes the situation. You decide what."},
-    "clock_ticking":     {"kind": "duration", "scenes": COGM_PRESSURE_SCENES, "needs": None,
+    "clock_ticking":     {"slot": "impulse", "kind": "duration", "scenes": COGM_PRESSURE_SCENES, "needs": None,
                           "prompt": "Time pressure: make it clear that something is happening elsewhere and time is running out - without naming its cause."},
-    "earned_rest":       {"kind": "once", "needs": None,
+    "earned_rest":       {"slot": "impulse", "kind": "once", "needs": None,
                           "prompt": "The protagonist has been through something hard. Offer something warm in this scene - a small victory, a kind gesture, a moment of calm."},
-    "cliffhanger":       {"kind": "once", "needs": None,
+    "cliffhanger":       {"slot": "impulse", "kind": "once", "needs": None,
                           "prompt": "End this scene on a cliffhanger - an open threat, a revelation cut short or a question that demands an answer."},
 }
 
@@ -7433,13 +7435,18 @@ def coop_add_signal(game: GameState, sig_type: str, value: str = "", text: str =
     if spec["kind"] == "seed":
         return _coop_add_seed(c, sig_type, text, scene=game.scene_count,
                               chapter=game.chapter_number)
-    # One signal per type - or per type and NPC for character signals
-    c["signals"] = [s for s in c["signals"]
-                    if not (s.get("type") == sig_type
-                            and (not with_npc or s.get("npc_id") == npc_id))]
+    is_impulse = spec.get("slot") == "impulse"
+    if is_impulse:
+        # One impulse per scene: a new impulse replaces the pending one
+        c["signals"] = [s for s in c["signals"] if not s.get("impulse")]
+    else:
+        # One background signal per type - or per type and NPC for characters
+        c["signals"] = [s for s in c["signals"]
+                        if not (s.get("type") == sig_type
+                                and (not with_npc or s.get("npc_id") == npc_id))]
     if len(c["signals"]) >= COGM_MAX_SIGNALS:
         return None
-    sig = {"id": _coop_next_id(c, "c"), "type": sig_type, "value": value,
+    sig = {"id": _coop_next_id(c, "c"), "type": sig_type, "impulse": is_impulse, "value": value,
            "text": text if needs in ("text", "npc_text", "optional_text") else "",
            "npc_id": npc_id if with_npc else "",
            "scenes_left": spec.get("scenes") if spec["kind"] == "duration" else None,
@@ -7533,6 +7540,7 @@ def _coop_begin_turn(game: GameState) -> Optional[dict]:
             left = int(s.get("scenes_left") or 1) - 1
             if left > 0:
                 s["scenes_left"] = left
+                s["impulse"] = False          # still running, but the slot is free again
                 keep.append(s)
         else:
             inputs["signals"].append(dict(s))        # once: consumed now
@@ -7759,16 +7767,27 @@ def coop_reveal(game: GameState) -> dict:
     return {"items": items, "hidden": hidden, "partner": c.get("partner", "")}
 
 
+def coop_pending_impulse(game: GameState) -> Optional[dict]:
+    """The impulse queued for the next scene, or None (slot free)."""
+    if not isinstance(game.coop, dict):
+        return None
+    return next((s for s in game.coop.get("signals", []) if s.get("impulse")), None)
+
+
 def coop_public_view(game: GameState) -> dict:
     """What the Co-GM's cockpit lists: running signals and unused planted lore
     (with display names). The Narrator-only seed texts of SEED answers are shown
     too — the Co-GM wrote them."""
     c = coop_state(game)
-    sigs = []
+    impulse, background = None, []
     for s in c["signals"]:
-        sigs.append({**s, "npc_name": _coop_npc_name(game, s.get("npc_id", ""))})
+        item = {**s, "npc_name": _coop_npc_name(game, s.get("npc_id", ""))}
+        if s.get("impulse"):
+            impulse = item
+        else:
+            background.append(item)
     seeds = [dict(s) for s in c["seeds"] if not s.get("used")]
-    return {"signals": sigs, "seeds": seeds}
+    return {"impulse": impulse, "signals": background, "seeds": seeds}
 
 
 # ===============================================================

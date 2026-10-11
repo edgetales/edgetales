@@ -113,22 +113,45 @@ def test_single_signals_replace_each_other(game):
 
 
 def test_signal_lifetimes(game, prompts):
-    E.coop_add_signal(game, "cliffhanger")
     E.coop_add_signal(game, "clock_ticking")
     E.coop_add_signal(game, "weather", value="storm")
     E.coop_add_signal(game, "secret_intent", npc_id="npc_1", text="will Elin verraten")
     E.process_turn(None, game, "a", CFG)
     p = prompts[-1]
-    for t in ("cliffhanger", "clock_ticking", "weather", "secret_intent"):
+    for t in ("clock_ticking", "weather", "secret_intent"):
         assert f'type="{t}"' in p
     assert "Mara Voss" in p and "will Elin verraten" in p
-    types = {s["type"] for s in game.coop["signals"]}
-    assert types == {"clock_ticking", "weather", "secret_intent"}
+    E.coop_add_signal(game, "cliffhanger")                  # slot is free again
     E.process_turn(None, game, "b", CFG)
     assert 'type="clock_ticking"' in prompts[-1]            # 2nd and last scene
+    assert 'type="cliffhanger"' in prompts[-1]
     E.process_turn(None, game, "c", CFG)
-    assert 'type="clock_ticking"' not in prompts[-1]
+    assert 'type="clock_ticking"' not in prompts[-1] and 'type="cliffhanger"' not in prompts[-1]
     assert 'type="weather"' in prompts[-1] and 'type="secret_intent"' in prompts[-1]
+
+
+def test_one_impulse_per_scene_replaces(game, prompts):
+    E.coop_add_signal(game, "push_npc", npc_id="npc_1")
+    E.coop_add_signal(game, "disruption", text="Die Zollbeamten stürmen herein")
+    E.coop_add_signal(game, "weather", value="fog")          # background: not limited
+    E.coop_add_signal(game, "rumor", text="Der Bürgermeister schuldet etwas")
+    pending = E.coop_pending_impulse(game)
+    assert pending["type"] == "disruption"
+    assert [s["type"] for s in game.coop["signals"]] == ["disruption", "weather"]
+    E.process_turn(None, game, "a", CFG)
+    assert 'type="disruption"' in prompts[-1] and 'type="push_npc"' not in prompts[-1]
+    assert E.coop_pending_impulse(game) is None
+
+
+def test_running_duration_does_not_block_slot(game):
+    E.coop_add_signal(game, "clock_ticking")
+    assert E.coop_pending_impulse(game)["type"] == "clock_ticking"
+    E._coop_begin_turn(game)
+    E._coop_drop_turn(game)
+    assert E.coop_pending_impulse(game) is None              # still running, slot free
+    assert game.coop["signals"][0]["scenes_left"] == 1
+    E.coop_add_signal(game, "earned_rest")
+    assert {s["type"] for s in game.coop["signals"]} == {"clock_ticking", "earned_rest"}
 
 
 def test_secret_intent_is_per_npc_and_ends_with_death(game, prompts):
@@ -304,11 +327,13 @@ def test_generate_question_failure_does_not_block(game, monkeypatch):
     assert not E.coop_waiting_for_cogm(game)
 
 
-def test_public_view_lists_running_items(game):
+def test_public_view_splits_impulse_and_background(game):
     E.coop_add_signal(game, "push_npc", npc_id="npc_1")
+    E.coop_add_signal(game, "secret_intent", npc_id="npc_1", text="sucht Rache")
     E.coop_add_signal(game, "plant_secret", text="Warum hat das Haus keinen Keller?")
     view = E.coop_public_view(game)
-    assert view["signals"][0]["npc_name"] == "Mara Voss"
+    assert view["impulse"]["type"] == "push_npc" and view["impulse"]["npc_name"] == "Mara Voss"
+    assert [s["type"] for s in view["signals"]] == ["secret_intent"]
     assert view["seeds"][0]["kind"] == "plant_secret"
 
 
@@ -368,3 +393,10 @@ def test_reveal_shows_only_what_happened(game, ai, monkeypatch):
     assert ("now", 2, 4) in kinds and ("false_trail", 2, 4) in kinds
     assert all(i["kind"] != "rumor" for i in r["items"])    # not surfaced → no spoiler
     assert r["hidden"] == 1 and r["partner"] == "Jana"
+
+
+def test_cockpit_descriptions_exist(game):
+    import i18n
+    for lang in ("de", "en"):
+        for sig_type in E.COGM_SIGNALS:
+            assert f"coop.desc_{sig_type}" in i18n._STRINGS[lang], (lang, sig_type)

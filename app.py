@@ -138,7 +138,7 @@ from engine import (
     run_deferred_director, generate_epilogue,
     COGM_SIGNALS, coop_state, coop_waiting_for_cogm, coop_submit_answer,
     coop_add_signal, coop_remove_signal, coop_start_session, coop_end_session,
-    coop_public_view, coop_reveal, generate_cogm_question,
+    coop_public_view, coop_pending_impulse, coop_reveal, generate_cogm_question,
 )
 from i18n import (
     t, UI_LANGUAGES, DEFAULT_LANG,
@@ -3225,144 +3225,277 @@ def render_cogm_panel(container, sess: "CoopLive", on_change) -> None:
                 ui.button(t("coop.no_input", lang), on_click=lambda: _submit(True)).props("flat no-caps dense")
 
 
+# Cockpit tiles: (signal type, Material icon). Impulse tiles share ONE slot per
+# scene; background tiles are unlimited. Labels/descriptions come from i18n.
+_COOP_IMPULSE_TILES = (
+    ("direction", "edit_note"), ("push_npc", "person_add"),
+    ("npc_line", "record_voice_over"), ("disruption", "bolt"),
+    ("plant_detail", "search"), ("clock_ticking", "hourglass_top"),
+    ("earned_rest", "local_cafe"), ("cliffhanger", "priority_high"),
+)
+_COOP_BACKGROUND_TILES = (
+    ("secret_intent", "visibility_off"), ("rumor", "campaign"),
+    ("plant_secret", "lock"), ("false_trail", "alt_route"), ("weather", "cloud"),
+)
+_COOP_TILE_ICONS = dict(_COOP_IMPULSE_TILES + _COOP_BACKGROUND_TILES)
+# Placeholder key per text-carrying signal type
+_COOP_TEXT_KEYS = {
+    "direction": "coop.text_direction", "npc_line": "coop.text_npc_line",
+    "disruption": "coop.text_disruption", "plant_detail": "coop.text_detail",
+    "secret_intent": "coop.text_secret_intent", "rumor": "coop.text_rumor",
+    "plant_secret": "coop.text_secret", "false_trail": "coop.text_false_trail",
+}
+
+
 def _coop_signal_label(sig_type: str, lang: str) -> str:
     return t(f"coop.sig_{sig_type}", lang)
 
 
-def open_cockpit(sess: "CoopLive") -> None:
-    """Director's Cockpit dialog for the Co-GM: a free direction on top, then
-    characters, world and twists. Every option is concrete or free text."""
+def _coop_impulse_text(sg: dict, lang: str) -> str:
+    """One-line description of a queued signal: label (NPC): text / value."""
+    label = _coop_signal_label(sg["type"], lang)
+    if sg.get("npc_name"):
+        label = f"{label} ({sg['npc_name']})"
+    if sg.get("scenes_left") and not sg.get("impulse"):
+        label = f"{label} ({t('coop.scenes_left', lang, n=sg['scenes_left'])})"
+    extra = t(f"coop.val_{sg['value']}", lang) if sg.get("value") else sg.get("text", "")
+    return f"{label}: {extra}" if extra else label
+
+
+def open_cockpit(sess: "CoopLive", on_open=None) -> None:
+    """Director's Cockpit for the Co-GM.
+
+    Zone 1 "Impulse for the next scene": one slot; tiles open an inline editor
+    whose button reads "Set as impulse" or "Replace impulse" (naming what gets
+    replaced) — no extra confirmation dialog, no surprises.
+    Zone 2 "In the background": unlimited, slow or atmospheric signals.
+    on_open(refresh) lets the Co-GM view refresh the open dialog when the next
+    scene frees the slot."""
     lang = L()
     game = sess.game
     if game is None:
         return
-    npcs = [n for n in game.npcs if n.get("status") in ("active", "background") and n.get("introduced", True)]
-    npc_opts = {n["id"]: n.get("name", n["id"]) for n in npcs}
+    sel = {"impulse": None, "background": None}
+    ed: dict = {}                     # live refs of the impulse editor button
 
-    with ui.dialog() as dlg, ui.card().classes("w-full p-4").style(
-            "max-width: 560px; max-height: 85vh; overflow-y: auto"):
+    with ui.dialog() as dlg, ui.card().classes("w-full p-4 gap-2").style(
+            "max-width: 560px; max-height: 88vh; overflow-y: auto"):
         dlg.props(f'aria-label="{t("coop.cockpit", lang)}"')
-        with ui.row().classes("w-full items-center justify-between"):
+        with ui.row().classes("w-full items-center justify-between no-wrap"):
             ui.label(f"{E['crystal']} {t('coop.cockpit', lang)}").classes("text-lg font-bold")
             ui.button(icon="close", on_click=dlg.close).props(
                 f'flat round dense aria-label="{t("coop.close", lang)}"')
         ui.label(t("coop.cockpit_hint", lang)).classes("text-xs").style("color: var(--text-secondary)")
-        active_box = ui.column().classes("w-full gap-1")
 
-        def _refresh_active():
-            active_box.clear()
-            view = coop_public_view(game)
-            items = []
-            for sg in view["signals"]:
-                label = _coop_signal_label(sg["type"], lang)
-                if sg.get("npc_name"):
-                    label = f"{label} ({sg['npc_name']})"
-                if sg.get("scenes_left"):
-                    label = f"{label} ({t('coop.scenes_left', lang, n=sg['scenes_left'])})"
-                extra = t(f"coop.val_{sg['value']}", lang) if sg.get("value") else sg.get("text", "")
-                items.append((sg["id"], label, extra))
-            for sd in view["seeds"]:
-                kind = sd.get("kind", "answer")
-                lbl = t(f"coop.sig_{kind}", lang) if kind in COGM_SIGNALS else t(f"coop.kind_{kind}", lang)
-                items.append((sd["id"] if kind in COGM_SIGNALS else None, lbl, sd.get("text", "")))
-            with active_box:
-                if not items:
-                    return
-                ui.label(t("coop.active_signals", lang)).classes("text-sm font-semibold mt-2")
-                for item_id, label, extra in items:
-                    with ui.row().classes("w-full items-center gap-1 no-wrap"):
-                        ui.label(f"{label}{': ' + extra if extra else ''}").classes("text-xs flex-grow").style(
-                            "word-break: break-word")
-                        if item_id:
-                            def _rm(i=item_id):
-                                if coop_remove_signal(game, i):
-                                    sess.bump()
-                                    _coop_save(sess)
-                                _refresh_active()
-                            ui.button(icon="close", on_click=_rm).props(
-                                f'flat round dense size=sm aria-label="{t("aria.remove_signal", lang)}"')
+        # ── Zone 1: impulse ────────────────────────────────────────────
+        ui.label(t("coop.impulse_title", lang)).classes("text-xs font-semibold mt-3").style(
+            "color: var(--accent-light); letter-spacing: 0.06em; text-transform: uppercase")
+        slot_box = ui.column().classes("w-full")
+        impulse_tiles = ui.element("div").classes("grid grid-cols-2 sm:grid-cols-4 gap-2 w-full")
+        impulse_editor = ui.column().classes("w-full")
 
-        def _send(sig_type: str, **kw) -> bool:
+        # ── Zone 2: background ─────────────────────────────────────────
+        ui.separator().classes("my-3")
+        ui.label(t("coop.background_title", lang)).classes("text-xs font-semibold").style(
+            "color: var(--accent-light); letter-spacing: 0.06em; text-transform: uppercase")
+        ui.label(t("coop.background_hint", lang)).classes("text-xs").style("color: var(--text-secondary)")
+        background_tiles = ui.element("div").classes("grid grid-cols-2 sm:grid-cols-5 gap-2 w-full")
+        background_editor = ui.column().classes("w-full")
+        background_list = ui.column().classes("w-full gap-1")
+
+        def _alive() -> bool:
             if not sess.active or sess.game is not game:
                 dlg.close()
                 return False
-            if coop_add_signal(game, sig_type, **kw) is None:
-                ui.notify(t("coop.signal_failed", lang), type="warning", position="top")
-                return False
-            sess.bump()
-            _coop_save(sess)
-            ui.notify(t("coop.signal_set", lang, name=_coop_signal_label(sig_type, lang)),
-                      type="positive", position="top")
-            _refresh_active()
             return True
 
-        def _text_signal(field, sig_type: str, **kw):
-            if _send(sig_type, text=field.value or "", **kw):
-                field.value = ""
+        def _render_slot():
+            slot_box.clear()
+            pending = coop_public_view(game)["impulse"]
+            with slot_box:
+                if pending is None:
+                    with ui.row().classes("w-full items-center gap-2 no-wrap").style(
+                            "border: 1px dashed var(--border-light); border-radius: 8px; padding: 0.6rem 0.75rem"):
+                        ui.icon("radio_button_unchecked").classes("text-lg").style("color: var(--text-secondary)")
+                        ui.label(t("coop.impulse_free", lang)).classes("text-sm").style("color: var(--text-secondary)")
+                else:
+                    with ui.row().classes("w-full items-center gap-2 no-wrap").style(
+                            "border: 1px solid var(--accent); background: var(--accent-dim); "
+                            "border-radius: 8px; padding: 0.6rem 0.75rem") as row:
+                        row.props('role="status"')
+                        ui.icon(_COOP_TILE_ICONS.get(pending["type"], "bolt")).classes("text-xl").style(
+                            "color: var(--accent-light)")
+                        ui.label(_coop_impulse_text(pending, lang)).classes("text-sm flex-grow").style(
+                            "word-break: break-word")
 
-        def _small_btn(label: str, handler, outline: bool = True):
-            return ui.button(label, on_click=handler).props(
-                ("outline " if outline else "flat ") + "dense no-caps size=sm")
+                        def _clear(i=pending["id"]):
+                            if _alive() and coop_remove_signal(game, i):
+                                sess.bump()
+                                _coop_save(sess)
+                            _refresh_all()
+                        ui.button(icon="close", on_click=_clear).props(
+                            f'flat round dense aria-label="{t("aria.remove_signal", lang)}"')
 
-        # Free direction - always visible
-        with ui.column().classes("w-full gap-1 mt-3"):
-            ui.label(t("coop.sig_direction", lang)).classes("text-sm font-semibold")
-            ui.label(t("coop.hint_direction", lang)).classes("text-xs").style("color: var(--text-secondary)")
-            direction = ui.textarea(placeholder=t("coop.text_direction", lang)).props(
-                f'outlined dense dark autogrow maxlength=300 aria-label="{t("coop.text_direction", lang)}"'
-            ).classes("w-full")
-            ui.button(t("coop.set_btn", lang), on_click=lambda: _text_signal(direction, "direction"),
-                      color="primary").props("dense no-caps")
+        def _render_tiles(zone: str):
+            box = impulse_tiles if zone == "impulse" else background_tiles
+            tiles = _COOP_IMPULSE_TILES if zone == "impulse" else _COOP_BACKGROUND_TILES
+            box.clear()
+            with box:
+                for st, icon in tiles:
+                    active = sel[zone] == st
+                    b = ui.button(_coop_signal_label(st, lang), icon=icon,
+                                  on_click=lambda x=st, z=zone: _select(z, x)).classes("w-full")
+                    b.props(("unelevated color=primary" if active else "outline")
+                            + f' stack no-caps dense aria-pressed="{str(active).lower()}"')
+                    b.style("min-height: 64px; font-size: 0.78rem; line-height: 1.15")
 
-        with ui.expansion(t("coop.cat_characters", lang)).classes("w-full"):
-            if not npc_opts:
-                ui.label(t("coop.no_npcs", lang)).classes("text-xs").style("color: var(--text-secondary)")
-            else:
-                npc_sel = ui.select(npc_opts, value=next(iter(npc_opts)),
-                                    label=t("coop.npc_select", lang)).classes("w-full")
-                _small_btn(t("coop.sig_push_npc", lang),
-                           lambda: _send("push_npc", npc_id=npc_sel.value)).classes("mt-1")
-                line_inp = ui.input(t("coop.text_npc_line", lang)).props("maxlength=300 dense").classes("w-full mt-2")
-                _small_btn(t("coop.sig_npc_line", lang),
-                           lambda: _text_signal(line_inp, "npc_line", npc_id=npc_sel.value))
-                intent_inp = ui.input(t("coop.text_secret_intent", lang)).props("maxlength=300 dense").classes("w-full mt-2")
-                ui.label(t("coop.hint_secret_intent", lang)).classes("text-xs").style("color: var(--text-secondary)")
-                _small_btn(t("coop.sig_secret_intent", lang),
-                           lambda: _text_signal(intent_inp, "secret_intent", npc_id=npc_sel.value))
+        def _select(zone: str, st: str):
+            sel[zone] = None if sel[zone] == st else st
+            _render_tiles(zone)
+            _render_editor(zone)
 
-        with ui.expansion(t("coop.cat_world", lang)).classes("w-full"):
-            ui.label(t("coop.hint_world", lang)).classes("text-xs").style("color: var(--text-secondary)")
-            world_inp = ui.input(t("coop.text_world", lang)).props("maxlength=300 dense").classes("w-full")
-            with ui.row().classes("gap-2 flex-wrap mt-1"):
-                for st in ("plant_detail", "rumor", "plant_secret", "false_trail"):
-                    _small_btn(_coop_signal_label(st, lang), lambda x=st: _text_signal(world_inp, x))
-            ui.label(t("coop.sig_weather", lang)).classes("text-sm font-semibold mt-3")
-            current = next((sg.get("value") for sg in coop_state(game)["signals"]
-                            if sg.get("type") == "weather"), None)
-            with ui.row().classes("gap-2 flex-wrap"):
-                for v in COGM_SIGNALS["weather"]["values"]:
-                    b = ui.button(t(f"coop.val_{v}", lang),
-                                  on_click=lambda val=v: _send("weather", value=val)).props("dense no-caps size=sm")
-                    b.props("unelevated" if v == current else "outline")
+        def _done(zone: str, st: str):
+            sess.bump()
+            _coop_save(sess)
+            key = "coop.impulse_set" if zone == "impulse" else "coop.background_added"
+            ui.notify(t(key, lang, name=_coop_signal_label(st, lang)), type="positive", position="top")
+            sel[zone] = None
+            _refresh_all()
 
-                def _weather_off():
-                    for sg in list(coop_state(game)["signals"]):
-                        if sg.get("type") == "weather":
-                            coop_remove_signal(game, sg["id"])
-                    sess.bump()
-                    _coop_save(sess)
-                    _refresh_active()
-                _small_btn(t("coop.weather_off", lang), _weather_off, outline=False)
+        def _render_editor(zone: str):
+            box = impulse_editor if zone == "impulse" else background_editor
+            box.clear()
+            st = sel[zone]
+            if not st:
+                return
+            spec = COGM_SIGNALS[st]
+            needs = spec.get("needs")
+            npcs = [n for n in game.npcs
+                    if n.get("status") in ("active", "background") and n.get("introduced", True)]
+            with box, ui.column().classes("w-full gap-2 mt-1").style(
+                    "border-left: 3px solid var(--accent-light); padding: 0.25rem 0 0.25rem 0.75rem"):
+                ui.label(t(f"coop.desc_{st}", lang)).classes("text-sm")
+                npc_sel = None
+                if needs in ("npc", "npc_text"):
+                    if not npcs:
+                        ui.label(t("coop.no_npcs", lang)).classes("text-xs").style("color: var(--text-secondary)")
+                        return
+                    opts = {n["id"]: n.get("name", n["id"]) for n in npcs}
+                    npc_sel = ui.select(opts, value=next(iter(opts)), label=t("coop.npc_select", lang)).classes("w-full")
+                if needs == "value":
+                    current = next((sg.get("value") for sg in coop_state(game)["signals"]
+                                    if sg.get("type") == st), None)
+                    with ui.row().classes("gap-2 flex-wrap"):
+                        for v in spec.get("values", ()):
+                            def _pick(val=v):
+                                if _alive() and coop_add_signal(game, st, value=val) is not None:
+                                    _done(zone, st)
+                            vb = ui.button(t(f"coop.val_{v}", lang), on_click=_pick).props("dense no-caps size=sm")
+                            vb.props("unelevated color=primary" if v == current else "outline")
+                        if current:
+                            def _off():
+                                if not _alive():
+                                    return
+                                for sg in list(coop_state(game)["signals"]):
+                                    if sg.get("type") == st:
+                                        coop_remove_signal(game, sg["id"])
+                                sess.bump()
+                                _coop_save(sess)
+                                sel[zone] = None
+                                _refresh_all()
+                            ui.button(t("coop.weather_off", lang), on_click=_off).props("flat dense no-caps size=sm")
+                    return
+                field = None
+                if needs in ("text", "npc_text", "optional_text"):
+                    field = ui.textarea(placeholder=t(_COOP_TEXT_KEYS.get(st, "coop.text_direction"), lang)).props(
+                        f'outlined dense dark autogrow maxlength=300 '
+                        f'aria-label="{t(_COOP_TEXT_KEYS.get(st, "coop.text_direction"), lang)}"').classes("w-full")
+                pending = coop_public_view(game)["impulse"] if zone == "impulse" else None
 
-        with ui.expansion(t("coop.cat_turns", lang)).classes("w-full"):
-            dis_inp = ui.input(t("coop.text_disruption", lang)).props("maxlength=300 dense").classes("w-full")
-            ui.label(t("coop.hint_disruption", lang)).classes("text-xs").style("color: var(--text-secondary)")
-            _small_btn(t("coop.sig_disruption", lang), lambda: _text_signal(dis_inp, "disruption"))
-            with ui.row().classes("gap-2 flex-wrap mt-3"):
-                for st in ("clock_ticking", "earned_rest", "cliffhanger"):
-                    _small_btn(_coop_signal_label(st, lang), lambda x=st: _send(x))
+                def _submit():
+                    if not _alive():
+                        return
+                    kw = {}
+                    if npc_sel is not None:
+                        kw["npc_id"] = npc_sel.value
+                    if field is not None:
+                        kw["text"] = field.value or ""
+                    if coop_add_signal(game, st, **kw) is None:
+                        ui.notify(t("coop.signal_failed", lang), type="warning", position="top")
+                        return
+                    _done(zone, st)
 
-        _refresh_active()
+                if zone == "impulse":
+                    label = t("coop.replace_impulse" if pending else "coop.set_impulse", lang)
+                else:
+                    label = t("coop.add_background", lang)
+                with ui.row().classes("items-center gap-3"):
+                    btn = ui.button(label, on_click=_submit, color="primary").props("dense no-caps")
+                    rep = ui.label("").classes("text-xs").style(
+                        "color: var(--text-secondary); word-break: break-word")
+                if zone == "impulse":
+                    ed["btn"], ed["rep"] = btn, rep
+                    _update_editor_button()
+                else:
+                    rep.set_visibility(False)
+
+        def _update_editor_button():
+            """Keep the impulse button honest without rebuilding the editor (a
+            half-typed text survives when the next scene frees the slot)."""
+            btn, rep = ed.get("btn"), ed.get("rep")
+            if btn is None:
+                return
+            try:
+                pending = coop_public_view(game)["impulse"]
+                btn.text = t("coop.replace_impulse" if pending else "coop.set_impulse", lang)
+                rep.text = t("coop.replaces", lang, name=_coop_impulse_text(pending, lang)) if pending else ""
+                rep.set_visibility(bool(pending))
+            except Exception:
+                ed.clear()
+
+        def _render_background_list():
+            background_list.clear()
+            view = coop_public_view(game)
+            items = [(sg["id"], _coop_impulse_text(sg, lang)) for sg in view["signals"]]
+            for sd in view["seeds"]:
+                kind = sd.get("kind", "answer")
+                lbl = t(f"coop.sig_{kind}", lang) if kind in COGM_SIGNALS else t(f"coop.kind_{kind}", lang)
+                items.append((sd["id"] if kind in COGM_SIGNALS else None, f"{lbl}: {sd.get('text', '')}"))
+            if not items:
+                return
+            with background_list:
+                ui.label(t("coop.active_signals", lang)).classes("text-sm font-semibold mt-3")
+                for item_id, text in items:
+                    with ui.row().classes("w-full items-center gap-1 no-wrap"):
+                        ui.label(text).classes("text-xs flex-grow").style("word-break: break-word")
+                        if item_id:
+                            def _rm(i=item_id):
+                                if _alive() and coop_remove_signal(game, i):
+                                    sess.bump()
+                                    _coop_save(sess)
+                                _refresh_all()
+                            ui.button(icon="close", on_click=_rm).props(
+                                f'flat round dense size=sm aria-label="{t("aria.remove_signal", lang)}"')
+
+        def _refresh_all():
+            ed.clear()
+            _render_slot()
+            for zone in ("impulse", "background"):
+                _render_tiles(zone)
+                _render_editor(zone)
+            _render_background_list()
+
+        def _refresh_live():
+            """Called by the Co-GM view on a new scene: slot, lists and the impulse
+            button update; open editors (and typed text) stay as they are."""
+            _render_slot()
+            _render_background_list()
+            _update_editor_button()
+
+        _refresh_all()
+    if on_open:
+        on_open(_refresh_live)
+        dlg.on("hide", lambda: on_open(None))
     dlg.open()
 
 
@@ -4212,6 +4345,23 @@ async def main_page(client: Client):
         q = coop_state(sess.game).get("question") if sess.game is not None else None
         return ((q.get("id"), q.get("status")) if q else None, sess.question_pending)
 
+    def _register_cockpit(refresh):
+        """The open cockpit dialog registers its live-refresh callback (None on close)."""
+        if refresh is None:
+            _ui_refs.pop("cockpit_refresh", None)
+        else:
+            _ui_refs["cockpit_refresh"] = refresh
+
+    def _update_impulse_chip(sess):
+        chip = _ui_refs.get("cogm_chip")
+        if chip is None or sess.game is None:
+            return
+        pending = coop_pending_impulse(sess.game)
+        text = t("coop.impulse_chip_set" if pending else "coop.impulse_chip_free", L())
+        if chip.text != text:
+            chip.text = text
+            chip.style("color: var(--accent-light)" if pending else "color: var(--text-secondary)")
+
     def _cogm_refresh(sess, force_panel: bool = False):
         """Update the Co-GM view in place: chat and sidebar on new narration, the
         question panel only when the question changes (keeps a half-typed answer)."""
@@ -4219,9 +4369,15 @@ async def main_page(client: Client):
         if game is None:
             return
         try:
+            _update_impulse_chip(sess)
             mk = _cogm_msg_key(sess)
             if mk != _ui_refs.get("cogm_msg_key"):
                 _ui_refs["cogm_msg_key"] = mk
+                if _ui_refs.get("cockpit_refresh"):
+                    try:
+                        _ui_refs["cockpit_refresh"]()
+                    except Exception:
+                        _ui_refs.pop("cockpit_refresh", None)
                 chat = _ui_refs.get("cogm_chat")
                 if chat is not None:
                     chat.clear()
@@ -4271,7 +4427,7 @@ async def main_page(client: Client):
             with side:
                 render_sidebar_status(game, session=s, cogm_view=True)
             ui.separator()
-            ui.button(t("coop.cockpit", lang), icon="tune", on_click=lambda: open_cockpit(sess)).props("outline no-caps").classes("w-full mt-2")
+            ui.button(t("coop.cockpit", lang), icon="tune", on_click=lambda: open_cockpit(sess, on_open=_register_cockpit)).props("outline no-caps").classes("w-full mt-2")
             async def _leave_now():
                 _coop_end(sess, "leave")
                 await _coop_left()
@@ -4297,11 +4453,15 @@ async def main_page(client: Client):
             typing.set_visibility(False)
             panel = ui.column().classes("w-full gap-0")
             with ui.row().classes("w-full items-center justify-end gap-2 rpg-input-bar").style("padding: 0.25rem 1rem 0.5rem"):
-                ui.button(t("coop.cockpit_btn", lang), icon="tune", on_click=lambda: open_cockpit(sess)).props(
+                impulse_chip = ui.label("").classes("text-xs")
+                impulse_chip.props('role="status"')
+                ui.button(t("coop.cockpit_btn", lang), icon="tune", on_click=lambda: open_cockpit(sess, on_open=_register_cockpit)).props(
                     f'outline dense no-caps aria-label="{t("aria.cockpit_open", lang)}"')
         footer.set_value(True)
         _ui_refs.update(cogm_chat=chat, cogm_side=side, cogm_panel=panel, cogm_typing=typing,
+                        cogm_chip=impulse_chip,
                         cogm_msg_key=_cogm_msg_key(sess), cogm_q_key=_cogm_q_key(sess))
+        _update_impulse_chip(sess)
         render_cogm_panel(panel, sess, on_change=lambda: _cogm_refresh(sess, force_panel=True))
         client.run_javascript(_FOOTER_ALIGN_JS)
         client.run_javascript("setTimeout(() => { const sc = document.querySelector('.q-page-container') "
