@@ -1057,7 +1057,7 @@ def render_sidebar_status(game: GameState, session=None, cogm_view: bool = False
         for c in active:
             em = E['red_circle'] if c["clock_type"]=="threat" else E['purple_circle']
             _c_filled = int(c["filled"])
-            _c_segs = int(c["segments"])
+            _c_segs = max(1, int(c["segments"]))
             p = _c_filled / _c_segs * 100
             ui.label(f"{em} {c['name']}: {_c_filled}/{_c_segs}").classes("text-xs")
             with ui.element('div').classes('track-bar w-full').props('aria-hidden="true"'):
@@ -2417,6 +2417,7 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
                 _user_col.props(f'aria-label="{t("aria.player_says", L())}"')
             with _user_col:
                 ui.markdown(display_text)
+    _turn_applied = False  # True once the engine turn succeeded (no retry after that)
     try:
         # Co-op: the scene waits for the Co-GM's answer (player can skip)
         _coop_sess = _coop_host_session(s)
@@ -2458,6 +2459,7 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
             except Exception: pass
             return
         s["game"]=game
+        _turn_applied = True
         spinner.delete()
         # --- Refresh sidebar (NPCs, stats, clocks, actions) ---
         if sidebar_refresh is not None:
@@ -2604,6 +2606,13 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
     except Exception as e:
         try: spinner.delete()
         except Exception: pass
+        if _turn_applied:
+            # The turn itself succeeded (state already advanced); a later step
+            # (render, save, TTS, Director) failed. A retry would play the same
+            # turn a second time - report the error instead.
+            log(f"[Turn] Post-turn step failed: {type(e).__name__}: {e}", level="warning")
+            ui.notify(t("game.error", L(), error=e), type="warning", position="top")
+            return
         # Show inline retry button in chat instead of just a toast notification
         _retry_text = text  # capture for closure
         _retry_cc = chat_container

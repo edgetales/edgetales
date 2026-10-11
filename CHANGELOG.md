@@ -14,6 +14,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - The Co-GM sees the story, characters, the protagonist's stats and location - but not the player's inputs, dice, clocks or chaos factor.
 - **Behind the scenes:** player and Co-GM can open a scene-by-scene list of everything the Co-GM contributed that has already appeared in the story - answers, seeds, rumours, secrets and false trails. Content that has not surfaced yet is only counted, so nothing is spoiled. Also available after the session from the co-op menu.
 
+### Fixed
+- **Turns could crash on a blank NPC name.** When the AI returned a name made of spaces, the NPC was created with an empty name, and later renames of it made every such turn fail. Blank names are now rejected everywhere NPCs are created or renamed (new characters, lore figures, renames, surname updates, memory stubs, chapter openings, `##` corrections).
+- **Overlong NPC names** (a whole description returned as the name) are cut to 60 characters at a word boundary.
+- **Duplicate characters after renames:** when a surname update, title variant, identity reveal or `##` correction gave a character a name another character already carried, both existed side by side. They are now merged into one (memories, aliases and references to the absorbed character carry over). A living character is never merged into a dead namesake, and a `##` split onto an existing name is refused.
+- **Threat clocks that could never fire:** the Director could add a clock that started full, and chapter openings accepted clocks without checking them (0 segments, unknown clock types, already full). All new clocks are validated: 2-10 segments, threat or scheme, never full at the start. Saves with a broken clock are repaired on load, and the sidebar no longer divides by zero.
+- **Clock owners now follow NPC renames immediately** instead of only after the next load.
+- **Chapter-opening characters** get a valid disposition (e.g. "Freundlich" became "neutral" instead of staying unknown) and same-name duplicates in the opening list are dropped.
+- **Location corrections** (`##`) shorten overlong place descriptions like every other location update.
+- **No second turn after a post-turn error:** if saving, voice output or the Director failed after a successful turn, the retry button replayed the whole turn a second time. The error is now only reported.
+
 ## [0.9.99] - 2026-10-11
 
 ### Changed
