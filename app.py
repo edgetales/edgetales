@@ -2931,11 +2931,6 @@ _COOP_NOTICES: dict = {}          # username -> [(i18n key, notify type, kwargs)
 _COOP_SESSIONS: dict = {}         # host username -> CoopLive
 _COOP_TASKS: set = set()          # strong refs to background question tasks
 
-# Cockpit layout: category → signal types (labels/values from i18n, logic in engine)
-_COOP_CAMERA = ("close_up", "establishing_shot", "unreliable_moment")
-_COOP_TONE = ("crescendo", "silence")
-_COOP_DRAMATURGY = ("turning_point", "clock_ticking", "earned_rest", "not_the_end")
-
 
 class CoopLive:
     """One live co-op session. host_s is the host's tab storage (the tab that sent
@@ -3235,15 +3230,14 @@ def _coop_signal_label(sig_type: str, lang: str) -> str:
 
 
 def open_cockpit(sess: "CoopLive") -> None:
-    """Director's Cockpit dialog for the Co-GM."""
+    """Director's Cockpit dialog for the Co-GM: a free direction on top, then
+    characters, world and twists. Every option is concrete or free text."""
     lang = L()
     game = sess.game
     if game is None:
         return
     npcs = [n for n in game.npcs if n.get("status") in ("active", "background") and n.get("introduced", True)]
     npc_opts = {n["id"]: n.get("name", n["id"]) for n in npcs}
-    npc2_opts = dict(npc_opts)
-    npc2_opts["player"] = t("coop.player_option", lang, name=game.player_name)
 
     with ui.dialog() as dlg, ui.card().classes("w-full p-4").style(
             "max-width: 560px; max-height: 85vh; overflow-y: auto"):
@@ -3258,28 +3252,23 @@ def open_cockpit(sess: "CoopLive") -> None:
         def _refresh_active():
             active_box.clear()
             view = coop_public_view(game)
+            items = []
+            for sg in view["signals"]:
+                label = _coop_signal_label(sg["type"], lang)
+                if sg.get("npc_name"):
+                    label = f"{label} ({sg['npc_name']})"
+                if sg.get("scenes_left"):
+                    label = f"{label} ({t('coop.scenes_left', lang, n=sg['scenes_left'])})"
+                extra = t(f"coop.val_{sg['value']}", lang) if sg.get("value") else sg.get("text", "")
+                items.append((sg["id"], label, extra))
+            for sd in view["seeds"]:
+                kind = sd.get("kind", "answer")
+                lbl = t(f"coop.sig_{kind}", lang) if kind in COGM_SIGNALS else t(f"coop.kind_{kind}", lang)
+                items.append((sd["id"] if kind in COGM_SIGNALS else None, lbl, sd.get("text", "")))
             with active_box:
-                ui.label(t("coop.active_signals", lang)).classes("text-sm font-semibold mt-2")
-                items = []
-                for sg in view["signals"]:
-                    label = _coop_signal_label(sg["type"], lang)
-                    if sg.get("value"):
-                        extra = t(f"coop.val_{sg['value']}", lang)
-                    elif sg.get("npc_name"):
-                        extra = sg["npc_name"] + (f" + {sg['npc2_name']}" if sg.get("npc2_name") else "")
-                        if sg.get("text"):
-                            extra += f": {sg['text']}"
-                    else:
-                        extra = sg.get("text", "")
-                    if sg.get("scenes_left"):
-                        extra = f"{extra} ({t('coop.scenes_left', lang, n=sg['scenes_left'])})".strip()
-                    items.append((sg["id"], label, extra))
-                for sd in view["seeds"]:
-                    kind = sd.get("kind", "answer")
-                    lbl = t(f"coop.sig_{kind}", lang) if kind in COGM_SIGNALS else t(f"coop.kind_{kind}", lang)
-                    items.append((sd["id"] if kind in COGM_SIGNALS else None, lbl, sd.get("text", "")))
                 if not items:
-                    ui.label(t("coop.none_active", lang)).classes("text-xs").style("color: var(--text-secondary)")
+                    return
+                ui.label(t("coop.active_signals", lang)).classes("text-sm font-semibold mt-2")
                 for item_id, label, extra in items:
                     with ui.row().classes("w-full items-center gap-1 no-wrap"):
                         ui.label(f"{label}{': ' + extra if extra else ''}").classes("text-xs flex-grow").style(
@@ -3293,42 +3282,61 @@ def open_cockpit(sess: "CoopLive") -> None:
                             ui.button(icon="close", on_click=_rm).props(
                                 f'flat round dense size=sm aria-label="{t("aria.remove_signal", lang)}"')
 
-        def _send(sig_type: str, **kw):
+        def _send(sig_type: str, **kw) -> bool:
             if not sess.active or sess.game is not game:
                 dlg.close()
-                return
-            res = coop_add_signal(game, sig_type, **kw)
-            if res is None:
+                return False
+            if coop_add_signal(game, sig_type, **kw) is None:
                 ui.notify(t("coop.signal_failed", lang), type="warning", position="top")
-                return
+                return False
             sess.bump()
             _coop_save(sess)
             ui.notify(t("coop.signal_set", lang, name=_coop_signal_label(sig_type, lang)),
                       type="positive", position="top")
             _refresh_active()
+            return True
 
-        def _btn(sig_type: str, **kw):
-            ui.button(_coop_signal_label(sig_type, lang),
-                      on_click=lambda st=sig_type, k=kw: _send(st, **k)).props("outline dense no-caps size=sm")
+        def _text_signal(field, sig_type: str, **kw):
+            if _send(sig_type, text=field.value or "", **kw):
+                field.value = ""
 
-        # Category order follows the co-op concept (coopgm.md)
-        with ui.expansion(t("coop.cat_camera", lang)).classes("w-full"):
-            with ui.row().classes("gap-2 flex-wrap"):
-                for st in _COOP_CAMERA:
-                    _btn(st)
+        def _small_btn(label: str, handler, outline: bool = True):
+            return ui.button(label, on_click=handler).props(
+                ("outline " if outline else "flat ") + "dense no-caps size=sm")
 
-        with ui.expansion(t("coop.cat_tone", lang)).classes("w-full"):
-            with ui.row().classes("gap-2 flex-wrap"):
-                for st in _COOP_TONE:
-                    _btn(st)
-            mood_vals = COGM_SIGNALS["mood"]["values"]
-            with ui.row().classes("items-center gap-2 mt-2 w-full"):
-                mood_sel = ui.select({v: t(f"coop.val_{v}", lang) for v in mood_vals},
-                                     value=mood_vals[0], label=t("coop.sig_mood", lang)).classes("flex-grow")
-                ui.button(t("coop.set_btn", lang),
-                          on_click=lambda: _send("mood", value=mood_sel.value)).props("dense no-caps")
+        # Free direction - always visible
+        with ui.column().classes("w-full gap-1 mt-3"):
+            ui.label(t("coop.sig_direction", lang)).classes("text-sm font-semibold")
+            ui.label(t("coop.hint_direction", lang)).classes("text-xs").style("color: var(--text-secondary)")
+            direction = ui.textarea(placeholder=t("coop.text_direction", lang)).props(
+                f'outlined dense dark autogrow maxlength=300 aria-label="{t("coop.text_direction", lang)}"'
+            ).classes("w-full")
+            ui.button(t("coop.set_btn", lang), on_click=lambda: _text_signal(direction, "direction"),
+                      color="primary").props("dense no-caps")
 
-        with ui.expansion(t("coop.cat_weather", lang)).classes("w-full"):
+        with ui.expansion(t("coop.cat_characters", lang)).classes("w-full"):
+            if not npc_opts:
+                ui.label(t("coop.no_npcs", lang)).classes("text-xs").style("color: var(--text-secondary)")
+            else:
+                npc_sel = ui.select(npc_opts, value=next(iter(npc_opts)),
+                                    label=t("coop.npc_select", lang)).classes("w-full")
+                _small_btn(t("coop.sig_push_npc", lang),
+                           lambda: _send("push_npc", npc_id=npc_sel.value)).classes("mt-1")
+                line_inp = ui.input(t("coop.text_npc_line", lang)).props("maxlength=300 dense").classes("w-full mt-2")
+                _small_btn(t("coop.sig_npc_line", lang),
+                           lambda: _text_signal(line_inp, "npc_line", npc_id=npc_sel.value))
+                intent_inp = ui.input(t("coop.text_secret_intent", lang)).props("maxlength=300 dense").classes("w-full mt-2")
+                ui.label(t("coop.hint_secret_intent", lang)).classes("text-xs").style("color: var(--text-secondary)")
+                _small_btn(t("coop.sig_secret_intent", lang),
+                           lambda: _text_signal(intent_inp, "secret_intent", npc_id=npc_sel.value))
+
+        with ui.expansion(t("coop.cat_world", lang)).classes("w-full"):
+            ui.label(t("coop.hint_world", lang)).classes("text-xs").style("color: var(--text-secondary)")
+            world_inp = ui.input(t("coop.text_world", lang)).props("maxlength=300 dense").classes("w-full")
+            with ui.row().classes("gap-2 flex-wrap mt-1"):
+                for st in ("plant_detail", "rumor", "plant_secret", "false_trail"):
+                    _small_btn(_coop_signal_label(st, lang), lambda x=st: _text_signal(world_inp, x))
+            ui.label(t("coop.sig_weather", lang)).classes("text-sm font-semibold mt-3")
             current = next((sg.get("value") for sg in coop_state(game)["signals"]
                             if sg.get("type") == "weather"), None)
             with ui.row().classes("gap-2 flex-wrap"):
@@ -3344,54 +3352,15 @@ def open_cockpit(sess: "CoopLive") -> None:
                     sess.bump()
                     _coop_save(sess)
                     _refresh_active()
-                ui.button(t("coop.weather_off", lang), on_click=_weather_off).props("flat dense no-caps size=sm")
+                _small_btn(t("coop.weather_off", lang), _weather_off, outline=False)
 
-        with ui.expansion(t("coop.cat_characters", lang)).classes("w-full"):
-            if not npc_opts:
-                ui.label(t("coop.no_npcs", lang)).classes("text-xs").style("color: var(--text-secondary)")
-            else:
-                first = next(iter(npc_opts))
-                npc_sel = ui.select(npc_opts, value=first, label=t("coop.npc_select", lang)).classes("w-full")
-                with ui.row().classes("gap-2 flex-wrap mt-1"):
-                    for st in ("push_npc", "prepare_betrayal", "prepare_reconciliation"):
-                        ui.button(_coop_signal_label(st, lang),
-                                  on_click=lambda x=st: _send(x, npc_id=npc_sel.value)).props("outline dense no-caps size=sm")
-                line_inp = ui.input(t("coop.text_npc_line", lang)).props("maxlength=300 dense").classes("w-full mt-2")
-
-                def _npc_line():
-                    _send("npc_line", npc_id=npc_sel.value, text=line_inp.value or "")
-                    line_inp.value = ""
-                ui.button(_coop_signal_label("npc_line", lang), on_click=_npc_line).props("outline dense no-caps size=sm")
-                npc2_sel = ui.select(npc2_opts, value="player", label=t("coop.npc2_select", lang)).classes("w-full mt-2")
-                ui.button(_coop_signal_label("amplify_chemistry", lang),
-                          on_click=lambda: _send("amplify_chemistry", npc_id=npc_sel.value,
-                                                 npc2_id=npc2_sel.value)).props("outline dense no-caps size=sm")
-
-        with ui.expansion(t("coop.cat_world", lang)).classes("w-full"):
-            ui.label(t("coop.hint_world", lang)).classes("text-xs").style("color: var(--text-secondary)")
-            world_inp = ui.input(t("coop.text_world", lang)).props("maxlength=300 dense").classes("w-full")
-            with ui.row().classes("gap-2 flex-wrap mt-1"):
-                for st in ("plant_detail", "rumor", "plant_secret", "false_trail"):
-                    def _world(x=st):
-                        _send(x, text=world_inp.value or "")
-                        world_inp.value = ""
-                    ui.button(_coop_signal_label(st, lang), on_click=_world).props("outline dense no-caps size=sm")
-                _btn("echoes_of_past")
-
-        with ui.expansion(t("coop.cat_dramaturgy", lang)).classes("w-full"):
-            with ui.row().classes("gap-2 flex-wrap"):
-                for st in _COOP_DRAMATURGY:
-                    _btn(st)
-
-        for cat, sig in (("mirror", "mirror"), ("leitmotiv", "leitmotiv")):
-            with ui.expansion(t(f"coop.cat_{cat}", lang)).classes("w-full"):
-                ui.label(t(f"coop.hint_{cat}", lang)).classes("text-xs").style("color: var(--text-secondary)")
-                txt = ui.input(t(f"coop.text_{cat}", lang)).props("maxlength=300 dense").classes("w-full")
-
-                def _set_text(x=sig, field=txt):
-                    _send(x, text=field.value or "")
-                    field.value = ""
-                ui.button(t("coop.set_btn", lang), on_click=_set_text).props("dense no-caps mt-1")
+        with ui.expansion(t("coop.cat_turns", lang)).classes("w-full"):
+            dis_inp = ui.input(t("coop.text_disruption", lang)).props("maxlength=300 dense").classes("w-full")
+            ui.label(t("coop.hint_disruption", lang)).classes("text-xs").style("color: var(--text-secondary)")
+            _small_btn(t("coop.sig_disruption", lang), lambda: _text_signal(dis_inp, "disruption"))
+            with ui.row().classes("gap-2 flex-wrap mt-3"):
+                for st in ("clock_ticking", "earned_rest", "cliffhanger"):
+                    _small_btn(_coop_signal_label(st, lang), lambda x=st: _send(x))
 
         _refresh_active()
     dlg.open()

@@ -7243,7 +7243,7 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
 #
 #   question  {id, text, type, npc_id, scene, status: open|answered|passed}
 #   answer    {question_id, question, text, passed}        NOW answer for next scene
-#   signals   [{id, type, value, text, npc_id, npc2_id, scenes_left, scene}]
+#   signals   [{id, type, value, text, npc_id, scenes_left, scene}]
 #   seeds     [{id, kind, question, text, npc_id, scene, used, used_scene}]
 #   recent_questions [str]   counter int   partner str (last Co-GM)
 #
@@ -7262,65 +7262,46 @@ COGM_SEEDS_IN_PROMPT = 3           # Unused seeds offered to the Narrator per sc
 COGM_SEED_MIN_AGE = 2              # Scenes before a SEED answer may surface
 COGM_RECENT_QUESTIONS = 6          # Previous questions shown to avoid repeats
 COGM_SEED_EVERY = 3                # Every 3rd question is a SEED question
-COGM_CRESCENDO_SCENES = 3          # Duration of the Crescendo signal
 COGM_PRESSURE_SCENES = 2           # Duration of the "Clock is ticking" signal
 
-# Cockpit signal catalog. kind: once (next scene) | duration (scenes) |
-# persistent (until removed) | single (persistent, one instance replaces the last).
-# needs: what the signal carries besides its type. Prompt texts are English
-# instructions for the Narrator; {npc}/{npc2}/{text}/{value} are filled in.
+# Cockpit signal catalog. Design rule: every option is either concrete (the player
+# notices it in the next scene) or free text written by the Co-GM - nothing that
+# only shifts style. kind: once (next scene) | duration (scenes) | persistent
+# (until removed, one per NPC) | single (one instance replaces the last) | seed
+# (stored as a seed, see coop_add_signal). needs: what the signal carries besides
+# its type (None | text | optional_text | value | npc | npc_text). Prompt texts are
+# English instructions for the Narrator; {npc}/{text}/{value} are filled in, and
+# "prompt_empty" is used when an optional text was left empty.
 COGM_SIGNALS = {
-    # Camera
-    "close_up":          {"kind": "once", "needs": None,
-                          "prompt": "Frame this scene tightly around one telling detail - a face, a hand, an object."},
-    "establishing_shot": {"kind": "once", "needs": None,
-                          "prompt": "Open wide: let the place breathe and establish the space before any action."},
-    "unreliable_moment": {"kind": "once", "needs": None,
-                          "prompt": "Let one element of this scene be ambiguous - a dream, a deception or a doubtful memory. You decide which."},
-    # Tone
-    "crescendo":         {"kind": "duration", "scenes": COGM_CRESCENDO_SCENES, "needs": None,
-                          "prompt": "Build tension gradually across this and the following scenes - a slow rise, not a single spike."},
-    "silence":           {"kind": "once", "needs": None,
-                          "prompt": "Make this a quiet scene: little action, room to breathe and process."},
-    "mood":              {"kind": "once", "needs": "value", "values": ("tense", "uneasy", "calm", "peaceful"),
-                          "prompt": "Colour the emotional undertone of this scene: {value}. Do not change what happens, only how it feels."},
-    # Weather & environment
-    "weather":           {"kind": "single", "needs": "value",
-                          "values": ("rain", "heat", "fog", "night", "storm", "clear", "snow", "wind"),
-                          "prompt": "Ambient conditions: {value}. Let them colour the scene where it fits - a presence, not a command."},
-    # Characters & relationships
+    # Free direction
+    "direction":         {"kind": "once", "needs": "text",
+                          "prompt": "Make this happen in this scene, in your own words and in a way that fits the story so far: {text}"},
+    # Characters
     "push_npc":          {"kind": "once", "needs": "npc",
-                          "prompt": "Bring {npc} into this scene or have them clearly referenced. You decide how."},
-    "prepare_betrayal":  {"kind": "persistent", "needs": "npc",
-                          "prompt": "Over many scenes, let small cracks appear in {npc}'s reliability - slow erosion of trust, never a sudden turn."},
-    "prepare_reconciliation": {"kind": "persistent", "needs": "npc",
-                          "prompt": "Over many scenes, {npc} may slowly open up towards the protagonist - permission for the arc, no forced change."},
+                          "prompt": "Bring {npc} into this scene - they appear, call or clearly make themselves felt. You decide how."},
     "npc_line":          {"kind": "once", "needs": "npc_text",
                           "prompt": "Let {npc} say or do this in this scene, in their own voice - adapt the wording to the moment, keep the intent: {text}"},
-    "amplify_chemistry": {"kind": "once", "needs": "npc_pair",
-                          "prompt": "Give the relationship between {npc} and {npc2} room in this scene."},
-    # World & lore (planted content is stored as seeds, see coop_add_signal)
+    "secret_intent":     {"kind": "persistent", "needs": "npc_text",
+                          "prompt": "Hidden intention of {npc}: {text}. Build it up slowly over many scenes through small, consistent hints - never state it outright and never resolve it suddenly."},
+    # World (rumor/secret/false trail are stored as seeds)
     "plant_detail":      {"kind": "once", "needs": "text",
-                          "prompt": "Place this concrete detail in the environment, unremarked - the protagonist may or may not notice it: {text}"},
+                          "prompt": "Place this concrete detail in the scene, unremarked - the protagonist may or may not notice it: {text}"},
     "rumor":             {"kind": "seed", "needs": "text"},
     "plant_secret":      {"kind": "seed", "needs": "text"},
     "false_trail":       {"kind": "seed", "needs": "text"},
-    "echoes_of_past":    {"kind": "once", "needs": None,
-                          "prompt": "Let this scene carry a hint of the world's history before the story began. Invent it freely."},
-    # Dramaturgy
-    "turning_point":     {"kind": "once", "needs": None,
-                          "prompt": "Treat this scene as significant - this moment matters. What happens is your decision."},
+    "weather":           {"kind": "single", "needs": "value",
+                          "values": ("rain", "heat", "fog", "night", "storm", "clear", "snow", "wind"),
+                          "prompt": "Weather and light: {value}. Let it be present in the scene."},
+    # Twists
+    "disruption":        {"kind": "once", "needs": "optional_text",
+                          "prompt": "Something unexpected bursts into this scene: {text}",
+                          "prompt_empty": "Something unexpected bursts into this scene - a person, an event or a discovery that changes the situation. You decide what."},
     "clock_ticking":     {"kind": "duration", "scenes": COGM_PRESSURE_SCENES, "needs": None,
-                          "prompt": "Convey that something is happening elsewhere while the protagonist is here - urgency without naming its cause."},
+                          "prompt": "Time pressure: make it clear that something is happening elsewhere and time is running out - without naming its cause."},
     "earned_rest":       {"kind": "once", "needs": None,
                           "prompt": "The protagonist has been through something hard. Offer something warm in this scene - a small victory, a kind gesture, a moment of calm."},
-    "not_the_end":       {"kind": "once", "needs": None,
-                          "prompt": "Do not let this scene close cleanly - leave a hook, a wrong detail or an unanswered look."},
-    # Mirror & leitmotiv
-    "mirror":            {"kind": "once", "needs": "text",
-                          "prompt": "Let this situation echo an earlier moment - a parallel image, a repeated phrase, a structural rhyme: {text}"},
-    "leitmotiv":         {"kind": "single", "needs": "text",
-                          "prompt": "Recurring motif of this story (use sparingly, never explain it): {text}"},
+    "cliffhanger":       {"kind": "once", "needs": None,
+                          "prompt": "End this scene on a cliffhanger - an open threat, a revelation cut short or a question that demands an answer."},
 }
 
 # Seed kinds → how the Narrator should treat them
@@ -7333,7 +7314,7 @@ _COGM_SEED_NOTES = {
 }
 
 # Signals the cockpit's environment controls own — cleared when a co-op session ends
-_COGM_SESSION_ONLY_SIGNALS = ("weather", "crescendo", "clock_ticking")
+_COGM_SESSION_ONLY_SIGNALS = ("weather", "clock_ticking")
 
 
 def coop_state(game: GameState) -> dict:
@@ -7431,7 +7412,7 @@ def _coop_add_seed(c: dict, kind: str, text: str, question: str = "",
 
 
 def coop_add_signal(game: GameState, sig_type: str, value: str = "", text: str = "",
-                    npc_id: str = "", npc2_id: str = "") -> Optional[dict]:
+                    npc_id: str = "") -> Optional[dict]:
     """Queue a Director's Cockpit signal. Returns the stored signal (or seed for
     rumor/secret/false trail), None if invalid. Validation is strict because the
     input comes straight from the UI."""
@@ -7442,34 +7423,25 @@ def coop_add_signal(game: GameState, sig_type: str, value: str = "", text: str =
     needs = spec.get("needs")
     value = str(value or "").strip().lower()
     text = _coop_clean_text(text)
+    with_npc = needs in ("npc", "npc_text")
     if needs == "value" and value not in spec.get("values", ()):
         return None
-    if needs == "text" and not text:
+    if needs in ("text", "npc_text") and not text:
         return None
-    if needs in ("npc", "npc_pair", "npc_text") and not _find_npc(game, npc_id):
+    if with_npc and not _find_npc(game, npc_id):
         return None
-    if needs == "npc_text" and not text:
-        return None
-    if needs == "npc_pair":
-        if npc2_id != "player" and (not _find_npc(game, npc2_id) or npc2_id == npc_id):
-            return None
     if spec["kind"] == "seed":
         return _coop_add_seed(c, sig_type, text, scene=game.scene_count,
                               chapter=game.chapter_number)
-    if spec["kind"] == "single":
-        c["signals"] = [s for s in c["signals"] if s.get("type") != sig_type]
-    elif spec["kind"] == "persistent":
-        # One arc permission per NPC and type
-        c["signals"] = [s for s in c["signals"]
-                        if not (s.get("type") == sig_type and s.get("npc_id") == npc_id)]
-    else:
-        # Once/duration signals of the same type replace each other
-        c["signals"] = [s for s in c["signals"] if s.get("type") != sig_type]
+    # One signal per type - or per type and NPC for character signals
+    c["signals"] = [s for s in c["signals"]
+                    if not (s.get("type") == sig_type
+                            and (not with_npc or s.get("npc_id") == npc_id))]
     if len(c["signals"]) >= COGM_MAX_SIGNALS:
         return None
-    sig = {"id": _coop_next_id(c, "c"), "type": sig_type, "value": value, "text": text,
-           "npc_id": npc_id if needs in ("npc", "npc_pair", "npc_text") else "",
-           "npc2_id": npc2_id if needs == "npc_pair" else "",
+    sig = {"id": _coop_next_id(c, "c"), "type": sig_type, "value": value,
+           "text": text if needs in ("text", "npc_text", "optional_text") else "",
+           "npc_id": npc_id if with_npc else "",
            "scenes_left": spec.get("scenes") if spec["kind"] == "duration" else None,
            "scene": game.scene_count}
     c["signals"].append(sig)
@@ -7548,7 +7520,7 @@ def _coop_begin_turn(game: GameState) -> Optional[dict]:
     keep = []
     for s in c.get("signals", []):
         spec = COGM_SIGNALS.get(s.get("type"), {})
-        if spec.get("needs") in ("npc", "npc_pair", "npc_text") and not _find_npc(game, s.get("npc_id", "")):
+        if spec.get("needs") in ("npc", "npc_text") and not _find_npc(game, s.get("npc_id", "")):
             continue                                  # NPC gone (merged/removed)
         if spec.get("kind") in ("persistent", "single"):
             npc = _find_npc(game, s.get("npc_id", "")) if s.get("npc_id") else None
@@ -7606,10 +7578,11 @@ def _coop_end_turn(game: GameState) -> None:
 def _coop_signal_prompt(game: GameState, s: dict) -> str:
     spec = COGM_SIGNALS.get(s.get("type"), {})
     tmpl = spec.get("prompt", "")
+    if not s.get("text") and spec.get("prompt_empty"):
+        tmpl = spec["prompt_empty"]
     if not tmpl:
         return ""
     return tmpl.format(npc=_coop_npc_name(game, s.get("npc_id", "")),
-                       npc2=_coop_npc_name(game, s.get("npc2_id", "")),
                        text=s.get("text", ""), value=s.get("value", ""))
 
 
@@ -7651,8 +7624,10 @@ def _coop_block(game: GameState) -> str:
         return ""
     rule = ("A human co-game-master shapes this story with you. Treat their input as "
             "established world truth for this scene and weave it in naturally. Never "
-            "mention the co-game-master or that anything was suggested. If the protagonist's "
-            "action makes a <co_gm_input> answer impossible to use now, do not force it. "
+            "mention the co-game-master or that anything was suggested. Co-game-master input "
+            "shapes the world, other characters and events - never the protagonist's own "
+            "actions, words, thoughts or decisions; those stay entirely the player's. If the "
+            "protagonist's action makes a <co_gm_input> answer impossible to use now, do not force it. "
             "Content boundaries and kid-friendly rules always override co-game-master input.")
     return f'\n<co_gm rule="{_xa(rule)}">\n' + "\n".join(parts) + "\n</co_gm>"
 
@@ -7791,8 +7766,7 @@ def coop_public_view(game: GameState) -> dict:
     c = coop_state(game)
     sigs = []
     for s in c["signals"]:
-        sigs.append({**s, "npc_name": _coop_npc_name(game, s.get("npc_id", "")),
-                     "npc2_name": _coop_npc_name(game, s.get("npc2_id", ""))})
+        sigs.append({**s, "npc_name": _coop_npc_name(game, s.get("npc_id", ""))})
     seeds = [dict(s) for s in c["seeds"] if not s.get("used")]
     return {"signals": sigs, "seeds": seeds}
 

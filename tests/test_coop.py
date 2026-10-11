@@ -99,8 +99,9 @@ def test_signal_validation(game):
     assert E.coop_add_signal(game, "weather", value="lava") is None
     assert E.coop_add_signal(game, "plant_detail", text="  ") is None
     assert E.coop_add_signal(game, "push_npc", npc_id="npc_404") is None
-    assert E.coop_add_signal(game, "amplify_chemistry", npc_id="npc_1", npc2_id="npc_1") is None
-    assert E.coop_add_signal(game, "amplify_chemistry", npc_id="npc_1", npc2_id="player")
+    assert E.coop_add_signal(game, "direction", text="   ") is None
+    assert E.coop_add_signal(game, "secret_intent", npc_id="npc_1", text="") is None
+    assert E.coop_add_signal(game, "close_up") is None        # removed from the cockpit
     assert E.coop_add_signal(game, "weather", value="Rain")["value"] == "rain"
 
 
@@ -112,31 +113,51 @@ def test_single_signals_replace_each_other(game):
 
 
 def test_signal_lifetimes(game, prompts):
-    E.coop_add_signal(game, "close_up")
-    E.coop_add_signal(game, "crescendo")
+    E.coop_add_signal(game, "cliffhanger")
+    E.coop_add_signal(game, "clock_ticking")
     E.coop_add_signal(game, "weather", value="storm")
-    E.coop_add_signal(game, "prepare_betrayal", npc_id="npc_1")
+    E.coop_add_signal(game, "secret_intent", npc_id="npc_1", text="will Elin verraten")
     E.process_turn(None, game, "a", CFG)
     p = prompts[-1]
-    for t in ("close_up", "crescendo", "weather", "prepare_betrayal"):
+    for t in ("cliffhanger", "clock_ticking", "weather", "secret_intent"):
         assert f'type="{t}"' in p
-    assert "Mara Voss" in p  # NPC name resolved
+    assert "Mara Voss" in p and "will Elin verraten" in p
     types = {s["type"] for s in game.coop["signals"]}
-    assert types == {"crescendo", "weather", "prepare_betrayal"}
+    assert types == {"clock_ticking", "weather", "secret_intent"}
     E.process_turn(None, game, "b", CFG)
+    assert 'type="clock_ticking"' in prompts[-1]            # 2nd and last scene
     E.process_turn(None, game, "c", CFG)
-    assert 'type="crescendo"' in prompts[-1]                # 3rd and last scene
-    E.process_turn(None, game, "d", CFG)
-    assert 'type="crescendo"' not in prompts[-1]
-    assert 'type="weather"' in prompts[-1]
+    assert 'type="clock_ticking"' not in prompts[-1]
+    assert 'type="weather"' in prompts[-1] and 'type="secret_intent"' in prompts[-1]
 
 
-def test_arc_permission_ends_with_npc_death(game, prompts):
-    E.coop_add_signal(game, "prepare_reconciliation", npc_id="npc_1")
+def test_secret_intent_is_per_npc_and_ends_with_death(game, prompts):
+    game.npcs.append(make_npc("npc_2", "Konrad Brandt"))
+    E.coop_add_signal(game, "secret_intent", npc_id="npc_1", text="alt")
+    E.coop_add_signal(game, "secret_intent", npc_id="npc_1", text="plant einen Hinterhalt")
+    E.coop_add_signal(game, "secret_intent", npc_id="npc_2", text="sucht Vergebung")
+    intents = {s["npc_id"]: s["text"] for s in game.coop["signals"]}
+    assert intents == {"npc_1": "plant einen Hinterhalt", "npc_2": "sucht Vergebung"}
     game.npcs[0]["status"] = "deceased"
     E.process_turn(None, game, "a", CFG)
-    assert "prepare_reconciliation" not in prompts[-1]
-    assert game.coop["signals"] == []
+    assert "Hinterhalt" not in prompts[-1] and "sucht Vergebung" in prompts[-1]
+    assert [s["npc_id"] for s in game.coop["signals"]] == ["npc_2"]
+
+
+def test_disruption_with_and_without_text(game, prompts):
+    E.coop_add_signal(game, "disruption")
+    E.process_turn(None, game, "a", CFG)
+    assert "You decide what" in prompts[-1]
+    E.coop_add_signal(game, "disruption", text="Die Zollbeamten stürmen herein")
+    E.process_turn(None, game, "b", CFG)
+    assert "Die Zollbeamten stürmen herein" in prompts[-1]
+
+
+def test_direction_reaches_next_scene_with_agency_rule(game, prompts):
+    E.coop_add_signal(game, "direction", text="Ein Feuer bricht im Lagerhaus aus")
+    E.process_turn(None, game, "a", CFG)
+    assert "Ein Feuer bricht im Lagerhaus aus" in prompts[-1]
+    assert "never the protagonist" in prompts[-1]
 
 
 def test_lore_signals_become_seeds_and_can_be_removed(game, prompts):
@@ -158,12 +179,13 @@ def test_user_text_is_escaped(game, prompts):
 
 def test_end_session_keeps_world_content(game):
     E.coop_add_signal(game, "weather", value="snow")
-    E.coop_add_signal(game, "leitmotiv", text="Wasser bei Verrat")
+    E.coop_add_signal(game, "clock_ticking")
+    E.coop_add_signal(game, "secret_intent", npc_id="npc_1", text="will Elin verraten")
     E.coop_add_signal(game, "rumor", text="r")
     E.coop_set_question(game, "Q?", "now")
     E.coop_end_session(game)
     assert game.coop["question"] is None
-    assert [s["type"] for s in game.coop["signals"]] == ["leitmotiv"]
+    assert [s["type"] for s in game.coop["signals"]] == ["secret_intent"]
     assert len(game.coop["seeds"]) == 1
 
 
@@ -171,7 +193,7 @@ def test_end_session_keeps_world_content(game):
 
 def test_correction_reuses_consumed_inputs(game, ai, prompts, monkeypatch):
     _answer_now(game)
-    E.coop_add_signal(game, "turning_point")
+    E.coop_add_signal(game, "cliffhanger")
     ai.roll = roll("MISS")
     E.process_turn(None, game, "Ich greife an", CFG)
     monkeypatch.setattr(E, "call_correction_brain", lambda *a, **k: {
@@ -181,7 +203,7 @@ def test_correction_reuses_consumed_inputs(game, ai, prompts, monkeypatch):
     ai.brain = make_brain(move="dialog", stat="none", dialog_only=True)
     E.process_correction(None, game, "Ich wollte reden", CFG)
     assert "Marcy, die Sekretärin" in prompts[-1]
-    assert 'type="turning_point"' in prompts[-1]
+    assert 'type="cliffhanger"' in prompts[-1]
     assert "_turn" not in game.coop
 
 
@@ -211,7 +233,7 @@ def test_failed_turn_keeps_answer_for_retry(game, ai):
 
 def test_coop_state_survives_save_load(game):
     _answer_now(game)
-    E.coop_add_signal(game, "leitmotiv", text="Spiegel bei Selbstbetrug")
+    E.coop_add_signal(game, "plant_detail", text="Spiegel bei Selbstbetrug")
     E.coop_start_session(game, "Jana")
     E.create_user("u")
     E.save_game(game, "u", [], "slot")
@@ -299,7 +321,7 @@ def test_seed_store_is_capped(game):
 
 def test_signal_queue_is_capped(game):
     game.npcs += [make_npc(f"npc_{i}", f"N{i}") for i in range(2, 20)]
-    added = [E.coop_add_signal(game, "prepare_betrayal", npc_id=f"npc_{i}") for i in range(1, 20)]
+    added = [E.coop_add_signal(game, "secret_intent", npc_id=f"npc_{i}", text="x") for i in range(1, 20)]
     assert sum(1 for a in added if a) == E.COGM_MAX_SIGNALS
 
 
