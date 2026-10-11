@@ -65,7 +65,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "0.9.99"
+VERSION = "0.9.100"
 BRAIN_MODEL = "claude-haiku-5-5"
 NARRATOR_MODEL = "claude-sonnet-5-5"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -132,6 +132,7 @@ MAX_ACTIVE_NPCS = 12               # Soft limit; excess NPCs get retired
 MAX_ACTIVE_CLOCKS = 6              # Hard cap; Director cannot add clocks beyond this
 ARC_MAX_CHARS = 300                # NPC arc length; longer Director arcs are trimmed at a sentence end
 LOCATION_MAX_CHARS = 40            # Longer location strings are cut to a short place label
+NPC_NAME_MAX_CHARS = 60            # Longer "names" are descriptions; cut at a word boundary
 ARCHITECT_ATTEMPTS = 2             # Story Architect tries before the generic fallback blueprint (too few acts / unparseable)
 ACT_MIN_SCENES = 2                 # Director act_transition is ignored earlier than this many scenes into an act's range
 ACT_TRIGGER_DUE_SCENES = 2         # Within this many scenes of an act's range end, the trigger is "due": the Director runs once and steers toward it
@@ -1265,22 +1266,34 @@ def _sanitize_npc_name(name: str) -> tuple[str, list[str]]:
         'Barrel (der Fass-Schläger)'       → ('Barrel', ['der Fass-Schläger'])
         'Hauptmann Krahe'                  → ('Hauptmann Krahe', [])
     """
-    if not name or '(' not in name:
-        return name.strip(), []
+    # Collapse whitespace; a whitespace-only name becomes "" (callers skip it)
+    name = " ".join(str(name or "").split())
+    if '(' not in name:
+        return _cap_npc_name(name), []
     m = re.match(r'^(.+?)\s*\((.+)\)\s*$', name)
     if not m:
-        return name.strip(), []
+        return _cap_npc_name(name), []
     clean = m.group(1).strip()
     paren = m.group(2).strip()
     if not clean:
-        return name.strip(), []
+        return _cap_npc_name(name), []
     # Check for explicit alias hints ("auch bekannt als ...", "aka ...")
     alias_match = _ALIAS_HINT_RE.search(paren)
     if alias_match:
         alias = paren[alias_match.end():].strip().rstrip('.')
-        return clean, [alias] if alias else []
+        return _cap_npc_name(clean), [_cap_npc_name(alias)] if alias else []
     # Generic parenthetical (epithet, descriptor) → usable as alias
-    return clean, [paren] if paren else []
+    return _cap_npc_name(clean), [_cap_npc_name(paren)] if paren else []
+
+
+def _cap_npc_name(name: str) -> str:
+    """Cap an NPC name at NPC_NAME_MAX_CHARS, cutting at a word boundary. A model
+    occasionally returns a whole description as the name."""
+    if len(name) <= NPC_NAME_MAX_CHARS:
+        return name
+    head = name[:NPC_NAME_MAX_CHARS]
+    space = head.rfind(" ")
+    return (head[:space] if space >= NPC_NAME_MAX_CHARS // 2 else head).rstrip(" ,;:-")
 
 
 def _apply_name_sanitization(npc: dict) -> None:
@@ -1336,16 +1349,18 @@ def _find_npc(game, npc_ref: str) -> Optional[dict]:
     for n in game.npcs:
         if n.get("id") == npc_ref:
             return n
-    # 2. Normalized name match — collapses hyphens, underscores, whitespace variants
+    # 2. Normalized name match — collapses hyphens, underscores, whitespace variants.
+    #    A living namesake wins over a dead one: otherwise a reference to the
+    #    living "Ilse" would hit (and resurrect) the deceased "Ilse".
     ref_norm = _normalize_for_match(npc_ref)
-    for n in game.npcs:
-        if _normalize_for_match(n.get("name", "")) == ref_norm:
-            return n
-    # 3. Normalized alias match
-    for n in game.npcs:
-        for alias in n.get("aliases", []):
-            if _normalize_for_match(alias) == ref_norm:
-                return n
+    named = [n for n in game.npcs if _normalize_for_match(n.get("name", "")) == ref_norm]
+    if named:
+        return next((n for n in named if n.get("status") != "deceased"), named[0])
+    # 3. Normalized alias match (same preference)
+    aliased = [n for n in game.npcs
+               if any(_normalize_for_match(a) == ref_norm for a in n.get("aliases", []))]
+    if aliased:
+        return next((n for n in aliased if n.get("status") != "deceased"), aliased[0])
     # 3b. Title-aware core match: finds "Eva" when stored as "Dr. Eva", and vice versa.
     #     Strips _NAME_TITLES from both sides and compares the remaining name cores.
     #     Only fires when there is exactly ONE unambiguous match — if two NPCs share
@@ -1634,10 +1649,12 @@ def _merge_npc_identity(existing: dict, new_name: str, new_desc: str = "", game=
     Old name becomes an alias, new name becomes primary.
     Pass game to also update any clock whose owner string matches the old name."""
     old_name = existing["name"]
-    new_name = new_name.strip()
     # Strip parenthetical annotations from new name (e.g. "Cremin (auch bekannt als Cremon)")
-    clean_name, extra_aliases = _sanitize_npc_name(new_name)
+    clean_name, extra_aliases = _sanitize_npc_name(new_name or "")
     new_name = clean_name
+    if not new_name:
+        log(f"[NPC] Identity merge skipped for '{old_name}': empty new name", level="warning")
+        return
     # Guard: don't merge if names are identical after normalization
     if _normalize_for_match(old_name) == _normalize_for_match(new_name):
         log(f"[NPC] Identity merge skipped: '{old_name}' → '{new_name}' (same name)")
@@ -1671,6 +1688,9 @@ def _merge_npc_identity(existing: dict, new_name: str, new_desc: str = "", game=
                 log(f"[Clock] Owner updated on NPC rename: '{clock['name']}' "
                     f"'{old_owner}' → '{new_name}'")
     log(f"[NPC] Identity merged: '{old_name}' → '{new_name}' (aliases: {existing['aliases']})")
+    # Another NPC may already carry the revealed name - same person, absorb it
+    if game is not None:
+        _absorb_duplicate_npc(game, existing, new_name)
 
 
 def _description_match_existing_npc(game, new_desc: str, new_name_norm: str) -> Optional[dict]:
@@ -1796,8 +1816,9 @@ def _is_descriptor_name(name: str) -> bool:
     Examples that return True:  "The Stranger", "A Hooded Figure", "Unknown Man"
     Examples that return False: "John Hartley", "Captain Reade", "Prita Vasudeva"
     """
-    if not name:
-        return False
+    if not name or not name.split():
+        # A blank name is a placeholder by definition - it may receive a real name
+        return True
     first = name.strip().split()[0].lower().rstrip(".,")
     return first in {
         # English articles / markers
@@ -1839,7 +1860,10 @@ def _process_npc_renames(game, json_text: str):
         if not isinstance(renames, list):
             return
         for r in renames:
-            if not isinstance(r, dict) or not r.get("new_name"):
+            if not isinstance(r, dict):
+                continue
+            r["new_name"] = _sanitize_npc_name(r.get("new_name") or "")[0]
+            if not r["new_name"]:
                 continue
             # Find the NPC to rename
             npc = _find_npc(game, r.get("npc_id", ""))
@@ -1932,6 +1956,7 @@ def _process_npc_renames(game, json_text: str):
                     _reactivate_npc(npc, reason="title variant reappeared")
                 log(f"[NPC] npc_renames: title variant '{old_name}' ↔ '{new_name}' "
                     f"— primary='{titled}', alias='{bare}'")
+                _absorb_duplicate_npc(game, npc, npc["name"])   # "Kress" → existing "Hauptmann Kress"
                 continue
 
             _merge_npc_identity(npc, new_name, r.get("description", ""), game=game)
@@ -1983,7 +2008,9 @@ def _absorb_duplicate_npc(game, original: dict, merged_name: str):
     carried by a rich established character ("Hanna") — the established character's
     data must win."""
     merged_norm = _normalize_for_match(merged_name)
-    for dup in game.npcs:
+    for dup in list(game.npcs):     # every namesake (name or alias) is absorbed
+        if dup not in game.npcs:
+            continue
         dup_name_norm = _normalize_for_match(dup.get("name", ""))
         dup_alias_norms = {_normalize_for_match(a) for a in dup.get("aliases", [])}
         dup_matches = (dup_name_norm == merged_norm or merged_norm in dup_alias_norms)
@@ -1991,6 +2018,8 @@ def _absorb_duplicate_npc(game, original: dict, merged_name: str):
                 or not dup_matches
                 or dup.get("id") == original.get("id")):
             continue
+        if dup.get("status") == "deceased" and original.get("status") != "deceased":
+            continue        # a living character is never the dead one of the same name
         dup_id = dup.get("id", "?")
         dup_mems = dup.get("memory", [])
 
@@ -2067,6 +2096,11 @@ def _absorb_duplicate_npc(game, original: dict, merged_name: str):
                 original["aliases"].append(alias)
 
         game.npcs.remove(dup)
+        # Re-point memories about the absorbed NPC to the surviving one
+        for other in game.npcs:
+            for m in other.get("memory", []):
+                if isinstance(m, dict) and m.get("about_npc") == dup_id:
+                    m["about_npc"] = None if other is original else original.get("id")
         log(f"[NPC] Absorbed duplicate '{dup.get('name', '?')}' ({dup_id}) "
             f"into '{original['name']}' ({original.get('id', '?')}): "
             f"{len(dup_mems)} memories transferred, richer={'dup' if dup_richer else 'original'}")
@@ -2074,7 +2108,6 @@ def _absorb_duplicate_npc(game, original: dict, merged_name: str):
         _apply_name_sanitization(original)
         # Consolidate: merged memory lists may now exceed MAX_NPC_MEMORY_ENTRIES
         _consolidate_memory(original)
-        break  # Only one duplicate expected
 
 
 def _process_npc_details(game, json_text: str, world_addition: str = ""):
@@ -2103,7 +2136,7 @@ def _process_npc_details(game, json_text: str, world_addition: str = ""):
                 continue
 
             # Update full name if provided and different
-            new_name = d.get("full_name", "").strip()
+            new_name = " ".join(str(d.get("full_name") or "").split())
             # Strip parenthetical annotations before comparison
             if new_name:
                 new_name, paren_aliases = _sanitize_npc_name(new_name)
@@ -2233,6 +2266,11 @@ def _process_npc_details(game, json_text: str, world_addition: str = ""):
                         # with this name earlier in the same metadata cycle
                         _absorb_duplicate_npc(game, npc, new_name)
 
+            # Any name change (surname, title variant, reveal) may now collide with
+            # another NPC that already carries this name - they are the same person.
+            if new_name and _normalize_for_match(npc["name"]) == _normalize_for_match(new_name):
+                _absorb_duplicate_npc(game, npc, npc["name"])
+
             # Replace description if provided (for significant narrative changes,
             # e.g. "combat pilot" → "retired mechanic" after character reveal)
             new_desc = d.get("description", "").strip()
@@ -2272,9 +2310,16 @@ def _process_new_npcs(game, json_text: str):
         player_parts = set(player_norm.split())
 
         for nd in new_npcs:
-            if not isinstance(nd, dict) or not nd.get("name"):
+            if not isinstance(nd, dict):
                 continue
-            name_norm = _normalize_for_match(nd["name"])
+            nd["name"] = " ".join(str(nd.get("name") or "").split())
+            _clean = _sanitize_npc_name(nd["name"])[0]
+            if not _clean:
+                log("[NPC] Skipping new NPC with empty name", level="warning")
+                continue
+            # Match on the name as it will be stored (capped, parentheticals
+            # stripped) so an over-long name that reappears is not re-created.
+            name_norm = _normalize_for_match(_clean)
 
             # Skip player character (exact match OR any name part overlap)
             name_parts = set(name_norm.split())
@@ -2285,8 +2330,11 @@ def _process_new_npcs(game, json_text: str):
             # Check if this NPC already exists (normalized name match, possibly background)
             if name_norm in existing_names:
                 # Reactivate background/lore/deceased NPCs that reappear in narration
-                existing = next((n for n in game.npcs
-                                 if _normalize_for_match(n["name"]) == name_norm), None)
+                # Prefer a living namesake: a dead "Ilse" must not be resurrected
+                # while a second, living "Ilse" already exists.
+                _same = [n for n in game.npcs if _normalize_for_match(n["name"]) == name_norm]
+                existing = next((n for n in _same if n.get("status") != "deceased"),
+                                _same[0] if _same else None)
                 if existing and existing.get("status") in ("background", "lore"):
                     _reactivate_npc(existing, reason="reappeared in new_npcs")
                 elif existing and existing.get("status") == "deceased":
@@ -2324,7 +2372,7 @@ def _process_new_npcs(game, json_text: str):
                         inc_norm = _normalize_for_match(nd["name"])
                         titled = nd["name"] if len(inc_norm.split()) >= len(hit_norm.split()) else fuzzy_hit["name"]
                         bare   = fuzzy_hit["name"] if titled == nd["name"] else nd["name"]
-                        fuzzy_hit["name"] = titled
+                        fuzzy_hit["name"] = _cap_npc_name(titled)
                         fuzzy_hit.setdefault("aliases", [])
                         bare_norm = _normalize_for_match(bare)
                         existing_alias_norms = {_normalize_for_match(a) for a in fuzzy_hit["aliases"]}
@@ -2334,6 +2382,7 @@ def _process_new_npcs(game, json_text: str):
                         if fuzzy_hit.get("status") in ("background", "lore"):
                             _reactivate_npc(fuzzy_hit, reason="title variant reappeared")
                         log(f"[NPC] Title variant via fuzzy: primary='{titled}', alias='{bare}'")
+                        _absorb_duplicate_npc(game, fuzzy_hit, fuzzy_hit["name"])
                     else:
                         _merge_npc_identity(fuzzy_hit, nd["name"], nd.get("description", ""), game=game)
                     existing_names.add(name_norm)
@@ -2427,7 +2476,11 @@ def _process_lore_npcs(game, lore_list: list):
     player_norm = _normalize_for_match(game.player_name)
 
     for entry in lore_list:
-        if not isinstance(entry, dict) or not entry.get("name"):
+        if not isinstance(entry, dict):
+            continue
+        entry["name"] = " ".join(str(entry.get("name") or "").split())
+        _clean = _sanitize_npc_name(entry["name"])[0]
+        if not _clean:
             continue
         name_norm = _normalize_for_match(entry["name"])
 
@@ -2437,7 +2490,7 @@ def _process_lore_npcs(game, lore_list: list):
             continue
 
         # Already known under any status? Update description if richer, done.
-        existing = _find_npc(game, entry["name"])
+        existing = _find_npc(game, entry["name"]) or _find_npc(game, _clean)
         if existing:
             if not existing.get("description") and entry.get("description"):
                 existing["description"] = entry["description"].strip()
@@ -3993,6 +4046,63 @@ def _tick_autonomous_clocks(game: GameState) -> list:
             status = "TRIGGERED" if triggered else f"{clock['filled']}/{clock['segments']}"
             log(f"[Clock] Autonomous tick: '{clock['name']}' → {status}")
     return ticked
+
+
+CLOCK_MIN_SEGMENTS = 2
+CLOCK_MAX_SEGMENTS = 10
+
+
+def _sanitize_new_clock(c: dict) -> Optional[dict]:
+    """Validate a clock proposed by a model (opening extractor, Director).
+    Returns a clean clock dict without id, or None for an unusable proposal.
+    A new clock never starts full: it would never fire (ticks skip full clocks)
+    and the Narrator would never hear about it."""
+    if not isinstance(c, dict):
+        return None
+    name = " ".join(str(c.get("name") or "").split())
+    if not name:
+        return None
+    try:
+        segments = int(c.get("segments", 6))
+    except (TypeError, ValueError):
+        segments = 6
+    segments = max(CLOCK_MIN_SEGMENTS, min(CLOCK_MAX_SEGMENTS, segments))
+    try:
+        filled = int(c.get("filled", 0))
+    except (TypeError, ValueError):
+        filled = 0
+    filled = max(0, min(filled, segments - 1))
+    ctype = str(c.get("clock_type") or c.get("type") or "threat").strip().lower()
+    if ctype not in ("threat", "scheme"):
+        ctype = "threat"
+    return {"name": name, "clock_type": ctype, "segments": segments, "filled": filled,
+            "trigger_description": str(c.get("trigger_description") or ""),
+            "owner": str(c.get("owner") or "world").strip() or "world",
+            "fired": False}
+
+
+def _sync_clock_owners(game: GameState, source: str = "Clock") -> None:
+    """Point clock owners at the NPC's current name when the stored owner is one of
+    its former names (aliases). Every rename path (identity reveal, surname,
+    title variant, ## correction, duplicate absorb) runs before this, so callers
+    sync once after a batch of NPC changes. An owner that is some NPC's current
+    name is left alone."""
+    current = {_normalize_for_match(n.get("name", "")) for n in game.npcs}
+    alias_to_name: dict[str, str] = {}
+    for npc in game.npcs:
+        for alias in npc.get("aliases", []):
+            alias_to_name.setdefault(_normalize_for_match(alias), npc["name"])
+    for clock in game.clocks:
+        owner = clock.get("owner", "")
+        if not owner or owner == "world":
+            continue
+        norm = _normalize_for_match(owner)
+        if norm in current:
+            continue
+        canonical = alias_to_name.get(norm)
+        if canonical and canonical != owner:
+            log(f"[{source}] Clock owner synced: '{clock.get('name')}' '{owner}' → '{canonical}'")
+            clock["owner"] = canonical
 
 
 def _purge_old_fired_clocks(game: GameState, keep_scenes: int = 3) -> None:
@@ -5885,6 +5995,8 @@ def _apply_narrator_metadata(game: GameState, metadata: dict,
     # Also serves as the primary hook for sessions that rarely add new NPCs
     # (the _process_new_npcs call-site would miss most turns without this).
     _retire_distant_npcs(game)
+    # Renames/merges above may have left clock owners on a former name
+    _sync_clock_owners(game, "Metadata")
 
 
 def _process_deceased_npcs(game: GameState, deceased_list: list,
@@ -6697,32 +6809,23 @@ def _apply_director_guidance(game: GameState, guidance: dict):
                 max_clock_num = max(max_clock_num, int(cid_match.group(1)))
         added = []
         for c in new_clocks:
-            name = c.get("name", "").strip()
-            if not name:
+            clean = _sanitize_new_clock(c)
+            if clean is None:
                 continue
+            name = clean["name"]
             if _normalize_for_match(name) in existing_names:
                 log(f"[Director] Skipped duplicate clock: '{name}' already tracked",
                     level="warning")
                 continue
             max_clock_num += 1
-            clock_entry = {
-                "id":                  f"clock_{max_clock_num}",
-                "name":                name,
-                "clock_type":          c.get("clock_type", "threat"),
-                "segments":            max(2, min(10, int(c.get("segments", 6)))),
-                "filled":              max(0, min(int(c.get("filled", 1)),
-                                           max(2, min(10, int(c.get("segments", 6)))))),
-                "trigger_description": c.get("trigger_description", ""),
-                "owner":               c.get("owner", "world"),
-                "fired":               False,
-                "fired_at_scene":      0,
-            }
+            clock_entry = {"id": f"clock_{max_clock_num}", **clean, "fired_at_scene": 0}
             game.clocks.append(clock_entry)
             existing_names.add(_normalize_for_match(name))
             added.append(name)
         if added:
             log(f"[Director] Added {len(added)} new clock(s): {added}")
 
+    _sync_clock_owners(game, "Director")
     log(f"[Director] Guidance applied: pacing={guidance.get('pacing', '?')}")
 
 
@@ -7218,6 +7321,24 @@ def _process_game_data(game: GameState, data: dict, force_npcs: bool = True):
             id_match = re.match(r'npc_(\d+)', str(n.get("id", "")))
             if id_match:
                 max_num = max(max_num, int(id_match.group(1)))
+        # Drop unnamed entries and same-name duplicates within the opening list
+        _seen_names = set()
+        _clean_npcs = []
+        for nd in data["npcs"]:
+            if not isinstance(nd, dict):
+                continue
+            nd["name"] = " ".join(str(nd.get("name") or "").split())
+            if "(" not in nd["name"]:
+                nd["name"] = _cap_npc_name(nd["name"])   # parentheticals: sanitized below
+            _norm = _normalize_for_match(_sanitize_npc_name(nd["name"])[0])
+            if not _norm or _norm in _seen_names:
+                log(f"[NPC] Opening game_data: skipped {'unnamed' if not _norm else 'duplicate'} "
+                    f"NPC '{nd['name'][:60]}'", level="warning")
+                continue
+            _seen_names.add(_norm)
+            nd["disposition"] = _normalize_disposition(str(nd.get("disposition") or "neutral"))
+            _clean_npcs.append(nd)
+        data["npcs"] = _clean_npcs
         for nd in data["npcs"]:
             # Assign consistent NPC ID if missing or non-standard format
             if not nd.get("id") or not re.match(r'^npc_\d+$', str(nd.get("id", ""))):
@@ -7302,17 +7423,19 @@ def _process_game_data(game: GameState, data: dict, force_npcs: bool = True):
             cid_match = re.match(r'clock_(\d+)', str(c.get("id", "")))
             if cid_match:
                 max_clock_num = max(max_clock_num, int(cid_match.group(1)))
+        sanitized = []
         for c in data["clocks"]:
-            if "type" in c and "clock_type" not in c:
-                c["clock_type"] = c.pop("type")
-            # Assign clock ID if missing
-            if not c.get("id"):
+            clean = _sanitize_new_clock(c)
+            if clean is None:
+                log(f"[Clock] Skipped unusable clock proposal: {c!r}"[:200], level="warning")
+                continue
+            # Keep a valid AI-provided ID, otherwise assign the next one
+            cid = c.get("id") if isinstance(c, dict) else None
+            if not cid or not re.match(r'^clock_\d+$', str(cid)):
                 max_clock_num += 1
-                c["id"] = f"clock_{max_clock_num}"
-            # Normalize fired: extractor omits the field; None serializes to JSON null
-            # which confuses the "fired" not in clock backfill check in load_game.
-            if c.get("fired") is None:
-                c["fired"] = False
+                cid = f"clock_{max_clock_num}"
+            sanitized.append({"id": cid, **clean})
+        data["clocks"] = sanitized
         new_clocks = [c for c in data["clocks"] if c.get("id") not in existing_ids]
         if new_clocks:
             game.clocks.extend(new_clocks)
@@ -7565,6 +7688,11 @@ def _apply_memory_updates(game: GameState, json_text: str,
                 # at least the stub gets a readable display name.
                 if "_" in npc_name and " " not in npc_name:
                     npc_name = npc_name.replace("_", " ").title()
+                npc_name = _sanitize_npc_name(npc_name)[0]
+                if not npc_name or npc_name.upper() == "NEW":
+                    log(f"[NPC] Skipping auto-stub for unusable reference {u['npc_id']!r}",
+                        level="warning")
+                    continue
                 # Guard: if an NPC with this name or alias already exists, route
                 # the memory update to them instead of creating a duplicate stub.
                 # _find_npc covers exact name, aliases, and substring — so this
@@ -7913,6 +8041,16 @@ def load_game(username: str, name: str = "autosave") -> tuple[Optional[GameState
         game.location_history = []
     if game.time_of_day is None:
         game.time_of_day = ""
+    # Repair clocks with unusable numbers (would divide by zero in the sidebar)
+    for clock in game.clocks:
+        try:
+            clock["segments"] = max(1, int(clock.get("segments", 6)))
+        except (TypeError, ValueError):
+            clock["segments"] = 6
+        try:
+            clock["filled"] = max(0, min(int(clock.get("filled", 0)), clock["segments"]))
+        except (TypeError, ValueError):
+            clock["filled"] = 0
     # Backward compatibility: backfill fired=True for fully filled clocks in older saves
     for clock in game.clocks:
         if clock.get("filled", 0) >= clock.get("segments", 1) and "fired" not in clock:
@@ -7924,23 +8062,9 @@ def load_game(username: str, name: str = "autosave") -> tuple[Optional[GameState
         # will remove it on the next turn (0 is always > keep_scenes scenes ago)
         if clock.get("fired") and "fired_at_scene" not in clock:
             clock["fired_at_scene"] = 0
-    # Backward compatibility: repair clock owners that still carry a stale NPC name.
-    # _merge_npc_identity now updates owners live, but saves made before this fix
-    # may have owner = old name (now an alias). Build normalized alias → canonical map.
-    _norm_alias_to_canonical: dict[str, str] = {}
-    for npc in game.npcs:
-        for alias in npc.get("aliases", []):
-            norm = _normalize_for_match(alias)
-            if norm not in _norm_alias_to_canonical:
-                _norm_alias_to_canonical[norm] = npc["name"]
-    for clock in game.clocks:
-        owner = clock.get("owner", "")
-        if owner and owner not in ("", "world"):
-            canonical = _norm_alias_to_canonical.get(_normalize_for_match(owner))
-            if canonical and canonical != owner:
-                clock_name = clock["name"]
-                log(f"[Load] Clock owner repaired: '{clock_name}' '{owner}' → '{canonical}'")
-                clock["owner"] = canonical
+    # Repair clock owners that still carry a stale NPC name (saves from before the
+    # live sync below, or renames that predate it).
+    _sync_clock_owners(game, "Load")
     # Normalize story_blueprint null fields: Story Architect occasionally returns
     # triggered_transitions/story_complete/revealed as JSON null instead of omitting them,
     # causing set(None) → TypeError in get_current_act, _check_story_completion,
@@ -9602,6 +9726,12 @@ def _apply_correction_ops(game: GameState, ops: list) -> None:
                         del edits["bond"]
                 if "aliases" in edits and not isinstance(edits["aliases"], list):
                     del edits["aliases"]
+                if "name" in edits:
+                    edits["name"] = _sanitize_npc_name(str(edits["name"]))[0]
+                    if not edits["name"]:
+                        log(f"[Correction] npc_edit: ignoring empty name for {npc.get('name','?')}",
+                            level="warning")
+                        del edits["name"]
                 # Capture old name BEFORE applying edits — needed for alias bookkeeping
                 old_name = npc["name"] if "name" in edits else None
                 # If renaming, discard any aliases Haiku may have supplied in the same op.
@@ -9624,6 +9754,8 @@ def _apply_correction_ops(game: GameState, ops: list) -> None:
                                       if _normalize_for_match(a) != new_norm]
                     log(f"[Correction] npc_edit: renamed '{old_name}' → '{npc['name']}' "
                         f"(old name added to aliases)")
+                    # "X is actually Y" where Y already exists: same person - absorb
+                    _absorb_duplicate_npc(game, npc, npc["name"])
                 # If marked deceased, scrub common death annotations from description
                 elif edits.get("status") == "deceased":
                     npc["description"] = re.sub(
@@ -9638,8 +9770,13 @@ def _apply_correction_ops(game: GameState, ops: list) -> None:
         elif op == "npc_split":
             existing = _find_npc(game, op_dict.get("npc_id", ""))
             if existing:
-                new_name = op_dict.get("split_name") or "Unknown"
+                new_name = _sanitize_npc_name(str(op_dict.get("split_name") or ""))[0] or "Unknown"
                 new_desc = op_dict.get("split_description") or ""
+                clash = _find_npc(game, new_name)
+                if clash and clash is not existing:
+                    log(f"[Correction] npc_split skipped: '{new_name}' already exists "
+                        f"({clash.get('id')})", level="warning")
+                    continue
                 new_id, _ = _next_npc_id(game)
                 new_npc = {
                     "id": new_id,
@@ -9716,7 +9853,7 @@ def _apply_correction_ops(game: GameState, ops: list) -> None:
 
         elif op == "location_edit":
             if op_dict.get("value"):
-                game.current_location = op_dict["value"]
+                game.current_location = _short_location_name(str(op_dict["value"]))
                 log(f"[Correction] location → {game.current_location}")
 
         elif op == "scene_context":
@@ -9736,6 +9873,7 @@ def _apply_correction_ops(game: GameState, ops: list) -> None:
                 sep = "\n" if game.backstory else ""
                 game.backstory += sep + op_dict["value"]
                 log(f"[Correction] backstory appended")
+    _sync_clock_owners(game, "Correction")
 
 
 def _restore_from_snapshot(game: GameState, snap: dict) -> None:
