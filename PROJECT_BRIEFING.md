@@ -444,6 +444,8 @@ MISS (all three): bond -1, spirit -1 or -2. Disposition ladder: `hostile → dis
 - Every user-visible string through `t(key, lang)` — no hardcoded strings.
 - ARIA labels need **both** `de` and `en` entries.
 - Voice/TTS labels resolved via `resolve_voice_id()` / `resolve_tts_backend()` — never assume label == ID.
+- **Sidebar story heading is structure-neutral** (`sidebar.story`: "Handlung" / "Story", always 📖) — never show the blueprint's `structure_type` to the player.
+- **Visible UI text uses a plain hyphen `-`, never an em dash.** `E['dash']` stays `—` because `engine.py` uses it inside AI prompts — do not use it for UI strings in `app.py`; write `-` directly.
 
 ### Voice
 - edge-tts runs in a manually managed `ThreadPoolExecutor` with `shutdown(wait=False)` — a `with` block would wait for a hung worker and defeat the timeout.

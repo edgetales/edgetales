@@ -5,6 +5,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **Plain hyphens in the interface.** All em dashes (—) in visible UI text (menus, sidebar, help, character creation, dice display, settings, export footer, screen-reader labels) are now regular hyphens (-), in German and English. AI prompts are unchanged.
+- **Help menu renamed.** The menu entry "Hilfe — Spielsystem" / "Help — Game System" is now simply "Hilfe" / "Help".
+- **Neutral story progress heading.** The heading above the act progress bars no longer names the act structure ("3-Akt" / "Kishōtenketsu" with a book or blossom icon). It now always reads "📖 Handlung" / "📖 Story", so players are not told in advance which story structure the game uses.
+
 ## [0.9.98] - 2026-10-11
 
 ### Fixed
