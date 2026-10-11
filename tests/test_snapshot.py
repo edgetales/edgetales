@@ -18,6 +18,9 @@ NOT_TURN_MUTABLE = {
     "campaign_history", "chapter_number", "epilogue_text", "version_history",
     # handled specially: log tails / blueprint sub-keys / the snapshot itself
     "session_log", "narration_history", "story_blueprint", "last_turn_snapshot",
+    # live Co-GM state: edited while turns run; consumed inputs live in
+    # last_turn_snapshot["coop_inputs"] instead of being restored
+    "coop",
 }
 
 

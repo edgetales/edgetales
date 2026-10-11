@@ -5,6 +5,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Co-op mode with a Co-GM (co game master).** A second player on the same server can join a running game as Co-GM. The Co-GM plays no character: after each scene the narrator asks them one question ("Who is sitting in the car?"), and the answer is woven into the next scene as a surprise for the player. Every third question is asked "for later" - the answer is stored and surfaces when the story touches its subject. An answer the player's action makes unusable is not forced but can appear later.
+- **Director's Cockpit** for the Co-GM: camera (close-up, establishing shot, unreliable moment), tone (crescendo, silence, mood), weather, characters (push a character into the scene, prepare a betrayal or a reconciliation, amplify chemistry), world and lore (plant a detail, rumour, secret, false trail, echoes of the past), dramaturgy (turning point, clock is ticking, earned rest, that was not the end), mirror and leitmotiv. Signals are invisible to the player; running signals and planted lore can be removed again.
+- **Invites and session control:** invite another player from the new co-op menu (online status shown; offline players see the invite at their next login, and an invite from a host who has gone offline can be returned). The player's next scene waits for the Co-GM's answer, with a "continue without answer" option and a prompt after three minutes; a status line shows whether the Co-GM is thinking or has answered, and the Co-GM sees when the player is typing. Pause, continue solo or remove the Co-GM at any time; the Co-GM can leave. The save stays the player's: questions, planted content and the last partner are stored in it, so a paused session resumes with a new invite.
+- The Co-GM sees the story, characters, the protagonist's stats and location - but not the player's inputs, dice, clocks or chaos factor.
+
 ## [0.9.99] - 2026-10-11
 
 ### Changed

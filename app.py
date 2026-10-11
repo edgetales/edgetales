@@ -136,6 +136,9 @@ from engine import (
     call_setup_brain, start_new_game, start_new_chapter,
     process_turn, process_momentum_burn, process_correction, call_recap,
     run_deferred_director, generate_epilogue,
+    COGM_SIGNALS, coop_state, coop_waiting_for_cogm, coop_submit_answer,
+    coop_add_signal, coop_remove_signal, coop_start_session, coop_end_session,
+    coop_public_view, generate_cogm_question,
 )
 from i18n import (
     t, UI_LANGUAGES, DEFAULT_LANG,
@@ -992,7 +995,9 @@ def _display_aliases(aliases: list) -> list:
     return result
 
 
-def render_sidebar_status(game: GameState, session=None) -> None:
+def render_sidebar_status(game: GameState, session=None, cogm_view: bool = False) -> None:
+    """Character, tracks, chaos, clocks, story arc and NPCs. cogm_view=True is the
+    Co-GM's view of the host's game: no chaos factor and no clocks (co-op concept)."""
     s = session or S()
     lang = s.get("ui_lang", DEFAULT_UI_LANG or DEFAULT_LANG) if session else L()
     kid = s.get("kid_friendly", False)
@@ -1038,6 +1043,29 @@ def render_sidebar_status(game: GameState, session=None) -> None:
         with ui.element('div').classes('track-bar w-full').props('aria-hidden="true"'):
             ui.element('div').classes(f'track-fill {cls}').style(f'width:{pct:.0f}%')
     # Chaos — label only; danger level in progressbar aria-label for screen readers
+    if not cogm_view:
+        _render_sidebar_chaos(game, lang)
+    # Health vignette: opacity steigt wenn Gesundheit <= 3 sinkt (highlight mode)
+    _health = int(game.health)
+    _vignette_op = {5: 0.0, 4: 0.0, 3: 0.18, 2: 0.40, 1: 0.62, 0: 0.82}.get(_health, 0.0)
+    ui.run_javascript(f"document.body.style.setProperty('--health-vignette', '{_vignette_op}')")
+    # Clocks — label already communicates value, progressbar is visual-only
+    active = [c for c in game.clocks if not c.get("fired")] if not cogm_view else []
+    if active:
+        ui.separator()
+        ui.label(f"{E['clock']} {t('sidebar.clocks', lang)}").classes("text-sm font-semibold")
+        for c in active:
+            em = E['red_circle'] if c["clock_type"]=="threat" else E['purple_circle']
+            _c_filled = int(c["filled"])
+            _c_segs = int(c["segments"])
+            p = _c_filled / _c_segs * 100
+            ui.label(f"{em} {c['name']}: {_c_filled}/{_c_segs}").classes("text-xs")
+            with ui.element('div').classes('track-bar w-full').props('aria-hidden="true"'):
+                ui.element('div').classes('track-fill progress').style(f'width:{p:.0f}%')
+    _render_sidebar_story_npcs(game, lang)
+
+
+def _render_sidebar_chaos(game: GameState, lang: str) -> None:
     ui.separator()
     chaos = int(game.chaos_factor)
     pct = max(0, chaos / 9 * 100)
@@ -1052,23 +1080,9 @@ def render_sidebar_status(game: GameState, session=None) -> None:
     _chaos_js = "document.body.setAttribute('data-chaos-high','')" if chaos >= 7 else "document.body.removeAttribute('data-chaos-high')"
     _chaos_js += "; _etLetterPulse(" + ("true" if chaos >= 8 else "false") + ");"
     ui.run_javascript(_chaos_js)
-    # Health vignette: opacity steigt wenn Gesundheit <= 3 sinkt (highlight mode)
-    _health = int(game.health)
-    _vignette_op = {5: 0.0, 4: 0.0, 3: 0.18, 2: 0.40, 1: 0.62, 0: 0.82}.get(_health, 0.0)
-    ui.run_javascript(f"document.body.style.setProperty('--health-vignette', '{_vignette_op}')")
-    # Clocks — label already communicates value, progressbar is visual-only
-    active = [c for c in game.clocks if not c.get("fired")]
-    if active:
-        ui.separator()
-        ui.label(f"{E['clock']} {t('sidebar.clocks', lang)}").classes("text-sm font-semibold")
-        for c in active:
-            em = E['red_circle'] if c["clock_type"]=="threat" else E['purple_circle']
-            _c_filled = int(c["filled"])
-            _c_segs = int(c["segments"])
-            p = _c_filled / _c_segs * 100
-            ui.label(f"{em} {c['name']}: {_c_filled}/{_c_segs}").classes("text-xs")
-            with ui.element('div').classes('track-bar w-full').props('aria-hidden="true"'):
-                ui.element('div').classes('track-fill progress').style(f'width:{p:.0f}%')
+
+
+def _render_sidebar_story_npcs(game: GameState, lang: str) -> None:
     # Story arc
     if game.story_blueprint and game.story_blueprint.get("acts"):
         bp = game.story_blueprint
@@ -2404,6 +2418,11 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
             with _user_col:
                 ui.markdown(display_text)
     try:
+        # Co-op: the scene waits for the Co-GM's answer (player can skip)
+        _coop_sess = _coop_host_session(s)
+        if (_coop_sess and not text.startswith("##")
+                and (coop_waiting_for_cogm(game) or _coop_sess.question_pending)):
+            await _coop_wait_for_answer(_coop_sess, chat_container)
         with chat_container:
             spinner=ui.spinner("dots", size="lg")
             spinner.props('role="status" aria-label="%s"' % t("aria.loading", L()))
@@ -2531,6 +2550,10 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
             await _scroll_to_element(scroll_target_id)
         # Save after rendering — player sees narration immediately, save doesn't block display
         save_game(game,username,s["messages"],s.get("active_save","autosave"))
+        # Co-op: show the scene to the Co-GM and ask the next question (not while a
+        # momentum burn decision is pending — that narration may still change)
+        if not burn_info:
+            _coop_after_narration(s, narration, correction=_is_correction)
         # Director — awaited inline while the processing lock is still held.
         # A detached background task raced with the next turn: both threads mutated
         # the same GameState, and stale-guard early returns silently dropped results
@@ -2648,6 +2671,7 @@ def render_momentum_burn() -> bool:
                         msgs[-1]={"role":"assistant","content":f"*{E['fire']} {t('momentum.gathering', lang)}*\n\n{narration}",
                                   "roll_data":rd}
                     save_game(game,username,s["messages"],s.get("active_save","autosave"))
+                    _coop_after_narration(s, narration)
                     # The burn restored the pre-turn state, which also discarded what the
                     # Director produced for the pre-burn narration. If the turn had a
                     # Director trigger, run it again for the scene the player now sees.
@@ -2687,7 +2711,10 @@ def render_momentum_burn() -> bool:
                     except Exception: pass
                     ui.notify(t("game.error", lang, error=e), type="negative")
             ui.button(f"{E['fire']} {t('momentum.yes', lang)}", on_click=burn, color="primary")
-            def decline(): s["pending_burn"]=None; ui.navigate.reload()
+            def decline():
+                s["pending_burn"]=None
+                _coop_after_narration(s, _coop_last_narration(s))
+                ui.navigate.reload()
             ui.button(t("momentum.no", lang), on_click=decline)
     return True
 
@@ -2732,6 +2759,7 @@ def _make_chapter_action(game, chapter_msg_key: str):
                 {"role": "assistant", "content": f"*{E['book']} {t(chapter_msg_key, lang, n=ch)}*\n\n{n}"},
             ]
             save_game(g, username, s["messages"], s.get("active_save", "autosave"))
+            _coop_after_narration(s, n)
             if s.get("tts_enabled", False): s["pending_tts"] = n
             ui.navigate.reload()
         except Exception as e:
@@ -2846,6 +2874,679 @@ def render_game_over() -> bool:
             ui.button(f"{E['refresh']} {t('gameover.new_chapter', lang)}", on_click=new_ch, color="primary")
             ui.button(f"{t('gameover.restart', lang)}", on_click=full_new)
     return True
+
+
+# Aligns the fixed footer input bar with the page column (resize, iOS keyboard).
+_FOOTER_ALIGN_JS = '''
+                window._rpgAlignFooter = function() {
+                    const pageCol = document.querySelector('.q-page .max-w-4xl');
+                    const inputBars = document.querySelectorAll('.rpg-input-bar');
+                    if (pageCol && inputBars.length) {
+                        const rect = pageCol.getBoundingClientRect();
+                        inputBars.forEach(bar => {
+                            const parentRect = bar.parentElement.getBoundingClientRect();
+                            bar.style.maxWidth = rect.width + 'px';
+                            bar.style.marginLeft = (rect.left - parentRect.left) + 'px';
+                        });
+                    }
+                };
+                setTimeout(window._rpgAlignFooter, 200);
+                if (!window._rpgFooterListeners) {
+                    window._rpgFooterListeners = true;
+                    window.addEventListener('resize', () => window._rpgAlignFooter && window._rpgAlignFooter());
+                    /* Visual viewport resize: handles iOS virtual keyboard */
+                    if (window.visualViewport) {
+                        window.visualViewport.addEventListener('resize', () => {
+                            window._rpgAlignFooter && window._rpgAlignFooter();
+                        });
+                        window.visualViewport.addEventListener('scroll', () => {
+                            window._rpgAlignFooter && window._rpgAlignFooter();
+                        });
+                    }
+                    new MutationObserver(() => setTimeout(() => window._rpgAlignFooter && window._rpgAlignFooter(), 350))
+                        .observe(document.querySelector('.q-layout') || document.body,
+                                 {attributes: true, attributeFilter: ['style']});
+                }
+'''
+
+
+# ===============================================================
+# CO-OP MODE (CO-GM) — live sessions, invites, Co-GM view, cockpit
+# ===============================================================
+# Live co-op state is in-memory (single server process) and deliberately not
+# persisted: a server restart ends all sessions; the save keeps all content
+# (game.coop) and the last partner, so a re-invite resumes seamlessly.
+# Every main-phase tab runs a small timer (_coop_tick in main_page) that sends a
+# presence heartbeat, delivers invites/notices and refreshes co-op views.
+
+COOP_TICK_SEC = 1.5               # Tab timer interval (presence, invites, refresh)
+COOP_PRESENCE_TTL_SEC = 15.0      # A user counts as online this long after a heartbeat
+COOP_WAIT_TIMEOUT_SEC = 180.0     # Player waits this long for the Co-GM before being asked
+COOP_INVITE_TTL_SEC = 24 * 3600   # Pending invites expire after a day
+COOP_TYPING_TTL_SEC = 4.0         # "is typing" indicator duration after the last keystroke
+
+_COOP_PRESENCE: dict = {}         # username -> last heartbeat (time.time())
+_COOP_INVITES: dict = {}          # invitee -> invite dict
+_COOP_NOTICES: dict = {}          # username -> [(i18n key, notify type, kwargs)]
+_COOP_SESSIONS: dict = {}         # host username -> CoopLive
+_COOP_TASKS: set = set()          # strong refs to background question tasks
+
+# Cockpit layout: category → signal types (labels/values from i18n, logic in engine)
+_COOP_CAMERA = ("close_up", "establishing_shot", "unreliable_moment")
+_COOP_TONE = ("crescendo", "silence")
+_COOP_DRAMATURGY = ("turning_point", "clock_ticking", "earned_rest", "not_the_end")
+
+
+class CoopLive:
+    """One live co-op session. host_s is the host's tab storage (the tab that sent
+    or accepted the invite) — the GameState and chat history are read from it live,
+    so both tabs always show the same game object."""
+
+    def __init__(self, host: str, cogm: str, host_s: dict, save: str):
+        self.host = host
+        self.cogm = cogm
+        self.host_s = host_s
+        self.save = save
+        self.version = 0              # bumped on every change the other tab must see
+        self.typing_at = 0.0          # host's last keystroke
+        self.question_pending = False  # question generation running
+        self.active = True
+
+    @property
+    def game(self) -> Optional[GameState]:
+        return self.host_s.get("game")
+
+    def bump(self) -> None:
+        self.version += 1
+
+
+def _coop_online(name: str) -> bool:
+    return _time.time() - _COOP_PRESENCE.get(name, 0.0) < COOP_PRESENCE_TTL_SEC
+
+
+def _coop_session_of(name: str) -> tuple[Optional["CoopLive"], str]:
+    """(session, "host"|"cogm") for a user, or (None, "")."""
+    sess = _COOP_SESSIONS.get(name)
+    if sess and sess.active:
+        return sess, "host"
+    for sess in _COOP_SESSIONS.values():
+        if sess.active and sess.cogm == name:
+            return sess, "cogm"
+    return None, ""
+
+
+def _coop_session_by_tab(s: dict) -> Optional["CoopLive"]:
+    """The live session hosted from this tab, whatever the tab shows now."""
+    for sess in list(_COOP_SESSIONS.values()):
+        if sess.active and sess.host_s is s:
+            return sess
+    return None
+
+
+def _coop_host_session(s: dict) -> Optional["CoopLive"]:
+    """The session in which this tab is the host's game tab."""
+    sess = _COOP_SESSIONS.get(s.get("current_user", ""))
+    return sess if sess and sess.active and sess.host_s is s else None
+
+
+def _coop_notify(user: str, key: str, typ: str = "info", **kw) -> None:
+    _COOP_NOTICES.setdefault(user, []).append((key, typ, kw))
+
+
+def _coop_mark_typing(s: dict) -> None:
+    """Host keystroke → the Co-GM sees an "is typing" indicator (no text)."""
+    sess = _coop_host_session(s)
+    if sess:
+        sess.typing_at = _time.time()
+
+
+def _coop_engine_config(s: dict) -> EngineConfig:
+    return EngineConfig(narration_lang=s.get("narration_lang", "Deutsch"),
+                        kid_friendly=s.get("kid_friendly", False))
+
+
+def _coop_last_narration(s: dict) -> str:
+    for m in reversed(s.get("messages", [])):
+        if m.get("role") == "assistant" and not m.get("recap"):
+            return m.get("content", "")
+    return ""
+
+
+def _coop_save(sess: "CoopLive") -> None:
+    """Persist Co-GM changes. Never while the host's turn is running: the game is
+    mid-mutation then, and the host's own post-turn save includes the change."""
+    game = sess.game
+    if game is None or sess.host_s.get("processing"):
+        return
+    try:
+        save_game(game, sess.host, sess.host_s.get("messages", []), sess.save)
+    except Exception as e:
+        log(f"[Coop] Save failed: {e}", level="warning")
+
+
+def _coop_end(sess: "CoopLive", reason: str) -> None:
+    """End a live session. reason: pause | solo | remove | leave | save."""
+    if not sess.active:
+        return
+    sess.active = False
+    _COOP_SESSIONS.pop(sess.host, None)
+    if sess.game is not None and reason != "save":
+        coop_end_session(sess.game)
+        _coop_save(sess)
+    host_msgs = {"pause": ("coop.paused_host", sess.cogm), "solo": ("coop.solo_host", sess.cogm),
+                 "remove": ("coop.removed_host", sess.cogm), "leave": ("coop.left_host", sess.cogm),
+                 "save": ("coop.ended_save_host", sess.cogm)}
+    cogm_msgs = {"pause": "coop.paused_cogm", "solo": "coop.solo_cogm",
+                 "remove": "coop.removed_cogm", "leave": "coop.left_cogm",
+                 "save": "coop.ended_save_cogm"}
+    hk, hname = host_msgs.get(reason, host_msgs["solo"])
+    _coop_notify(sess.host, hk, "info", name=hname)
+    _coop_notify(sess.cogm, cogm_msgs.get(reason, "coop.solo_cogm"), "info", name=sess.host)
+    sess.bump()
+    log(f"[Coop] Session {sess.host} + {sess.cogm} ended ({reason})")
+
+
+async def _coop_generate_question(sess: "CoopLive", narration: str,
+                                  only_if_open: bool = False) -> None:
+    """Generate the next Co-GM question for the narration the host now sees.
+    only_if_open: after a ## correction, keep an answer the Co-GM already gave."""
+    game = sess.game
+    if not sess.active or game is None or game.game_over or game.epilogue_shown:
+        return
+    if only_if_open and not coop_waiting_for_cogm(game):
+        return
+    sess.question_pending = True
+    sess.bump()
+    try:
+        client = anthropic.Anthropic(api_key=sess.host_s.get("api_key", ""))
+        await asyncio.to_thread(generate_cogm_question, client, game, narration,
+                                _coop_engine_config(sess.host_s))
+    except Exception as e:
+        log(f"[Coop] Question generation failed: {e}", level="warning")
+    finally:
+        sess.question_pending = False
+        sess.bump()
+    _coop_save(sess)
+
+
+def _coop_spawn(coro) -> None:
+    """Run a co-op background coroutine without tying it to a client context
+    (the host's page may reload while it runs)."""
+    task = asyncio.create_task(coro)
+    _COOP_TASKS.add(task)
+    task.add_done_callback(_COOP_TASKS.discard)
+
+
+def _coop_after_narration(s: dict, narration: str, correction: bool = False) -> None:
+    """Called by the host's UI after any narration the player sees (turn,
+    correction, momentum burn, burn declined, new chapter)."""
+    sess = _coop_host_session(s)
+    if not sess:
+        return
+    sess.bump()
+    _coop_spawn(_coop_generate_question(sess, narration, only_if_open=correction))
+
+
+async def _coop_wait_for_answer(sess: "CoopLive", chat_container) -> None:
+    """Hold the player's submitted action until the Co-GM answered or passed.
+    The player can skip at any time; after COOP_WAIT_TIMEOUT_SEC they are asked."""
+    lang = L()
+    game = sess.game
+    skip = {"now": False}
+    with chat_container:
+        row = ui.row().classes("w-full items-center gap-2 py-1 px-3 coop-wait-row").style(
+            "background: var(--accent-dim); border: 1px solid var(--accent-border); "
+            "border-radius: 8px; margin: 0.25rem 0")
+        row.props('role="status" aria-live="polite"')
+        with row:
+            ui.spinner("dots", size="sm")
+            ui.label(t("coop.waiting", lang, name=sess.cogm)).classes("text-xs flex-grow")
+
+            def _skip():
+                skip["now"] = True
+            ui.button(t("coop.skip_wait", lang), on_click=_skip).props("flat dense no-caps size=sm")
+    await _scroll_chat_bottom()
+    started = _time.time()
+    asked = False
+    dlg = None
+    while (sess.active and game is sess.game and not skip["now"]
+           and (coop_waiting_for_cogm(game) or sess.question_pending)):
+        if not asked and _time.time() - started > COOP_WAIT_TIMEOUT_SEC:
+            asked = True
+            with ui.dialog() as dlg, ui.card().classes("p-4"):
+                dlg.props(f'aria-label="{t("coop.timeout_title", lang, name=sess.cogm)}"')
+                ui.label(t("coop.timeout_title", lang, name=sess.cogm)).classes("text-lg font-semibold")
+                ui.label(t("coop.timeout_text", lang)).classes("text-sm")
+                with ui.row().classes("gap-2 mt-2"):
+                    def _keep(d=dlg):
+                        d.close()
+                    def _go(d=dlg):
+                        skip["now"] = True
+                        d.close()
+                    ui.button(t("coop.keep_waiting", lang), on_click=_keep).props("flat no-caps")
+                    ui.button(t("coop.skip_wait", lang), on_click=_go, color="primary").props("no-caps")
+            dlg.open()
+        await asyncio.sleep(0.5)
+    if dlg is not None:
+        try:
+            dlg.close()
+        except Exception:
+            pass
+    if skip["now"] and coop_waiting_for_cogm(game):
+        coop_submit_answer(game, passed=True)
+        sess.bump()
+    try:
+        row.delete()
+    except Exception:
+        pass
+
+
+def _coop_status_text(sess: "CoopLive", lang: str) -> str:
+    game = sess.game
+    if not _coop_online(sess.cogm):
+        return f"{E['people']} {t('coop.status_offline', lang, name=sess.cogm)}"
+    if game is not None and coop_waiting_for_cogm(game):
+        return f"{E['people']} {t('coop.status_thinking', lang, name=sess.cogm)}"
+    q = coop_state(game).get("question") if game is not None else None
+    if q and q.get("status") == "answered":
+        return f"{E['people']} {t('coop.status_answered', lang, name=sess.cogm)}"
+    return f"{E['people']} {t('coop.status_idle', lang, name=sess.cogm)}"
+
+
+def render_cogm_chat(container, sess: "CoopLive") -> None:
+    """The Co-GM's read-only story view: narration and scene markers only (no
+    player inputs, no dice/mechanics)."""
+    s = S()
+    lang = L()
+    _sr_chat = s.get("sr_chat", True)
+    for i, msg in enumerate(sess.host_s.get("messages", [])):
+        if msg.get("scene_marker"):
+            ui.html(msg["scene_marker"]).classes("scene-marker").props(f'id="cogm-msg-{i}"')
+            continue
+        if msg.get("role") != "assistant" or msg.get("recap"):
+            continue
+        col = ui.column().classes("chat-msg assistant w-full")
+        if not _sr_chat:
+            col.props('aria-hidden="true"')
+        else:
+            col.props(f'aria-label="{t("aria.narrator_says", lang)}"')
+        with col:
+            content = _clean_narration(msg.get("content", ""))
+            if s.get("narrator_font") == "highlight":
+                content = _highlight_dialog(content)
+            ui.markdown(content)
+    if s.get("narrator_font") == "highlight" and sess.game is not None:
+        _inject_entity_highlights(sess.game)
+
+
+def render_cogm_panel(container, sess: "CoopLive", on_change) -> None:
+    """Question panel in the Co-GM's footer (question, answer field, Submit / No input)."""
+    lang = L()
+    game = sess.game
+    container.clear()
+    if game is None:
+        return
+    q = coop_state(game).get("question")
+    with container:
+        if sess.question_pending:
+            with ui.row().classes("w-full items-center gap-2 rpg-input-bar").style("padding: 0.5rem 1rem"):
+                ui.spinner("dots", size="sm")
+                ui.label(t("coop.question_loading", lang)).classes("text-sm").style("color: var(--text-secondary)")
+            return
+        if not q:
+            ui.label(t("coop.no_question", lang)).classes("text-sm rpg-input-bar w-full").style(
+                "padding: 0.5rem 1rem; color: var(--text-secondary)")
+            return
+        if q.get("status") != "open":
+            key = "coop.passed" if q.get("status") == "passed" else (
+                "coop.seed_sent" if q.get("type") == "seed" else "coop.answer_sent")
+            ui.label(f"{t(key, lang)} {t('coop.wait_scene', lang)}").classes(
+                "text-sm rpg-input-bar w-full").style("padding: 0.5rem 1rem; color: var(--text-secondary)")
+            return
+        is_seed = q.get("type") == "seed"
+        with ui.column().classes("w-full gap-1 rpg-input-bar coop-question").style(
+                "padding: 0.5rem 1rem; border-left: 3px solid var(--accent-light)") as card:
+            card.props(f'role="region" aria-label="{t("aria.coop_question", lang)}"')
+            ui.label(t("coop.question_seed" if is_seed else "coop.question_now", lang)).classes(
+                "text-xs font-semibold").style(
+                "color: var(--accent-light); letter-spacing: 0.06em; text-transform: uppercase")
+            ui.markdown(f"*{html_mod.escape(q.get('text', ''))}*")
+            if is_seed:
+                ui.label(t("coop.seed_hint", lang)).classes("text-xs").style("color: var(--text-secondary)")
+            inp = ui.textarea(placeholder=t("coop.answer_label", lang)).props(
+                f'outlined dense dark autogrow maxlength=300 aria-label="{t("coop.answer_label", lang)}"'
+            ).classes("w-full")
+
+            def _submit(passed: bool = False):
+                if not sess.active or sess.game is not game:
+                    return
+                if coop_submit_answer(game, "" if passed else (inp.value or ""), passed=passed):
+                    sess.bump()
+                    _coop_save(sess)
+                on_change()
+
+            with ui.row().classes("gap-2"):
+                ui.button(t("coop.submit", lang), on_click=lambda: _submit(False), color="primary").props("no-caps dense")
+                ui.button(t("coop.no_input", lang), on_click=lambda: _submit(True)).props("flat no-caps dense")
+
+
+def _coop_signal_label(sig_type: str, lang: str) -> str:
+    return t(f"coop.sig_{sig_type}", lang)
+
+
+def open_cockpit(sess: "CoopLive") -> None:
+    """Director's Cockpit dialog for the Co-GM."""
+    lang = L()
+    game = sess.game
+    if game is None:
+        return
+    npcs = [n for n in game.npcs if n.get("status") in ("active", "background") and n.get("introduced", True)]
+    npc_opts = {n["id"]: n.get("name", n["id"]) for n in npcs}
+    npc2_opts = dict(npc_opts)
+    npc2_opts["player"] = t("coop.player_option", lang, name=game.player_name)
+
+    with ui.dialog() as dlg, ui.card().classes("w-full p-4").style(
+            "max-width: 560px; max-height: 85vh; overflow-y: auto"):
+        dlg.props(f'aria-label="{t("coop.cockpit", lang)}"')
+        with ui.row().classes("w-full items-center justify-between"):
+            ui.label(f"{E['crystal']} {t('coop.cockpit', lang)}").classes("text-lg font-bold")
+            ui.button(icon="close", on_click=dlg.close).props(
+                f'flat round dense aria-label="{t("coop.close", lang)}"')
+        ui.label(t("coop.cockpit_hint", lang)).classes("text-xs").style("color: var(--text-secondary)")
+        active_box = ui.column().classes("w-full gap-1")
+
+        def _refresh_active():
+            active_box.clear()
+            view = coop_public_view(game)
+            with active_box:
+                ui.label(t("coop.active_signals", lang)).classes("text-sm font-semibold mt-2")
+                items = []
+                for sg in view["signals"]:
+                    label = _coop_signal_label(sg["type"], lang)
+                    if sg.get("value"):
+                        extra = t(f"coop.val_{sg['value']}", lang)
+                    elif sg.get("npc_name"):
+                        extra = sg["npc_name"] + (f" + {sg['npc2_name']}" if sg.get("npc2_name") else "")
+                    else:
+                        extra = sg.get("text", "")
+                    if sg.get("scenes_left"):
+                        extra = f"{extra} ({t('coop.scenes_left', lang, n=sg['scenes_left'])})".strip()
+                    items.append((sg["id"], label, extra))
+                for sd in view["seeds"]:
+                    kind = sd.get("kind", "answer")
+                    lbl = t(f"coop.sig_{kind}", lang) if kind in COGM_SIGNALS else t(f"coop.kind_{kind}", lang)
+                    items.append((sd["id"] if kind in COGM_SIGNALS else None, lbl, sd.get("text", "")))
+                if not items:
+                    ui.label(t("coop.none_active", lang)).classes("text-xs").style("color: var(--text-secondary)")
+                for item_id, label, extra in items:
+                    with ui.row().classes("w-full items-center gap-1 no-wrap"):
+                        ui.label(f"{label}{': ' + extra if extra else ''}").classes("text-xs flex-grow").style(
+                            "word-break: break-word")
+                        if item_id:
+                            def _rm(i=item_id):
+                                if coop_remove_signal(game, i):
+                                    sess.bump()
+                                    _coop_save(sess)
+                                _refresh_active()
+                            ui.button(icon="close", on_click=_rm).props(
+                                f'flat round dense size=sm aria-label="{t("aria.remove_signal", lang)}"')
+
+        def _send(sig_type: str, **kw):
+            if not sess.active or sess.game is not game:
+                dlg.close()
+                return
+            res = coop_add_signal(game, sig_type, **kw)
+            if res is None:
+                ui.notify(t("coop.signal_failed", lang), type="warning", position="top")
+                return
+            sess.bump()
+            _coop_save(sess)
+            ui.notify(t("coop.signal_set", lang, name=_coop_signal_label(sig_type, lang)),
+                      type="positive", position="top")
+            _refresh_active()
+
+        def _btn(sig_type: str, **kw):
+            ui.button(_coop_signal_label(sig_type, lang),
+                      on_click=lambda st=sig_type, k=kw: _send(st, **k)).props("outline dense no-caps size=sm")
+
+        # Category order follows the co-op concept (coopgm.md)
+        with ui.expansion(t("coop.cat_camera", lang)).classes("w-full"):
+            with ui.row().classes("gap-2 flex-wrap"):
+                for st in _COOP_CAMERA:
+                    _btn(st)
+
+        with ui.expansion(t("coop.cat_tone", lang)).classes("w-full"):
+            with ui.row().classes("gap-2 flex-wrap"):
+                for st in _COOP_TONE:
+                    _btn(st)
+            mood_vals = COGM_SIGNALS["mood"]["values"]
+            with ui.row().classes("items-center gap-2 mt-2 w-full"):
+                mood_sel = ui.select({v: t(f"coop.val_{v}", lang) for v in mood_vals},
+                                     value=mood_vals[0], label=t("coop.sig_mood", lang)).classes("flex-grow")
+                ui.button(t("coop.set_btn", lang),
+                          on_click=lambda: _send("mood", value=mood_sel.value)).props("dense no-caps")
+
+        with ui.expansion(t("coop.cat_weather", lang)).classes("w-full"):
+            current = next((sg.get("value") for sg in coop_state(game)["signals"]
+                            if sg.get("type") == "weather"), None)
+            with ui.row().classes("gap-2 flex-wrap"):
+                for v in COGM_SIGNALS["weather"]["values"]:
+                    b = ui.button(t(f"coop.val_{v}", lang),
+                                  on_click=lambda val=v: _send("weather", value=val)).props("dense no-caps size=sm")
+                    b.props("unelevated" if v == current else "outline")
+
+                def _weather_off():
+                    for sg in list(coop_state(game)["signals"]):
+                        if sg.get("type") == "weather":
+                            coop_remove_signal(game, sg["id"])
+                    sess.bump()
+                    _coop_save(sess)
+                    _refresh_active()
+                ui.button(t("coop.weather_off", lang), on_click=_weather_off).props("flat dense no-caps size=sm")
+
+        with ui.expansion(t("coop.cat_characters", lang)).classes("w-full"):
+            if not npc_opts:
+                ui.label(t("coop.no_npcs", lang)).classes("text-xs").style("color: var(--text-secondary)")
+            else:
+                first = next(iter(npc_opts))
+                npc_sel = ui.select(npc_opts, value=first, label=t("coop.npc_select", lang)).classes("w-full")
+                with ui.row().classes("gap-2 flex-wrap mt-1"):
+                    for st in ("push_npc", "prepare_betrayal", "prepare_reconciliation"):
+                        ui.button(_coop_signal_label(st, lang),
+                                  on_click=lambda x=st: _send(x, npc_id=npc_sel.value)).props("outline dense no-caps size=sm")
+                npc2_sel = ui.select(npc2_opts, value="player", label=t("coop.npc2_select", lang)).classes("w-full mt-2")
+                ui.button(_coop_signal_label("amplify_chemistry", lang),
+                          on_click=lambda: _send("amplify_chemistry", npc_id=npc_sel.value,
+                                                 npc2_id=npc2_sel.value)).props("outline dense no-caps size=sm")
+
+        with ui.expansion(t("coop.cat_world", lang)).classes("w-full"):
+            ui.label(t("coop.hint_world", lang)).classes("text-xs").style("color: var(--text-secondary)")
+            world_inp = ui.input(t("coop.text_world", lang)).props("maxlength=300 dense").classes("w-full")
+            with ui.row().classes("gap-2 flex-wrap mt-1"):
+                for st in ("plant_detail", "rumor", "plant_secret", "false_trail"):
+                    def _world(x=st):
+                        _send(x, text=world_inp.value or "")
+                        world_inp.value = ""
+                    ui.button(_coop_signal_label(st, lang), on_click=_world).props("outline dense no-caps size=sm")
+                _btn("echoes_of_past")
+
+        with ui.expansion(t("coop.cat_dramaturgy", lang)).classes("w-full"):
+            with ui.row().classes("gap-2 flex-wrap"):
+                for st in _COOP_DRAMATURGY:
+                    _btn(st)
+
+        for cat, sig in (("mirror", "mirror"), ("leitmotiv", "leitmotiv")):
+            with ui.expansion(t(f"coop.cat_{cat}", lang)).classes("w-full"):
+                ui.label(t(f"coop.hint_{cat}", lang)).classes("text-xs").style("color: var(--text-secondary)")
+                txt = ui.input(t(f"coop.text_{cat}", lang)).props("maxlength=300 dense").classes("w-full")
+
+                def _set_text(x=sig, field=txt):
+                    _send(x, text=field.value or "")
+                    field.value = ""
+                ui.button(t("coop.set_btn", lang), on_click=_set_text).props("dense no-caps mt-1")
+
+        _refresh_active()
+    dlg.open()
+
+
+def open_coop_menu(s: dict) -> None:
+    """Header co-op menu: invite (no session), host controls, or Co-GM leave."""
+    lang = L()
+    me = s.get("current_user", "")
+    sess, role = _coop_session_of(me)
+    with ui.dialog() as dlg, ui.card().classes("w-full p-4").style("max-width: 460px"):
+        dlg.props(f'aria-label="{t("coop.menu_title", lang)}"')
+        with ui.row().classes("w-full items-center justify-between"):
+            ui.label(f"{E['people']} {t('coop.menu_title', lang)}").classes("text-lg font-bold")
+            ui.button(icon="close", on_click=dlg.close).props(
+                f'flat round dense aria-label="{t("coop.close", lang)}"')
+
+        def _end(reason: str):
+            dlg.close()
+            if sess:
+                _coop_end(sess, reason)  # the Co-GM tab switches back on its next tick
+
+        if role == "host" and sess.host_s is s:
+            ui.label(_coop_status_text(sess, lang)).classes("text-sm")
+            with ui.column().classes("w-full gap-2 mt-2"):
+                ui.button(t("coop.pause", lang), icon="pause", on_click=lambda: _end("pause")).props("outline no-caps").classes("w-full")
+                ui.button(t("coop.solo", lang), icon="person", on_click=lambda: _end("solo")).props("outline no-caps").classes("w-full")
+                ui.button(t("coop.remove", lang), icon="person_remove", on_click=lambda: _end("remove")).props("flat no-caps").classes("w-full text-red-300")
+        elif role == "cogm":
+            ui.label(t("coop.cogm_of", lang, host=sess.host)).classes("text-sm")
+            ui.button(t("coop.leave", lang), icon="logout", on_click=lambda: _end("leave")).props("outline no-caps").classes("w-full mt-2")
+        elif role == "host":
+            ui.label(t("coop.self_busy", lang)).classes("text-sm")
+        else:
+            _render_invite_form(s, dlg)
+    dlg.open()
+
+
+def _render_invite_form(s: dict, dlg) -> None:
+    lang = L()
+    me = s.get("current_user", "")
+    game = s.get("game")
+    ui.label(t("coop.intro", lang)).classes("text-sm").style("color: var(--text-secondary)")
+    if game is None or game.game_over or s.get("creation") is not None:
+        ui.label(t("coop.need_game", lang)).classes("text-sm mt-2")
+        return
+    pending = next(((who, inv) for who, inv in _COOP_INVITES.items() if inv.get("host") == me), None)
+    if pending:
+        who, inv = pending
+        ui.label(t("coop.invite_pending", lang, name=who)).classes("text-sm mt-2")
+
+        def _cancel():
+            _COOP_INVITES.pop(who, None)
+            dlg.close()
+        ui.button(t("coop.cancel_invite", lang), on_click=_cancel).props("flat no-caps")
+        return
+    others = [u["name"] for u in list_users() if u["name"] != me]
+    if not others:
+        ui.label(t("coop.no_users", lang)).classes("text-sm mt-2")
+        return
+    partner = (game.coop or {}).get("partner", "") if isinstance(game.coop, dict) else ""
+    if partner and partner in others:
+        ui.label(t("coop.last_partner", lang, name=partner)).classes("text-xs mt-2").style(
+            "color: var(--text-secondary)")
+    opts = {}
+    for name in others:
+        busy = _coop_session_of(name)[1] != ""
+        state = t("coop.busy", lang) if busy else (t("coop.online", lang) if _coop_online(name) else t("coop.offline", lang))
+        dot = E["green_circle"] if _coop_online(name) and not busy else E["white_circle"]
+        opts[name] = f"{dot} {name} ({state})"
+    sel = ui.select(opts, value=partner if partner in others else others[0],
+                    label=t("coop.invite_select", lang)).classes("w-full mt-2")
+
+    def _send_invite():
+        target = sel.value
+        if not target or _coop_session_of(target)[1]:
+            ui.notify(t("coop.not_available", lang), type="warning", position="top")
+            return
+        _COOP_INVITES[target] = {"id": uuid.uuid4().hex, "host": me, "host_s": s,
+                                 "player": game.player_name, "at": _time.time()}
+        key = "coop.invite_sent" if _coop_online(target) else "coop.invite_sent_offline"
+        ui.notify(t(key, lang, name=target), type="positive", position="top")
+        dlg.close()
+    ui.button(t("coop.send_invite", lang), icon="send", on_click=_send_invite, color="primary").props("no-caps").classes("w-full mt-2")
+
+
+def show_coop_invite(s: dict, inv: dict, on_accept) -> None:
+    """Invitee side: invite dialog (or 'host went offline' variant)."""
+    lang = L()
+    me = s.get("current_user", "")
+    host = inv["host"]
+    host_s = inv["host_s"]
+    host_ok = (_coop_online(host) and host_s.get("current_user") == host
+               and host_s.get("game") is not None)
+    with ui.dialog() as dlg, ui.card().classes("p-4").style("max-width: 420px"):
+        dlg.props(f'persistent aria-label="{t("coop.invite_title", lang)}"')
+        ui.label(f"{E['people']} {t('coop.invite_title', lang)}").classes("text-lg font-bold")
+        if host_ok:
+            ui.label(t("coop.invite_text", lang, host=host, player=inv.get("player", ""))).classes("text-sm")
+
+            async def _accept():
+                dlg.close()
+                await on_accept(inv)
+
+            def _decline():
+                dlg.close()
+                if _COOP_INVITES.get(me) is inv:
+                    _COOP_INVITES.pop(me, None)
+                _coop_notify(host, "coop.declined", "info", name=me)
+            with ui.row().classes("gap-2 mt-2"):
+                ui.button(t("coop.accept", lang), on_click=_accept, color="primary").props("no-caps")
+                ui.button(t("coop.decline", lang), on_click=_decline).props("flat no-caps")
+        else:
+            ui.label(t("coop.invite_host_offline", lang, host=host)).classes("text-sm")
+
+            def _invite_back():
+                dlg.close()
+                _COOP_INVITES.pop(me, None)
+                game = s.get("game")
+                if game is None or _coop_session_of(host)[1] or _coop_session_of(me)[1]:
+                    ui.notify(t("coop.need_game", lang) if game is None else t("coop.not_available", lang),
+                              type="warning", position="top")
+                    return
+                _COOP_INVITES[host] = {"id": uuid.uuid4().hex, "host": me, "host_s": s,
+                                       "player": game.player_name, "at": _time.time()}
+                ui.notify(t("coop.invite_sent_offline", lang, name=host), type="positive", position="top")
+
+            def _close():
+                dlg.close()
+                _COOP_INVITES.pop(me, None)
+            with ui.row().classes("gap-2 mt-2"):
+                ui.button(t("coop.invite_back", lang, host=host), on_click=_invite_back, color="primary").props("no-caps")
+                ui.button(t("coop.close", lang), on_click=_close).props("flat no-caps")
+    dlg.open()
+
+
+async def coop_accept_invite(s: dict, inv: dict) -> Optional["CoopLive"]:
+    """Validate and start a session from an invite. Returns the session or None."""
+    lang = L()
+    me = s.get("current_user", "")
+    host = inv["host"]
+    host_s = inv["host_s"]
+    if _COOP_INVITES.get(me) is not inv:
+        ui.notify(t("coop.not_available", lang), type="warning", position="top")
+        return None
+    _COOP_INVITES.pop(me, None)
+    game = host_s.get("game")
+    if (not _coop_online(host) or host_s.get("current_user") != host or game is None
+            or _coop_session_of(host)[1]):
+        ui.notify(t("coop.not_available", lang), type="warning", position="top")
+        return None
+    if _coop_session_of(me)[1]:
+        ui.notify(t("coop.self_busy", lang), type="warning", position="top")
+        return None
+    sess = CoopLive(host, me, host_s, host_s.get("active_save", "autosave"))
+    _COOP_SESSIONS[host] = sess
+    coop_start_session(game, me)
+    _coop_save(sess)
+    _coop_notify(host, "coop.joined", "positive", name=me)
+    log(f"[Coop] Session started: host={host} co-gm={me} save={sess.save}")
+    if not coop_waiting_for_cogm(game):
+        _coop_spawn(_coop_generate_question(sess, _coop_last_narration(host_s)))
+    return sess
 
 
 # ===============================================================
@@ -3010,6 +3711,11 @@ async def main_page(client: Client):
             .props(f'flat round dense aria-label="{t("aria.menu_open", L())}"') \
             .classes("text-gray-400 hover:text-white") \
             .style("min-width: 44px; min-height: 44px")
+        ui.space()
+        _coop_btn = ui.button(icon="groups", on_click=lambda: open_coop_menu(s)) \
+            .props(f'flat round dense aria-label="{t("aria.coop_menu", L())}"') \
+            .classes("text-gray-400 hover:text-white") \
+            .style("min-width: 44px; min-height: 44px")
     header.set_value(False)
 
     # Left drawer (created at page level, hidden initially, populated in main phase)
@@ -3056,6 +3762,7 @@ async def main_page(client: Client):
 
     def _show_login_phase():
         """Phase 1: Invite code login (no reload on success)."""
+        s["_phase"] = "login"
         header.set_value(False)
         drawer.set_value(False)
         footer.set_value(False)
@@ -3092,6 +3799,7 @@ async def main_page(client: Client):
 
     def _show_user_selection_phase():
         """Phase 2: User selection (no reload on select)."""
+        s["_phase"] = "select"
         header.set_value(False)
         drawer.set_value(False)
         footer.set_value(False)
@@ -3225,6 +3933,14 @@ async def main_page(client: Client):
         # Apply saved chat font size
         _chat_font_size = s.get("chat_font_size", 1.0)
         ui.run_javascript(f"document.documentElement.style.setProperty('--chat-font-size', '{_chat_font_size:.2f}rem')")
+        # Co-op: a tab that joined a live session as Co-GM shows the host's game
+        _cs, _crole = _coop_session_of(s.get("current_user", ""))
+        if _crole == "cogm" and s.get("coop_host") == _cs.host:
+            await _show_cogm_phase(_cs)
+            return
+        s["_phase"] = "main"
+        _coop_btn.props(f'aria-label="{t("aria.coop_menu", _user_lang)}"')
+        _ui_refs.clear()
         # Re-set skeleton ARIA labels (were set at build time with default language)
         _hamburger_btn.props(f'aria-label="{t("aria.menu_open", _user_lang)}"')
         drawer.props(f'aria-label="{t("aria.sidebar", _user_lang)}"')
@@ -3399,8 +4115,15 @@ async def main_page(client: Client):
                 stt_status.props('role="status" aria-live="polite"')
                 with stt_status:
                     stt_status_content = ui.html("").style("display: inline")
+                # Co-op status line (Co-GM online / thinking / answered), updated by _coop_tick
+                _coop_status = ui.label("").classes("text-xs rpg-input-bar w-full").style(
+                    "padding: 0.25rem 1rem 0; color: var(--text-secondary)")
+                _coop_status.props('role="status"')
+                _coop_status.set_visibility(False)
+                _ui_refs["coop_status"] = _coop_status
                 with ui.row().classes("w-full items-center gap-2 rpg-input-bar").style("padding: 0.5rem 1rem"):
                     inp = ui.input(placeholder=t("game.input_placeholder", L())).classes("flex-grow").props(f'outlined dense dark aria-label="{t("game.input_placeholder", L())}"')
+                    inp.on_value_change(lambda _e: _coop_mark_typing(s))
                     _cc = chat_container  # capture reference for closure
                     _sr = _refresh_sidebar  # capture sidebar refresh callback
                     async def send():
@@ -3418,37 +4141,7 @@ async def main_page(client: Client):
                     ui.button(icon="send", on_click=send).props(f'flat dense aria-label="{t("aria.send_message", L())}"').classes("text-gray-400 hover:text-white").style("border: 1px solid var(--border-light); border-radius: 8px; min-width: 44px; height: 44px")
             footer.set_value(True)
             # Dynamically align footer input bar with page content
-            ui.run_javascript('''
-                window._rpgAlignFooter = function() {
-                    const pageCol = document.querySelector('.q-page .max-w-4xl');
-                    const inputBars = document.querySelectorAll('.rpg-input-bar');
-                    if (pageCol && inputBars.length) {
-                        const rect = pageCol.getBoundingClientRect();
-                        inputBars.forEach(bar => {
-                            const parentRect = bar.parentElement.getBoundingClientRect();
-                            bar.style.maxWidth = rect.width + 'px';
-                            bar.style.marginLeft = (rect.left - parentRect.left) + 'px';
-                        });
-                    }
-                };
-                setTimeout(window._rpgAlignFooter, 200);
-                if (!window._rpgFooterListeners) {
-                    window._rpgFooterListeners = true;
-                    window.addEventListener('resize', () => window._rpgAlignFooter && window._rpgAlignFooter());
-                    /* Visual viewport resize: handles iOS virtual keyboard */
-                    if (window.visualViewport) {
-                        window.visualViewport.addEventListener('resize', () => {
-                            window._rpgAlignFooter && window._rpgAlignFooter();
-                        });
-                        window.visualViewport.addEventListener('scroll', () => {
-                            window._rpgAlignFooter && window._rpgAlignFooter();
-                        });
-                    }
-                    new MutationObserver(() => setTimeout(() => window._rpgAlignFooter && window._rpgAlignFooter(), 350))
-                        .observe(document.querySelector('.q-layout') || document.body,
-                                 {attributes: true, attributeFilter: ['style']});
-                }
-            ''')
+            ui.run_javascript(_FOOTER_ALIGN_JS)
         else:
             footer.set_value(False)
 
@@ -3479,6 +4172,186 @@ async def main_page(client: Client):
                 }
             }, 600);
         ''')
+
+    # ==================================================================
+    # CO-OP: Co-GM phase, invite acceptance, per-tab tick
+    # ==================================================================
+
+    def _cogm_msg_key(sess):
+        msgs = sess.host_s.get("messages", [])
+        return (len(msgs), hash(msgs[-1].get("content", "")) if msgs else 0)
+
+    def _cogm_q_key(sess):
+        q = coop_state(sess.game).get("question") if sess.game is not None else None
+        return ((q.get("id"), q.get("status")) if q else None, sess.question_pending)
+
+    def _cogm_refresh(sess, force_panel: bool = False):
+        """Update the Co-GM view in place: chat and sidebar on new narration, the
+        question panel only when the question changes (keeps a half-typed answer)."""
+        game = sess.game
+        if game is None:
+            return
+        try:
+            mk = _cogm_msg_key(sess)
+            if mk != _ui_refs.get("cogm_msg_key"):
+                _ui_refs["cogm_msg_key"] = mk
+                chat = _ui_refs.get("cogm_chat")
+                if chat is not None:
+                    chat.clear()
+                    with chat:
+                        render_cogm_chat(chat, sess)
+                    client.run_javascript("setTimeout(() => { const sc = document.querySelector('.q-page-container') "
+                                      "|| document.documentElement; sc.scrollTo({top: sc.scrollHeight, behavior: 'smooth'}); }, 150)")
+                side = _ui_refs.get("cogm_side")
+                if side is not None:
+                    side.clear()
+                    with side:
+                        render_sidebar_status(game, session=s, cogm_view=True)
+            qk = _cogm_q_key(sess)
+            panel = _ui_refs.get("cogm_panel")
+            if panel is not None and (force_panel or qk != _ui_refs.get("cogm_q_key")):
+                _ui_refs["cogm_q_key"] = qk
+                render_cogm_panel(panel, sess, on_change=lambda: _cogm_refresh(sess, force_panel=True))
+                client.run_javascript('setTimeout(() => { window._rpgAlignFooter && window._rpgAlignFooter(); }, 200)')
+            typing = _ui_refs.get("cogm_typing")
+            if typing is not None:
+                is_typing = _time.time() - sess.typing_at < COOP_TYPING_TTL_SEC
+                if is_typing:
+                    typing.text = f"{E['pen']} {t('coop.typing', L(), name=sess.host)}"
+                if typing.visible != is_typing:
+                    typing.set_visibility(is_typing)
+        except Exception as e:
+            log(f"[Coop] Co-GM view refresh failed: {e}", level="warning")
+
+    async def _show_cogm_phase(sess):
+        """Co-GM phase: read-only story of the host, question panel, cockpit."""
+        s["_phase"] = "cogm"
+        lang = L()
+        game = sess.game
+        _ui_refs.clear()
+        if game is None:
+            s["coop_host"] = None
+            await _show_main_phase()
+            return
+        drawer_content.clear()
+        with drawer_content:
+            with ui.row().classes("w-full items-center justify-between mb-2"):
+                ui.label(s["current_user"]).classes("text-lg font-semibold")
+                ui.button(icon="chevron_left", on_click=drawer.hide).props(f'flat round dense aria-label="{t("aria.menu_close", lang)}"').classes("text-gray-500 hover:text-white").style("min-width: 44px; min-height: 44px")
+            ui.label(f"{E['people']} {t('coop.cogm_of', lang, host=sess.host)}").classes("text-sm font-semibold").style("color: var(--accent-light)")
+            ui.label(t("coop.role_hint", lang)).classes("text-xs mb-2").style("color: var(--text-secondary)")
+            side = ui.column().classes("w-full")
+            with side:
+                render_sidebar_status(game, session=s, cogm_view=True)
+            ui.separator()
+            ui.button(t("coop.cockpit", lang), icon="tune", on_click=lambda: open_cockpit(sess)).props("outline no-caps").classes("w-full mt-2")
+            async def _leave_now():
+                _coop_end(sess, "leave")
+                await _coop_left()
+            ui.button(t("coop.leave", lang), icon="logout",
+                      on_click=_leave_now).props("flat no-caps").classes("w-full mt-1")
+            ui.label(f"v{VERSION}").classes("w-full text-center text-xs mt-4").style("color: var(--text-secondary); opacity: 0.5")
+        drawer.set_value(False)
+        header.set_value(True)
+        content_area.clear()
+        with content_area:
+            chat = ui.column().classes("chat-scroll w-full")
+            _props = f'id="chat-log" aria-label="{t("aria.chat_log", lang)}"'
+            if s.get("sr_chat", True):
+                _props += ' role="log" aria-live="polite"'
+            chat.props(_props)
+            with chat:
+                render_cogm_chat(chat, sess)
+        footer_content.clear()
+        with footer_content:
+            typing = ui.label("").classes("text-xs rpg-input-bar w-full").style(
+                "padding: 0.25rem 1rem 0; color: var(--text-secondary)")
+            typing.props('role="status"')
+            typing.set_visibility(False)
+            panel = ui.column().classes("w-full gap-0")
+            with ui.row().classes("w-full items-center justify-end gap-2 rpg-input-bar").style("padding: 0.25rem 1rem 0.5rem"):
+                ui.button(t("coop.cockpit_btn", lang), icon="tune", on_click=lambda: open_cockpit(sess)).props(
+                    f'outline dense no-caps aria-label="{t("aria.cockpit_open", lang)}"')
+        footer.set_value(True)
+        _ui_refs.update(cogm_chat=chat, cogm_side=side, cogm_panel=panel, cogm_typing=typing,
+                        cogm_msg_key=_cogm_msg_key(sess), cogm_q_key=_cogm_q_key(sess))
+        render_cogm_panel(panel, sess, on_change=lambda: _cogm_refresh(sess, force_panel=True))
+        client.run_javascript(_FOOTER_ALIGN_JS)
+        client.run_javascript("setTimeout(() => { const sc = document.querySelector('.q-page-container') "
+                              "|| document.documentElement; sc.scrollTo({top: sc.scrollHeight}); }, 300)")
+
+    async def _coop_left():
+        """Co-GM left via the drawer: back to the own game right away
+        (leaving via the co-op menu is picked up by the next tick)."""
+        if s.get("_phase") == "cogm":
+            s["coop_host"] = None
+            await _show_main_phase()
+
+    async def _accept_invite(inv):
+        sess = await coop_accept_invite(s, inv)
+        if sess:
+            s["coop_host"] = sess.host
+            await _show_cogm_phase(sess)
+
+    async def _coop_tick():
+        # A reloaded page leaves its old client (and this timer) alive until the
+        # reconnect timeout — a disconnected tick must not consume notices/invites.
+        if not getattr(client, "has_socket_connection", True):
+            return
+        phase = s.get("_phase")
+        # The host left the co-op game (switched user or save, new game): end the session
+        _hosted = _coop_session_by_tab(s)
+        if _hosted and not s.get("processing") and (
+                phase != "main" or s.get("game") is None
+                or s.get("active_save") != _hosted.save
+                or s.get("current_user") != _hosted.host):
+            _coop_end(_hosted, "save")
+        me = s.get("current_user", "")
+        if phase not in ("main", "cogm") or not me:
+            return
+        now = _time.time()
+        _COOP_PRESENCE[me] = now
+        lang = L()
+        for key, typ, kw in _COOP_NOTICES.pop(me, []):
+            ui.notify(t(key, lang, **kw), type=typ, position="top")
+        # Invites (only shown in the normal game view, never mid-turn)
+        inv = _COOP_INVITES.get(me)
+        if inv and now - inv.get("at", 0) > COOP_INVITE_TTL_SEC:
+            _COOP_INVITES.pop(me, None)
+            inv = None
+        if (inv and phase == "main" and s.get("_coop_invite_shown") != inv["id"]
+                and not s.get("processing")):
+            s["_coop_invite_shown"] = inv["id"]
+            show_coop_invite(s, inv, _accept_invite)
+        sess, role = _coop_session_of(me)
+        if phase == "cogm":
+            if role != "cogm" or s.get("coop_host") != sess.host:
+                s["coop_host"] = None
+                await _show_main_phase()
+                return
+            _cogm_refresh(sess)
+            return
+        # Host tab: end the session when the host leaves the co-op save; update status line
+        hs = _coop_host_session(s)
+        lbl = _ui_refs.get("coop_status")
+        if hs:
+            if lbl is not None:
+                try:
+                    lbl.text = _coop_status_text(hs, lang)
+                    if not lbl.visible:
+                        lbl.set_visibility(True)
+                        client.run_javascript('setTimeout(() => { window._rpgAlignFooter && window._rpgAlignFooter(); }, 100)')
+                except Exception:
+                    pass
+        elif lbl is not None:
+            try:
+                if lbl.visible:
+                    lbl.set_visibility(False)
+            except Exception:
+                pass
+
+    _ui_refs: dict = {}
+    ui.timer(COOP_TICK_SEC, _coop_tick)
 
     # ==================================================================
     # DETERMINE INITIAL PHASE

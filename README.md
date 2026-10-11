@@ -542,6 +542,15 @@ Environment=ANTHROPIC_API_KEY=sk-ant-YOUR-KEY-HERE
 5. **Conclude** - when the story reaches its climax, generate an epilogue or keep going
 6. **Continue** - start a new chapter with the same character and world, or begin fresh
 
+### Co-op: play with a Co-GM
+
+A second player on the same server can join as **Co-GM** (co game master). The Co-GM plays no character. After each scene they answer one question from the narrator - "Who is sitting in the car?" - and the answer shapes the next scene, so the player is surprised by it. Some questions are asked "for later": the answer is stored quietly and surfaces when the story is ready. Through the **Director's Cockpit** the Co-GM can also set the mood, the weather, push a character into the scene, plant a detail, rumour or false trail, or call a turning point.
+
+- Open the co-op menu (people icon, top right) and invite another player. Offline players see the invite at their next login.
+- The Co-GM sees the story, the characters and your stats - not your inputs, the clocks or the chaos factor.
+- Your next scene waits for the Co-GM's answer; you can always continue without it.
+- Pause, continue solo or end the session at any time. The save stays yours; everything the Co-GM planted stays in the world.
+
 ---
 
 ## 🛡️ Security Notes

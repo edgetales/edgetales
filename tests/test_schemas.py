@@ -89,7 +89,7 @@ def test_dynamic_schemas_valid_and_within_limits(builder, static):
 
 def test_static_schemas_within_limits():
     for sch in (E.NARRATOR_METADATA_SCHEMA, E.DIRECTOR_OUTPUT_SCHEMA, E.BRAIN_OUTPUT_SCHEMA,
-                E.OPENING_METADATA_SCHEMA, E.CORRECTION_OUTPUT_SCHEMA):
+                E.OPENING_METADATA_SCHEMA, E.CORRECTION_OUTPUT_SCHEMA, E.COGM_QUESTION_SCHEMA):
         jsonschema.Draft202012Validator.check_schema(sch)
         assert _union_count(sch) <= MAX_UNION_PARAMS
 
