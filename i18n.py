@@ -186,7 +186,7 @@ _STRINGS = {
         "sidebar.npc_aka": "auch bekannt als",
         "sidebar.bond": "Bindung",
         "sidebar.chapter": "Kap.",
-        "sidebar.3act": "3-Akt",
+        "sidebar.story": "Handlung",
         "sidebar.act": "Akt",
 
         # Story Arc Phase Labels
@@ -591,7 +591,7 @@ _STRINGS = {
         "sidebar.npc_aka": "aka",
         "sidebar.bond": "Bond",
         "sidebar.chapter": "Ch.",
-        "sidebar.3act": "3-Act",
+        "sidebar.story": "Story",
         "sidebar.act": "Act",
 
         # Story Arc Phase Labels

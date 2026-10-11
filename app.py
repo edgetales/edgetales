@@ -1073,10 +1073,10 @@ def render_sidebar_status(game: GameState, session=None) -> None:
     if game.story_blueprint and game.story_blueprint.get("acts"):
         bp = game.story_blueprint
         act = get_current_act(game)
-        st_type = bp.get("structure_type","3act")
         ui.separator()
-        si = E['cherry'] if st_type=="kishotenketsu" else E['book']
-        sl_arc = "Kish\u014dtenketsu" if st_type=="kishotenketsu" else t("sidebar.3act", lang)
+        # Neutral heading: never reveal which act structure the blueprint uses
+        si = E['book']
+        sl_arc = t("sidebar.story", lang)
         ch_l = f" - {t('sidebar.chapter', lang)} {game.chapter_number}" if game.chapter_number > 1 else ""
         ui.label(f"{si} {sl_arc}{ch_l}").classes("text-sm font-semibold")
         act_l = t("sidebar.act", lang)
