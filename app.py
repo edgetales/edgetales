@@ -3474,7 +3474,8 @@ def open_coop_reveal(game: Optional[GameState]) -> None:
                     ui.markdown(f"*{html_mod.escape(it['question'])}*").classes("text-sm")
                 ui.label(it["text"]).classes("text-sm").style("word-break: break-word")
         if data["hidden"]:
-            ui.label(t("coop.reveal_hidden", lang, n=data["hidden"])).classes("text-xs mt-3").style(
+            ui.label(t("coop.reveal_hidden_one", lang) if data["hidden"] == 1
+                     else t("coop.reveal_hidden", lang, n=data["hidden"])).classes("text-xs mt-3").style(
                 "color: var(--text-secondary)")
     dlg.open()
 
