@@ -118,7 +118,7 @@ def test_brain_schema_target_is_id_or_null():
     g = _game_with_npcs(1)
     v = jsonschema.Draft202012Validator(E._brain_schema_for(g))
     doc = {"type": "action", "move": "compel", "stat": "heart", "approach": "",
-           "target_npc": "npc_1", "dialog_only": False, "player_intent": "",
+           "target_npc": "npc_1", "dialog_only": False, "roll_needed": True, "player_intent": "",
            "world_addition": None, "position": "risky", "effect": "standard",
            "dramatic_question": "", "location_change": None, "time_progression": "none"}
     assert not list(v.iter_errors(doc))

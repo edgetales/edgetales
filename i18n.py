@@ -408,6 +408,8 @@ _STRINGS = {
         "dice.match": "\u2604\uFE0F **Schicksalswurf!** Beide Herausforderungsw\u00fcrfel zeigen {value}!",
         "dice.match_short": "\u2604\uFE0F Schicksalswurf!",
         "dice.chaos_short": "\u26A1 Chaos!",
+        "dice.routine": "Routine - kein Wurf n\u00f6tig",
+        "dice.routine_detail": "Routine - kein Wurf n\u00f6tig ({move})",
         "dice.position": "**Position:** {position} - **Effekt:** {effect}",
         "dice.consequences": "**Konsequenzen:** {text}",
 
@@ -431,6 +433,7 @@ _STRINGS = {
                              "W6 = sechsseitiger W\u00fcrfel, W10 = zehnseitiger. "
                              "Dein Wurf muss die beiden W10 schlagen.",
         "help.results_title": "**Ergebnisse**",
+        "help.routine_text": "Routine-Handlungen ohne echtes Risiko - eine T\u00fcr \u00f6ffnen, einen bekannten Weg gehen, sich in Ruhe umsehen - gelingen ohne Wurf. K\u00e4mpfe und verzweifelte Lagen werden immer gew\u00fcrfelt.",
         "help.results_text": "Jeder Wurf hat drei m\u00f6gliche Ausg\u00e4nge:",
         "help.result_strong": "<b>Voller Erfolg</b>",
         "help.result_strong_desc": "Dein Wurf schl\u00e4gt beide W10 \u2192 Alles l\u00e4uft nach Plan",
@@ -957,6 +960,8 @@ _STRINGS = {
         "dice.match": "\u2604\uFE0F **Fateful Roll!** Both challenge dice show {value}!",
         "dice.match_short": "\u2604\uFE0F Fateful Roll!",
         "dice.chaos_short": "\u26A1 Chaos!",
+        "dice.routine": "Routine - no roll needed",
+        "dice.routine_detail": "Routine - no roll needed ({move})",
         "dice.position": "**Position:** {position} - **Effect:** {effect}",
         "dice.consequences": "**Consequences:** {text}",
 
@@ -980,6 +985,7 @@ _STRINGS = {
                              "d6 = six-sided die, d10 = ten-sided. "
                              "Your roll needs to beat both d10s.",
         "help.results_title": "**Results**",
+        "help.routine_text": "Routine actions without real risk - opening a door, walking a known path, looking around in peace - succeed without a roll. Fights and desperate situations are always rolled.",
         "help.results_text": "Every roll has three possible outcomes:",
         "help.result_strong": "<b>Strong Hit</b>",
         "help.result_strong_desc": "Your roll beats both d10 \u2192 Everything goes to plan",

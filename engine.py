@@ -215,6 +215,7 @@ BRAIN_OUTPUT_SCHEMA = {
         "approach":           {"type": "string"},
         "target_npc":         {"type": ["string", "null"]},
         "dialog_only":        {"type": "boolean"},
+        "roll_needed":        {"type": "boolean"},
         "player_intent":      {"type": "string"},
         "world_addition":     {"type": ["string", "null"]},
         "position":           {"type": "string", "enum": ["controlled", "risky", "desperate"]},
@@ -224,7 +225,7 @@ BRAIN_OUTPUT_SCHEMA = {
         "time_progression":   {"type": "string", "enum": ["none", "short", "moderate", "long"]},
     },
     "required": [
-        "type", "move", "stat", "approach", "target_npc", "dialog_only",
+        "type", "move", "stat", "approach", "target_npc", "dialog_only", "roll_needed",
         "player_intent", "world_addition", "position", "effect",
         "dramatic_question", "location_change", "time_progression",
     ],
@@ -3854,6 +3855,31 @@ def action_dice_text(d1: int, d2: int = 0) -> str:
 
 COMBAT_MOVES = {"clash", "strike"}
 SOCIAL_MOVES = {"compel", "make_connection", "test_bond"}
+# Moves that always roll, whatever the Brain says (Ironsworn: harm and combat are
+# never routine). A desperate position always rolls as well.
+ALWAYS_ROLL_MOVES = COMBAT_MOVES | {"endure_harm", "endure_stress"}
+
+
+def is_dialog_turn(brain: dict) -> bool:
+    """Pure talking - narrated without a roll."""
+    return bool(brain.get("dialog_only")) or brain.get("move") == "dialog"
+
+
+def is_routine_action(brain: dict) -> bool:
+    """An action the Brain judged routine (roll_needed=false): it simply succeeds,
+    narrated without dice, consequences or momentum. Missing field (older
+    snapshots) means a roll, as before. Combat/endure moves, a desperate
+    position and stat "none" never count as routine."""
+    if is_dialog_turn(brain) or brain.get("roll_needed", True) is not False:
+        return False
+    if brain.get("move") in ALWAYS_ROLL_MOVES or brain.get("position") == "desperate":
+        return False
+    return True
+
+
+def needs_roll(brain: dict) -> bool:
+    """True if this turn is resolved with an action roll."""
+    return not is_dialog_turn(brain) and not is_routine_action(brain)
 
 
 def apply_consequences(game: GameState, roll: RollResult, brain: dict) -> tuple[list[str], list[dict]]:
@@ -4645,6 +4671,10 @@ def call_brain(client: anthropic.Anthropic, game: GameState, player_message: str
 - Accept ALL player input including world-building declarations
 - Pick the move that best fits the player's ACTION, not their words
 - dialog = pure talking, no risk. Everything else = a move with a stat
+- roll_needed: roll ONLY when the outcome is genuinely uncertain AND failure would be interesting - active opposition, danger, time pressure, an alert adversary, or a feat beyond everyday competence.
+  Set false for routine actions a capable character simply does: opening an unlocked door, walking or riding a known route, looking around a calm room, buying or trading at a fair price, asking a cooperative character for something they would give anyway, picking something up, resting somewhere safe, using a tool for its ordinary purpose, any skill the character's concept or backstory clearly covers in calm conditions.
+  The situation decides, not the verb: climbing a garden wall is routine when nobody is around and a roll when guards patrol or it is pouring rain. Still pick the fitting move and stat when roll_needed is false.
+  dialog: always false. clash, strike, endure_harm, endure_stress and a desperate position: always true.
 - If <story_arc> is present, consider pacing: favor moves that advance the act goal
 - Assess POSITION based on fictional circumstances (not player skill):
   controlled = advantage/safety, risky = uncertain/standard, desperate = severe disadvantage/high stakes
@@ -4707,7 +4737,7 @@ time:{game.time_of_day or 'unspecified'} | prev_locations:{', '.join(game.locati
     except Exception as e:
         log(f"[Brain] Structured output failed ({type(e).__name__}: {e}), "
             f"falling back to dialog", level="warning")
-        return {"type": "action", "move": "dialog", "dialog_only": True,
+        return {"type": "action", "move": "dialog", "dialog_only": True, "roll_needed": False,
                 "target_npc": None, "stat": "none", "approach": "",
                 "player_intent": player_message, "world_addition": None,
                 "position": "risky", "effect": "standard",
@@ -7217,14 +7247,38 @@ def build_dialog_prompt(game: GameState, brain: dict, player_words: str = "",
               if npc_agency else "")
     fired = _clock_fired_block(clock_events)
 
-    return f"""<scene type="dialog" n="{game.scene_count}">
+    if is_routine_action(brain):
+        # Routine action (no roll): the action itself simply works.
+        scene_type = "routine"
+        intent = f"{brain.get('player_intent', '')} ({brain.get('approach', '')})".replace(" ()", "")
+        task = ("<task>1-3 paragraphs of immersive narration. The character's action is routine "
+                "and succeeds without a roll: show it working cleanly and competently - no "
+                "failure, no injury, no cost and no new complication caused by the action "
+                "itself. Do not inflate it into a triumph or hand out more than the action "
+                "plausibly achieves. The world may still move around it (<npc_agency>, a "
+                "chaos interrupt in <pacing>, director guidance). End with the scene open for "
+                "the player's next decision. Let the current act's mood (from <story_arc>) "
+                "colour the moment. If <director_guidance> is present, follow its direction "
+                "while maintaining your creative voice.</task>")
+    else:
+        scene_type = "dialog"
+        intent = brain.get('player_intent', '')
+        task = ("<task>2-3 paragraphs of immersive narration. Let the world breathe around the "
+                "conversation — small details of place, light, sound, and texture that make "
+                "this moment feel inhabited. Something between the characters should shift by "
+                "the end. Let the current act's mood (from <story_arc>) shape the undertone of "
+                "the exchange — even a quiet conversation carries the weight of the surrounding "
+                "phase. If <director_guidance> is present, follow its direction while "
+                "maintaining your creative voice.</task>")
+
+    return f"""<scene type="{scene_type}" n="{game.scene_count}">
 {_scene_header(game)}
-<intent>{html.escape(brain.get('player_intent', ''))}</intent>{pw}
+<intent>{html.escape(intent)}</intent>{pw}
 <location>{html.escape(game.current_location)}</location>{_loc_hist(game)}{_time_ctx(game)}
 {npc}{npcs_section}{wl}{crisis}{agency}{fired}
 {pacing}{director_block}{_coop_block(game)}
 {_status_context_block(game)}{_story_context_block(game)}{_recent_events_block(game)}{_narrator_clocks_block(game)}{_npc_relations_block(game, _present_ids)}</scene>
-<task>2-3 paragraphs of immersive narration. Let the world breathe around the conversation — small details of place, light, sound, and texture that make this moment feel inhabited. Something between the characters should shift by the end. Let the current act's mood (from <story_arc>) shape the undertone of the exchange — even a quiet conversation carries the weight of the surrounding phase. If <director_guidance> is present, follow its direction while maintaining your creative voice.</task>"""
+{task}"""
 
 
 def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
@@ -9826,8 +9880,12 @@ def _process_turn_impl(client: anthropic.Anthropic, game: GameState,
     # Check chaos interrupt (before scene processing)
     chaos_interrupt = check_chaos_interrupt(game)
 
-    # Dialog
-    if brain.get("dialog_only") or brain.get("move") == "dialog":
+    # Dialog, or a routine action that needs no roll (narrated as a clean success)
+    if not needs_roll(brain):
+        _routine = is_routine_action(brain)
+        if _routine:
+            log(f"[Turn] Routine action - no roll ({brain.get('move')}/{brain.get('stat')}, "
+                f"pos={brain.get('position')})")
         game.scene_count += 1
         # Clock movement of this scene is decided BEFORE narration so the Narrator
         # can show it (NPC agency on agency scenes, autonomous world ticks).
@@ -9859,7 +9917,8 @@ def _process_turn_impl(client: anthropic.Anthropic, game: GameState,
         record_scene_intensity(game, scene_type)
         game.narration_history.append({
             "scene": game.scene_count,
-            "prompt_summary": f"Dialog: {brain.get('player_intent', player_message)[:80]}",
+            "prompt_summary": f"{'Routine' if _routine else 'Dialog'}: "
+                              f"{brain.get('player_intent', player_message)[:80]}",
             "narration": narration,
         })
         if len(game.narration_history) > MAX_NARRATION_HISTORY:
@@ -9867,7 +9926,8 @@ def _process_turn_impl(client: anthropic.Anthropic, game: GameState,
         game.session_log.append({"scene": game.scene_count,
                                  "summary": brain.get("player_intent", player_message),
                                  "move": brain.get("move", "dialog"),
-                                 "result": "dialog", "consequences": [], "clock_events": [],
+                                 "result": "routine" if _routine else "dialog",
+                                 "consequences": [], "clock_events": [],
                                  "dramatic_question": brain.get("dramatic_question", ""),
                                  "chaos_interrupt": chaos_interrupt,
                                  "npc_activation": npc_activation_debug})
@@ -9890,7 +9950,7 @@ def _process_turn_impl(client: anthropic.Anthropic, game: GameState,
 
         # Director — deferred to UI layer for non-blocking display
         director_ctx = None
-        director_reason = _should_call_director(game, roll_result="dialog",
+        director_reason = _should_call_director(game, roll_result="routine" if _routine else "dialog",
                                   chaos_used=bool(chaos_interrupt),
                                   new_npcs_found=bool(metadata.get("new_npcs")),
                                   revelation_used=revelation_confirmed)
@@ -10551,7 +10611,8 @@ def _process_correction_impl(client: anthropic.Anthropic, game: GameState,
         # Scene advance + targeted-NPC reactivation + location/time (shared helper)
         _reapply_turn_structure(game, brain)
 
-        if analysis.get("reroll_needed") and brain.get("stat", "none") != "none":
+        if (analysis.get("reroll_needed") and brain.get("stat", "none") != "none"
+                and needs_roll(brain)):
             # Full action path with new roll
             stat_name = brain.get("stat", "wits")
             roll = roll_action(stat_name, game.get_stat(stat_name), brain.get("move", "face_danger"))
@@ -10655,7 +10716,7 @@ def _process_correction_impl(client: anthropic.Anthropic, game: GameState,
             "scene": game.scene_count,
             "summary": f"[corrected] {intent}",
             "move": brain.get("move", "dialog"),
-            "result": roll.result if roll else "dialog",
+            "result": roll.result if roll else ("routine" if is_routine_action(brain) else "dialog"),
             "consequences": [],
             "clock_events": [],
             "dramatic_question": brain.get("dramatic_question", ""),
@@ -10684,7 +10745,7 @@ def _process_correction_impl(client: anthropic.Anthropic, game: GameState,
                 "scene": game.scene_count,
                 "summary": f"[corrected] {intent}",
                 "move": brain.get("move", "dialog"),
-                "result": roll.result if roll else "dialog",
+                "result": roll.result if roll else ("routine" if is_routine_action(brain) else "dialog"),
                 "consequences": [],
                 "clock_events": [],
                 "dramatic_question": brain.get("dramatic_question", ""),
