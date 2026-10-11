@@ -589,13 +589,15 @@ def build_roll_data(roll: RollResult, consequences=None, clock_events=None, brai
     }
 
 
-# Scroll helpers — documentElement is the scroll container
+# Scroll helpers — .q-page-container is the scroll container (app shell, see
+# custom_head.html); documentElement is only the fallback.
 async def _scroll_chat_bottom(delay_ms: int = 0) -> None:
     """Scroll to bottom of page (instant by default for DOM forcing)."""
     try:
         await ui.run_javascript(f'''
             setTimeout(() => {{
-                document.documentElement.scrollTo({{top: document.documentElement.scrollHeight}});
+                const sc = document.querySelector('.q-page-container') || document.documentElement;
+                sc.scrollTo({{top: sc.scrollHeight}});
             }}, {delay_ms or 10});
         ''', timeout=3.0)
     except TimeoutError:
