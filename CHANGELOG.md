@@ -5,7 +5,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## [Unreleased]
+## [0.9.99] - 2026-10-11
 
 ### Changed
 - **Plain hyphens in the interface.** All em dashes (—) in visible UI text (menus, sidebar, help, character creation, dice display, settings, export footer, screen-reader labels) are now regular hyphens (-), in German and English. AI prompts are unchanged.
