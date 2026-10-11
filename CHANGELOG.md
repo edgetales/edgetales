@@ -14,6 +14,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - The Co-GM sees the story, characters, the protagonist's stats and location - but not the player's inputs, dice, clocks or chaos factor.
 - **Behind the scenes:** player and Co-GM can open a scene-by-scene list of everything the Co-GM contributed that has already appeared in the story - answers, seeds, rumours, secrets and false trails. Content that has not surfaced yet is only counted, so nothing is spoiled. Also available after the session from the co-op menu.
 
+## [0.9.100] - 2026-10-11
+
 ### Fixed
 - **Turns could crash on a blank NPC name.** When the AI returned a name made of spaces, the NPC was created with an empty name, and later renames of it made every such turn fail. Blank names are now rejected everywhere NPCs are created or renamed (new characters, lore figures, renames, surname updates, memory stubs, chapter openings, `##` corrections).
 - **Overlong NPC names** (a whole description returned as the name) are cut to 60 characters at a word boundary; when the same overlong name comes back, it is recognised instead of creating a second character.
