@@ -5,7 +5,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## [Unreleased]
+## [0.9.104] - 2026-10-12
 
 ### Changed
 - **README screenshots show the current interface.** All 14 mobile screenshots were retaken with the line icons, the renamed genres, tones and archetypes, the neutral "Story" heading and the Visual Effects narrator style that is now the default.
