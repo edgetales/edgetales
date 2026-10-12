@@ -9,8 +9,8 @@
 
 | | |
 |---|---|
-| **Version** | v1.0.0 |
-| **Codebase** | ~14,200 lines across 5 source files + config, plus offline test suite in `tests/` |
+| **Version** | v1.1.0 |
+| **Codebase** | ~18,100 lines across 5 source files + config, plus offline test suite in `tests/` |
 | **Tests** | `python -m pytest tests -q` (pytest + jsonschema; fake AI, no API key) |
 | **Stack** | Python 3.11+, NiceGUI, Anthropic SDK (Structured Outputs), reportlab, edge-tts, faster-whisper, wonderwords, stop-words, nameparser, cryptography |
 | **AI Models** | Defaults — Narrator/Architect: `claude-sonnet-5-5` (effort `high`) · Brain/Director/Extractors: `claude-haiku-5-5` (thinking disabled). Overridable per role in `config.json` (`narrator_*` / `brain_*`: model, effort, thinking) |
@@ -82,11 +82,11 @@ Every UI change must:
 ### 5-File Structure
 
 ```
-engine.py        (~7,600 L) — GameState, mechanics, all AI calls, prompts, parser,
+engine.py       (~10,600 L) — GameState, mechanics, all AI calls, prompts, parser,
                               save/load, NPC/memory/director, chapter archives, correction system
-app.py           (~3,540 L) — NiceGUI UI layer (sole NiceGUI dependency), auto-dependency
+app.py           (~4,700 L) — NiceGUI UI layer (sole NiceGUI dependency), auto-dependency
                               check, ARIA accessibility
-i18n.py          (~1,400 L) — UI strings, emojis, label dicts, voice options, translation
+i18n.py          (~1,700 L) — UI strings, emojis, label dicts, voice options, translation
                               functions, ARIA labels
 voice.py           (~590 L) — EdgeTTS, Chatterbox, VoiceEngine, STT (faster-whisper)
 custom_head.html   (~450 L) — CSS, meta tags, PWA, Google Fonts (Inter + Cinzel), CSS
@@ -315,6 +315,27 @@ Extended chapter summary: `npc_evolutions` (projected NPC changes in time skip) 
 
 `GameState.epilogue_text` persisted in `SAVE_FIELDS`. `generate_epilogue()` writes it; `start_new_chapter()` passes it to `call_chapter_summary()` then clears it — prevents bleed into chapter-3 summaries.
 
+### Co-op Mode (Co-GM) *(since v1.1.0)*
+
+Asymmetric co-op: a **Player** (host, owns the save) and a **Co-GM** (guest, plays no character). After each scene the Co-GM answers one question from the Narrator; through the **Director's Cockpit** they send signals about atmosphere, pacing and direction. The player only experiences the result in the story. Concept: `coopgm.md` (internal, Project root).
+
+**Engine (`engine.py`, CO-OP section — framework-free):**
+- `GameState.coop` (persisted in `SAVE_FIELDS`): `question` {id, text, type now|seed, npc_id, scene, status open|answered|passed}, `answer` (pending NOW answer), `signals` (cockpit), `seeds` (planted content), `recent_questions`, `partner` (last Co-GM), `questions_asked`. Not part of the snapshot spec (the Co-GM edits it while turns run) — classified as not turn-mutable in `tests/test_snapshot.py`.
+- **Turn flow:** `_coop_begin_turn()` (right after the turn snapshot) consumes the pending answer and due signals into `game.coop["_turn"]` and returns them as `last_turn_snapshot["coop_inputs"]`; an unanswered question counts as a pass. `build_action_prompt()` / `build_dialog_prompt()` render `_coop_block()` (`<co_gm>` with `<co_gm_input>`, `<co_gm_seeds>`, `<co_gm_cockpit>`; all Co-GM text escaped, content boundaries override). The transactional wrappers remove `_turn`; `process_turn()` also logs the inputs to `session_log[-1]["cogm"]`. `##` corrections and momentum burns re-expose the same inputs via `_coop_resume_turn(snapshot["coop_inputs"])`. A failed turn rolls back with the rest of the GameState, so the answer is kept for the retry.
+- **Questions:** `generate_cogm_question()` (UI calls it after every narration the host sees) runs `call_cogm_question()` (Haiku, `COGM_QUESTION_SCHEMA`): writes the next question and reports which offered seeds the narration surfaced (`seeds_surfaced` → `used`). The engine decides the type: every `COGM_SEED_EVERY`-th question is a SEED question, the first of a session is NOW. API failure → no question (nobody waits).
+- **Seeds:** SEED answers, rumours, secrets and false trails are stored as seeds; up to `COGM_SEEDS_IN_PROMPT` unused ones are offered per scene ("use at most one, most scenes none"), SEED answers only after `COGM_SEED_MIN_AGE` scenes. Seeds from an earlier chapter are always old enough (scene numbers restart per chapter), and the least-offered seeds come first (`offered` counter), so a seed that never fits does not block newer ones. A NOW answer is also kept as a `now` seed (`injected: True` once it reached its scene), so an answer the player's action made unusable can surface later; an answer given before a pause is kept the same way (not injected, so the reveal does not show it until it surfaces). Seeds tied to a removed NPC are not offered. `process_correction()` re-logs the inputs (`_coop_end_turn`) because an input_misread re-run replaces the session_log entry.
+- **Cockpit signals** (`COGM_SIGNALS` catalog, 13 options - design rule: concrete or free text, nothing that only shifts style). Each has `slot`: **impulse** signals share ONE pending slot per scene (`coop_add_signal()` replaces the pending impulse, flagged `impulse: True`; `_coop_begin_turn()` consumes it, a running duration signal keeps going with `impulse: False`; `coop_pending_impulse()`), **background** signals are unlimited. Types: `direction` (free, once), `push_npc`, `npc_line` (NPC + text, once - one per NPC), `secret_intent` (NPC + text, persistent per NPC, ends when the NPC dies), `plant_detail` (once), `rumor` / `plant_secret` / `false_trail` (stored as seeds), `weather` (single), `disruption` (optional text; `prompt_empty` when empty), `clock_ticking` (duration 2), `earned_rest`, `cliffhanger` (once). `coop_add_signal()` validates strictly (type, value list, NPC IDs, required text, `COGM_MAX_SIGNALS`). The `<co_gm>` rule forbids Co-GM input from deciding the protagonist's actions, words, thoughts or decisions. `coop_end_session()` drops the open question, weather and running time pressure; planted content and secret intentions stay part of the world.
+- **Cockpit UI** (`open_cockpit()`): zone "impulse" (slot card - dashed when free, highlighted with remove button when set - plus a 2-column tile grid) and zone "background" (tiles + active list). A tile opens an inline editor with a one-line description (`coop.desc_<type>`), the needed fields and a button that reads "Set as impulse" or "Replace impulse" with "Replaces: ..." - no confirmation dialog. The Co-GM footer shows an impulse chip (free/set). On a new scene `_cogm_refresh()` calls the dialog's live refresh (`on_open` callback), which updates slot, list and button text without rebuilding open editors, so typed text survives.
+- **Behind the scenes:** `coop_reveal()` lists NOW answers and surfaced seeds by chapter/scene (seeds carry `chapter`); unsurfaced seeds are only counted (no spoilers). UI: `open_coop_reveal()` from the co-op menu (during and after a session).
+
+**UI (`app.py`, CO-OP section):**
+- Live state is in-memory (single process): `_COOP_SESSIONS` (host → `CoopLive`, holding the host's tab storage `host_s`, so both tabs share one GameState object), `_COOP_INVITES`, `_COOP_PRESENCE` (heartbeats), `_COOP_NOTICES`. A server restart ends sessions; the save keeps all content and the partner, so a re-invite resumes.
+- Every page runs `_coop_tick` (`ui.timer(COOP_TICK_SEC)`, skipped while the client is disconnected): presence heartbeat, notices, invite dialogs, Co-GM view refresh, host status line, and ending the session when the host tab leaves the co-op game (other user, another game object loaded, new game, leaving the main view). "Save as" keeps the game object (`CoopLive.game_ref`), so the session follows the new slot name.
+- Phases: `s["_phase"]` = login | select | main | cogm. `_show_cogm_phase()` renders the host's story read-only (`render_cogm_chat()`: narration and scene markers only — no player input, no dice), the sidebar with `render_sidebar_status(cogm_view=True)` (no chaos, no clocks), the question panel (`render_cogm_panel()`, rebuilt only when the question changes so a half-typed answer survives) and the cockpit (`open_cockpit()`). A reloaded Co-GM tab returns to this phase via `s["coop_host"]`.
+- Host: header co-op button (`open_coop_menu()`: invite / pause / solo / remove), status line above the input, typing indicator for the Co-GM. `process_player_input()` waits for the answer (`_coop_wait_for_answer()`: skip button, dialog after `COOP_WAIT_TIMEOUT_SEC`); `_coop_after_narration()` is called after turn, correction (`only_if_open`), burn / burn declined and new chapter.
+- Co-GM saves (answer, signal) go through `_coop_save()`, which never writes while the host's turn is running (the post-turn save includes the change).
+- Use `client.run_javascript()` inside co-op view refreshes — the clicked element's slot is often deleted by the rebuild, and `ui.run_javascript()` then fails.
+
 ---
 
 ## NPC System
@@ -498,6 +519,9 @@ MISS (all three): bond -1, spirit -1 or -2. Disposition ladder: `hostile → dis
 | `copy.copy(game)` snapshot for Architect thread | Shared reference | `parse_narrator_response()` mutations on main thread would race-condition Architect's input |
 | `_xa(s)` helper for XML attribute escaping | Manual `.replace('"', '&quot;')` | Manual replace only covers `"` — misses `<` and `&`. `html.escape(str(s), quote=True)` covers all three. |
 | `html.escape()` for XML element content | No escaping | AI-generated text in element positions can contain `<` or `&` — silently corrupts prompt structure |
+| Co-op: Co-GM question as a separate Haiku call (`call_cogm_question`) | Narrator appends a `COGM_QUESTION` line (original concept) | Keeps narrator prose and prompt clean; structured output also reports surfaced seeds; testable |
+| Co-op: seeds and cockpit state persisted in the save (`GameState.coop`) | Session-only RAM state | Seeds are meant to surface much later — they must survive pauses, reloads and chapters |
+| Co-op: live session registry in plain module dicts | `app.storage.general` | `app.storage.general` is written to disk; live sessions are intentionally transient |
 | Engine owns alias bookkeeping on NPC rename | Let Haiku manage aliases in `npc_edit` | Haiku overwrites alias list before engine can preserve old name. `edits.pop("aliases")` makes engine sole authority. |
 
 ---

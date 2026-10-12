@@ -65,7 +65,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 BRAIN_MODEL = "claude-haiku-5-5"
 NARRATOR_MODEL = "claude-sonnet-5-5"
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -169,7 +169,8 @@ CHAPTER_SUM_MAX_TOKENS = _MAX_TOKENS_HAIKU    # call_chapter_summary (was 1500)
 CORRECTION_MAX_TOKENS  = _MAX_TOKENS_HAIKU    # call_correction_brain (was 1500)
 OPENING_MAX_TOKENS          = _MAX_TOKENS_HAIKU    # call_opening_metadata (new)
 REVELATION_CHECK_MAX_TOKENS = _MAX_TOKENS_HAIKU    # call_revelation_check (new)
-NARRATOR_MAX_TOKENS    = _MAX_TOKENS_SONNET   # call_narrator (was 3500)
+COGM_QUESTION_MAX_TOKENS    = _MAX_TOKENS_HAIKU    # call_cogm_question (co-op mode)
+NARRATOR_MAX_TOKENS   = _MAX_TOKENS_SONNET   # call_narrator (was 3500)
 STORY_ARCH_MAX_TOKENS  = _MAX_TOKENS_SONNET   # call_story_architect (was 4000)
 
 # --- Creativity seed (output diversity for character/scene generation) ---
@@ -558,6 +559,29 @@ REVELATION_CHECK_SCHEMA = {
         },
     },
     "required": ["revelation_confirmed", "reasoning"],
+    "additionalProperties": False,
+}
+
+# Schema for the co-op Co-GM question (call_cogm_question). The question type
+# (now/seed) is decided by the engine, not the model — see _cogm_next_question_type().
+COGM_QUESTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "question": {
+            "type": "string",
+            "description": "One sentence: the question for the Co-GM, in the narration language.",
+        },
+        "npc_id": {
+            "type": "string",
+            "description": "ID of the NPC the question is about, or an empty string.",
+        },
+        "seeds_surfaced": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "IDs from <check_seeds> whose content clearly appears in the narration.",
+        },
+    },
+    "required": ["question", "npc_id", "seeds_surfaced"],
     "additionalProperties": False,
 }
 
@@ -3381,6 +3405,12 @@ class GameState:
     # Engine versions this save has been played with (oldest first). Carried in the
     # GameState so save_game() never has to re-read the previous save file.
     version_history: list = field(default_factory=list)
+    # Co-op (Co-GM) mode: open question, pending answer, cockpit signals, planted
+    # seeds. Persisted so seeds and long-running signals survive pauses, reloads and
+    # chapters. Deliberately NOT part of the turn snapshot spec: the Co-GM edits it
+    # live while turns run; the inputs a turn consumed are stored separately in
+    # last_turn_snapshot["coop_inputs"]. See the CO-OP section.
+    coop: dict = field(default_factory=dict)
 
     def get_stat(self, name: str) -> int:
         return getattr(self, name, 0)
@@ -7246,7 +7276,7 @@ def build_dialog_prompt(game: GameState, brain: dict, player_words: str = "",
 <intent>{html.escape(intent)}</intent>{pw}
 <location>{html.escape(game.current_location)}</location>{_loc_hist(game)}{_time_ctx(game)}
 {npc}{npcs_section}{wl}{crisis}{agency}{fired}
-{pacing}{director_block}
+{pacing}{director_block}{_coop_block(game)}
 {_status_context_block(game)}{_story_context_block(game)}{_recent_events_block(game)}{_narrator_clocks_block(game)}{_npc_relations_block(game, _present_ids)}</scene>
 {task}"""
 
@@ -7355,9 +7385,583 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
 <status h="{game.health}" sp="{game.spirit}" su="{game.supply}" m="{game.momentum}"/>
 <location>{html.escape(game.current_location)}</location>{_loc_hist(game)}{_time_ctx(game)}
 {npc}{npcs_section}{wl}{flags}{agency}{fired}
-{pacing}{director_block}
+{pacing}{director_block}{_coop_block(game)}
 {_status_context_block(game)}{_story_context_block(game)}{_recent_events_block(game)}{_narrator_clocks_block(game)}{_npc_relations_block(game, _present_ids)}</scene>
 <task>2-4 paragraphs of immersive narration. Let the roll consequence open new story questions rather than just closing old ones — the scene should end in motion, with something shifted. Let the current act's mood (from <story_arc>) shape the texture of this moment — a STRONG_HIT in a desperate phase still tastes of the surrounding darkness. If <director_guidance> is present, follow its direction while maintaining your creative voice.</task>"""
+
+
+# ===============================================================
+# CO-OP MODE (CO-GM)
+# ===============================================================
+# Asymmetric co-op: a Player (host, owns the save) and a Co-GM (guest) who plays
+# no character. After each scene the Co-GM answers one question (NOW: used in the
+# next scene, SEED: stored and surfaced later) and can send Director's Cockpit
+# signals. Everything the Co-GM contributes lives in game.coop (persisted):
+#
+#   question  {id, text, type, npc_id, scene, status: open|answered|passed}
+#   answer    {question_id, question, text, passed}        NOW answer for next scene
+#   signals   [{id, type, value, text, npc_id, scenes_left, scene}]
+#   seeds     [{id, kind, question, text, npc_id, scene, used, used_scene}]
+#   recent_questions [str]   counter int   partner str (last Co-GM)
+#
+# Turn flow: _coop_begin_turn() moves the pending answer and due signals into
+# game.coop["_turn"] (and last_turn_snapshot["coop_inputs"] for ## corrections and
+# momentum burns); the prompt builders render it via _coop_block(); the transactional
+# wrappers remove "_turn" again. After narration the UI calls
+# generate_cogm_question(), which also marks seeds the narration surfaced.
+# The live session (who is online, who is waiting) is UI state — the engine only
+# knows the content.
+
+COGM_TEXT_MAX = 300                # Max chars of one Co-GM answer / cockpit text
+COGM_MAX_SIGNALS = 12              # Queued cockpit signals (once + running)
+COGM_MAX_SEEDS = 40                # Stored seeds (oldest used ones dropped first)
+COGM_SEEDS_IN_PROMPT = 3           # Unused seeds offered to the Narrator per scene
+COGM_SEED_MIN_AGE = 2              # Scenes before a SEED answer may surface
+COGM_RECENT_QUESTIONS = 6          # Previous questions shown to avoid repeats
+COGM_SEED_EVERY = 3                # Every 3rd question is a SEED question
+COGM_PRESSURE_SCENES = 2           # Duration of the "Clock is ticking" signal
+
+# Cockpit signal catalog. Design rule: every option is either concrete (the player
+# notices it in the next scene) or free text written by the Co-GM - nothing that
+# only shifts style. slot: "impulse" signals shape the next scene and only ONE can
+# be pending per scene (a new one replaces it); "background" signals work slowly
+# or atmospherically and are not limited. kind: once (next scene) | duration (scenes) | persistent
+# (until removed, one per NPC) | single (one instance replaces the last) | seed
+# (stored as a seed, see coop_add_signal). needs: what the signal carries besides
+# its type (None | text | optional_text | value | npc | npc_text). Prompt texts are
+# English instructions for the Narrator; {npc}/{text}/{value} are filled in, and
+# "prompt_empty" is used when an optional text was left empty.
+COGM_SIGNALS = {
+    # Free direction
+    "direction":         {"slot": "impulse", "kind": "once", "needs": "text",
+                          "prompt": "Make this happen in this scene, in your own words and in a way that fits the story so far: {text}"},
+    # Characters
+    "push_npc":          {"slot": "impulse", "kind": "once", "needs": "npc",
+                          "prompt": "Bring {npc} into this scene - they appear, call or clearly make themselves felt. You decide how."},
+    "npc_line":          {"slot": "impulse", "kind": "once", "needs": "npc_text",
+                          "prompt": "Let {npc} say or do this in this scene, in their own voice - adapt the wording to the moment, keep the intent: {text}"},
+    "secret_intent":     {"slot": "background", "kind": "persistent", "needs": "npc_text",
+                          "prompt": "Hidden intention of {npc}: {text}. Build it up slowly over many scenes through small, consistent hints - never state it outright and never resolve it suddenly."},
+    # World (rumor/secret/false trail are stored as seeds)
+    "plant_detail":      {"slot": "impulse", "kind": "once", "needs": "text",
+                          "prompt": "Place this concrete detail in the scene, unremarked - the protagonist may or may not notice it: {text}"},
+    "rumor":             {"slot": "background", "kind": "seed", "needs": "text"},
+    "plant_secret":      {"slot": "background", "kind": "seed", "needs": "text"},
+    "false_trail":       {"slot": "background", "kind": "seed", "needs": "text"},
+    "weather":           {"slot": "background", "kind": "single", "needs": "value",
+                          "values": ("rain", "heat", "fog", "night", "storm", "clear", "snow", "wind"),
+                          "prompt": "Weather and light: {value}. Let it be present in the scene."},
+    # Twists
+    "disruption":        {"slot": "impulse", "kind": "once", "needs": "optional_text",
+                          "prompt": "Something unexpected bursts into this scene: {text}",
+                          "prompt_empty": "Something unexpected bursts into this scene - a person, an event or a discovery that changes the situation. You decide what."},
+    "clock_ticking":     {"slot": "impulse", "kind": "duration", "scenes": COGM_PRESSURE_SCENES, "needs": None,
+                          "prompt": "Time pressure: make it clear that something is happening elsewhere and time is running out - without naming its cause."},
+    "earned_rest":       {"slot": "impulse", "kind": "once", "needs": None,
+                          "prompt": "The protagonist has been through something hard. Offer something warm in this scene - a small victory, a kind gesture, a moment of calm."},
+    "cliffhanger":       {"slot": "impulse", "kind": "once", "needs": None,
+                          "prompt": "End this scene on a cliffhanger - an open threat, a revelation cut short or a question that demands an answer."},
+}
+
+# Seed kinds → how the Narrator should treat them
+_COGM_SEED_NOTES = {
+    "answer": "a hidden truth planted earlier",
+    "now": "a detail meant for an earlier scene that did not fit yet",
+    "rumor": "a rumour that exists in the world - let someone mention or hint at it",
+    "plant_secret": "an unresolved mystery - hint at it, never solve it",
+    "false_trail": "a red herring - present it as possibly significant; it leads nowhere and must never be revealed as false",
+}
+
+# Signals the cockpit's environment controls own — cleared when a co-op session ends
+_COGM_SESSION_ONLY_SIGNALS = ("weather", "clock_ticking")
+
+
+def coop_state(game: GameState) -> dict:
+    """Return game.coop with all keys present (creates them on first use)."""
+    if not isinstance(game.coop, dict):
+        game.coop = {}
+    c = game.coop
+    c.setdefault("question", None)
+    c.setdefault("answer", None)
+    c.setdefault("signals", [])
+    c.setdefault("seeds", [])
+    c.setdefault("recent_questions", [])
+    c.setdefault("counter", 0)
+    c.setdefault("partner", "")
+    return c
+
+
+def _coop_next_id(c: dict, prefix: str) -> str:
+    c["counter"] = int(c.get("counter", 0)) + 1
+    return f"{prefix}{c['counter']}"
+
+
+def _coop_clean_text(text) -> str:
+    """Collapse whitespace and cap Co-GM text (prompt budget)."""
+    text = " ".join(str(text or "").split())
+    return text[:COGM_TEXT_MAX]
+
+
+def _coop_npc_name(game: GameState, npc_ref: str) -> str:
+    if npc_ref == "player":
+        return game.player_name
+    npc = _find_npc(game, npc_ref) if npc_ref else None
+    return npc.get("name", npc_ref) if npc else ""
+
+
+def coop_waiting_for_cogm(game: GameState) -> bool:
+    """True while the current Co-GM question is still unanswered."""
+    q = coop_state(game).get("question")
+    return bool(q and q.get("status") == "open")
+
+
+def coop_set_question(game: GameState, text: str, qtype: str = "now",
+                      npc_id: str = "") -> Optional[dict]:
+    """Set the open question for the Co-GM (replaces any previous one)."""
+    c = coop_state(game)
+    text = _coop_clean_text(text)
+    if not text:
+        c["question"] = None
+        return None
+    if npc_id and not _find_npc(game, npc_id):
+        npc_id = ""
+    q = {"id": _coop_next_id(c, "q"), "text": text,
+         "type": "seed" if qtype == "seed" else "now",
+         "npc_id": npc_id, "scene": game.scene_count, "status": "open"}
+    c["question"] = q
+    c["recent_questions"] = (c["recent_questions"] + [text])[-COGM_RECENT_QUESTIONS:]
+    return q
+
+
+def coop_submit_answer(game: GameState, text: str = "", passed: bool = False) -> bool:
+    """Record the Co-GM's answer to the open question (or a pass).
+    NOW answers wait in game.coop["answer"] for the next scene; SEED answers are
+    stored as seeds right away. Returns False if no question is open."""
+    c = coop_state(game)
+    q = c.get("question")
+    if not q or q.get("status") != "open":
+        return False
+    text = _coop_clean_text(text)
+    if not text:
+        passed = True
+    q["status"] = "passed" if passed else "answered"
+    if q.get("type") == "seed":
+        if not passed:
+            _coop_add_seed(c, "answer", text, question=q.get("text", ""),
+                           npc_id=q.get("npc_id", ""), scene=game.scene_count,
+                           chapter=game.chapter_number)
+        c["answer"] = None
+    else:
+        c["answer"] = {"question_id": q["id"], "question": q.get("text", ""),
+                       "text": "" if passed else text, "passed": passed}
+    return True
+
+
+def _coop_add_seed(c: dict, kind: str, text: str, question: str = "",
+                   npc_id: str = "", scene: int = 0, chapter: int = 1) -> dict:
+    seed = {"id": _coop_next_id(c, "s"), "kind": kind, "question": question,
+            "text": text, "npc_id": npc_id, "scene": scene, "chapter": chapter,
+            "used": False, "used_scene": None}
+    c["seeds"].append(seed)
+    if len(c["seeds"]) > COGM_MAX_SEEDS:
+        used = [s for s in c["seeds"] if s.get("used")]
+        drop = used[0] if used else c["seeds"][0]
+        c["seeds"].remove(drop)
+    return seed
+
+
+def coop_add_signal(game: GameState, sig_type: str, value: str = "", text: str = "",
+                    npc_id: str = "") -> Optional[dict]:
+    """Queue a Director's Cockpit signal. Returns the stored signal (or seed for
+    rumor/secret/false trail), None if invalid. Validation is strict because the
+    input comes straight from the UI."""
+    spec = COGM_SIGNALS.get(sig_type)
+    if not spec:
+        return None
+    c = coop_state(game)
+    needs = spec.get("needs")
+    value = str(value or "").strip().lower()
+    text = _coop_clean_text(text)
+    with_npc = needs in ("npc", "npc_text")
+    if needs == "value" and value not in spec.get("values", ()):
+        return None
+    if needs in ("text", "npc_text") and not text:
+        return None
+    if with_npc and not _find_npc(game, npc_id):
+        return None
+    if spec["kind"] == "seed":
+        return _coop_add_seed(c, sig_type, text, scene=game.scene_count,
+                              chapter=game.chapter_number)
+    is_impulse = spec.get("slot") == "impulse"
+    if is_impulse:
+        # One impulse per scene: a new impulse replaces the pending one
+        c["signals"] = [s for s in c["signals"] if not s.get("impulse")]
+    else:
+        # One background signal per type - or per type and NPC for characters
+        c["signals"] = [s for s in c["signals"]
+                        if not (s.get("type") == sig_type
+                                and (not with_npc or s.get("npc_id") == npc_id))]
+    if len(c["signals"]) >= COGM_MAX_SIGNALS:
+        return None
+    sig = {"id": _coop_next_id(c, "c"), "type": sig_type, "impulse": is_impulse, "value": value,
+           "text": text if needs in ("text", "npc_text", "optional_text") else "",
+           "npc_id": npc_id if with_npc else "",
+           "scenes_left": spec.get("scenes") if spec["kind"] == "duration" else None,
+           "scene": game.scene_count}
+    c["signals"].append(sig)
+    return sig
+
+
+def coop_remove_signal(game: GameState, item_id: str) -> bool:
+    """Remove a queued signal or an unused planted seed (rumor/secret/false trail)."""
+    c = coop_state(game)
+    before = len(c["signals"]) + len(c["seeds"])
+    c["signals"] = [s for s in c["signals"] if s.get("id") != item_id]
+    c["seeds"] = [s for s in c["seeds"]
+                  if not (s.get("id") == item_id and not s.get("used")
+                          and s.get("kind") in ("rumor", "plant_secret", "false_trail"))]
+    return len(c["signals"]) + len(c["seeds"]) < before
+
+
+def coop_start_session(game: GameState, partner: str) -> None:
+    """Mark the save as played in co-op with `partner` (the Co-GM's user name)."""
+    c = coop_state(game)
+    c["partner"] = partner
+    c["questions_asked"] = 0
+
+
+def coop_end_session(game: GameState) -> None:
+    """Co-op session ended (pause, solo, Co-GM left). Planted content and story arc
+    permissions stay part of the world; the open question and the cockpit's
+    environment controls (weather, running tension signals) are dropped, because
+    nobody is left to answer or change them."""
+    c = coop_state(game)
+    ans = c.get("answer")
+    if ans and not ans.get("passed") and ans.get("text"):
+        # An answer the Co-GM already gave is kept: it can still surface later
+        q = c.get("question") or {}
+        _coop_add_seed(c, "now", ans["text"], question=ans.get("question", ""),
+                       npc_id=q.get("npc_id", ""), scene=game.scene_count + 1,
+                       chapter=game.chapter_number)
+    c["question"] = None
+    c["answer"] = None
+    c["signals"] = [s for s in c["signals"] if s.get("type") not in _COGM_SESSION_ONLY_SIGNALS]
+
+
+def _coop_eligible_seeds(game: GameState, c: dict) -> list:
+    """Unused seeds the next scene may use. Seeds from an earlier chapter are
+    always old enough (scene numbers restart per chapter). Seeds offered least
+    often come first, so a seed the story never finds a place for does not block
+    newer ones forever."""
+    out = []
+    for s in c.get("seeds", []):
+        if s.get("used"):
+            continue
+        min_age = COGM_SEED_MIN_AGE if s.get("kind") == "answer" else 1
+        same_chapter = int(s.get("chapter") or 1) >= game.chapter_number
+        # Age measured against the scene about to be narrated
+        if same_chapter and game.scene_count + 1 - int(s.get("scene") or 0) < min_age:
+            continue
+        if s.get("npc_id") and not _find_npc(game, s["npc_id"]):
+            continue
+        out.append(s)
+    out.sort(key=lambda s: int(s.get("offered") or 0))      # stable: oldest first on ties
+    return out[:COGM_SEEDS_IN_PROMPT]
+
+
+def _coop_begin_turn(game: GameState) -> Optional[dict]:
+    """Take the Co-GM inputs this scene consumes and expose them to the prompt
+    builders via game.coop["_turn"]. An unanswered question counts as a pass.
+    Returns the inputs (stored in last_turn_snapshot by the caller) or None."""
+    if not game.coop:
+        return None
+    c = coop_state(game)
+    inputs = {"answer": None, "signals": [], "seeds": []}
+    q = c.get("question")
+    if q and q.get("status") == "open":
+        q["status"] = "passed"
+        if q.get("type") == "now":
+            c["answer"] = {"question_id": q["id"], "question": q.get("text", ""),
+                           "text": "", "passed": True}
+    ans = c.get("answer")
+    if ans:
+        inputs["answer"] = dict(ans)
+        c["answer"] = None
+        if not ans.get("passed") and ans.get("text"):
+            # A NOW answer the player's action makes unusable must not be forced —
+            # keep it as a seed; the question call marks it used if it surfaced.
+            seed = _coop_add_seed(c, "now", ans["text"], question=ans.get("question", ""),
+                                  npc_id=(q or {}).get("npc_id", ""), scene=game.scene_count + 1,
+                                  chapter=game.chapter_number)
+            seed["injected"] = True                   # reached the Narrator in its scene
+            inputs["answer"]["seed_id"] = seed["id"]
+    keep = []
+    for s in c.get("signals", []):
+        spec = COGM_SIGNALS.get(s.get("type"), {})
+        if spec.get("needs") in ("npc", "npc_text") and not _find_npc(game, s.get("npc_id", "")):
+            continue                                  # NPC gone (merged/removed)
+        if spec.get("kind") in ("persistent", "single"):
+            npc = _find_npc(game, s.get("npc_id", "")) if s.get("npc_id") else None
+            if npc and npc.get("status") == "deceased":
+                continue                              # arc permission ends with the NPC
+            inputs["signals"].append(dict(s))
+            keep.append(s)
+        elif spec.get("kind") == "duration":
+            inputs["signals"].append(dict(s))
+            left = int(s.get("scenes_left") or 1) - 1
+            if left > 0:
+                s["scenes_left"] = left
+                s["impulse"] = False          # still running, but the slot is free again
+                keep.append(s)
+        else:
+            inputs["signals"].append(dict(s))        # once: consumed now
+    c["signals"] = keep
+    offered = [s for s in _coop_eligible_seeds(game, c)
+               if s["id"] != (inputs["answer"] or {}).get("seed_id")]
+    for s in offered:
+        s["offered"] = int(s.get("offered") or 0) + 1
+    inputs["seeds"] = [dict(s) for s in offered]
+    if not (inputs["answer"] or inputs["signals"] or inputs["seeds"]):
+        return None
+    c["_turn"] = inputs
+    return inputs
+
+
+def _coop_resume_turn(game: GameState, inputs: Optional[dict]) -> None:
+    """Re-expose a turn's consumed Co-GM inputs (## correction, momentum burn)."""
+    if inputs:
+        coop_state(game)["_turn"] = copy.deepcopy(inputs)
+
+
+def _coop_drop_turn(game: GameState) -> None:
+    """Remove the turn-transient inputs without logging (correction, burn)."""
+    if isinstance(game.coop, dict):
+        game.coop.pop("_turn", None)
+
+
+def _coop_end_turn(game: GameState) -> None:
+    """Drop the turn-transient inputs and note them in the session log."""
+    if not isinstance(game.coop, dict):
+        return
+    inputs = game.coop.pop("_turn", None)
+    if inputs and game.session_log:
+        entry = {}
+        if inputs.get("answer"):
+            a = inputs["answer"]
+            entry["answer"] = {"question": a.get("question", ""), "text": a.get("text", ""),
+                               "passed": bool(a.get("passed")), "seed_id": a.get("seed_id", "")}
+        if inputs.get("signals"):
+            entry["signals"] = [s.get("type") for s in inputs["signals"]]
+        if inputs.get("seeds"):
+            entry["seeds_offered"] = [s.get("id") for s in inputs["seeds"]]
+        game.session_log[-1]["cogm"] = entry
+
+
+def _coop_signal_prompt(game: GameState, s: dict) -> str:
+    spec = COGM_SIGNALS.get(s.get("type"), {})
+    tmpl = spec.get("prompt", "")
+    if not s.get("text") and spec.get("prompt_empty"):
+        tmpl = spec["prompt_empty"]
+    if not tmpl:
+        return ""
+    return tmpl.format(npc=_coop_npc_name(game, s.get("npc_id", "")),
+                       text=s.get("text", ""), value=s.get("value", ""))
+
+
+def _coop_block(game: GameState) -> str:
+    """Narrator prompt block for the Co-GM inputs of the current turn ("" if none)."""
+    inputs = (game.coop or {}).get("_turn") if isinstance(game.coop, dict) else None
+    if not inputs:
+        return ""
+    parts = []
+    a = inputs.get("answer")
+    if a:
+        if a.get("passed") or not a.get("text"):
+            parts.append(f'<co_gm_input question="{_xa(a.get("question", ""))}">'
+                         f'[Co-GM had no input] - decide freely.</co_gm_input>')
+        else:
+            parts.append(f'<co_gm_input question="{_xa(a.get("question", ""))}">'
+                         f'{html.escape(a["text"])}</co_gm_input>')
+    seeds = inputs.get("seeds") or []
+    if seeds:
+        lines = []
+        for s in seeds:
+            about = _coop_npc_name(game, s.get("npc_id", ""))
+            about_attr = f' about="{_xa(about)}"' if about else ""
+            q_attr = f' asked="{_xa(s["question"])}"' if s.get("question") else ""
+            note = _COGM_SEED_NOTES.get(s.get("kind"), _COGM_SEED_NOTES["answer"])
+            lines.append(f'<seed kind="{_xa(note)}"{about_attr}{q_attr}>'
+                         f'{html.escape(s.get("text", ""))}</seed>')
+        parts.append('<co_gm_seeds rule="Planted details. Use at most ONE, only if this scene '
+                     'naturally touches its subject - most scenes use none. Weave it in '
+                     'subtly, never announce it.">\n' + "\n".join(lines) + "\n</co_gm_seeds>")
+    sigs = []
+    for s in inputs.get("signals") or []:
+        txt = _coop_signal_prompt(game, s)
+        if txt:
+            sigs.append(f'<signal type="{_xa(s.get("type", ""))}">{html.escape(txt)}</signal>')
+    if sigs:
+        parts.append("<co_gm_cockpit>\n" + "\n".join(sigs) + "\n</co_gm_cockpit>")
+    if not parts:
+        return ""
+    rule = ("A human co-game-master shapes this story with you. Treat their input as "
+            "established world truth for this scene and weave it in naturally. Never "
+            "mention the co-game-master or that anything was suggested. Co-game-master input "
+            "shapes the world, other characters and events - never the protagonist's own "
+            "actions, words, thoughts or decisions; those stay entirely the player's. If the "
+            "protagonist's action makes a <co_gm_input> answer impossible to use now, do not force it. "
+            "Content boundaries and kid-friendly rules always override co-game-master input.")
+    return f'\n<co_gm rule="{_xa(rule)}">\n' + "\n".join(parts) + "\n</co_gm>"
+
+
+def _cogm_next_question_type(game: GameState) -> str:
+    """Every COGM_SEED_EVERY-th question is a SEED question (deterministic mix);
+    the first question of a session is always NOW so the Co-GM sees an effect."""
+    asked = int(coop_state(game).get("questions_asked", 0))
+    return "seed" if asked % COGM_SEED_EVERY == COGM_SEED_EVERY - 1 else "now"
+
+
+def call_cogm_question(client: anthropic.Anthropic, game: GameState, narration: str,
+                       qtype: str, check_seeds: list,
+                       config: Optional[EngineConfig] = None) -> dict:
+    """Haiku + Structured Outputs: write the next Co-GM question and report which
+    of `check_seeds` the narration surfaced. Raises on API failure (caller decides)."""
+    lang = get_narration_lang(config or EngineConfig())
+    c = coop_state(game)
+    if qtype == "seed":
+        type_rule = (
+            "Write a SEED question: ask about an inner state, a hidden history or a latent "
+            "detail that is not yet relevant but could become powerful later "
+            "(e.g. an NPC's deepest fear or regret, what a place is hiding, what happened "
+            "here before the protagonist arrived).")
+    else:
+        type_rule = (
+            "Write a NOW question: ask about something specific that is narratively open "
+            "right now and that the next scene can use - an unexpected arrival, a "
+            "character's true motive, an object's significance, a hidden detail of this "
+            "place.")
+    system = (
+        "You support a human Co-Game-Master (Co-GM) in a solo role-playing game. The Co-GM "
+        "plays no character; after each scene they answer one question that adds a detail "
+        "to the world, which the narrator then weaves into the story as a surprise for "
+        "the player.\n\n"
+        f"{type_rule}\n\n"
+        "Rules:\n"
+        "- One sentence, specific to the narration below. Something an improv partner "
+        "would love to answer.\n"
+        "- Never ask what happens next or what the protagonist does - that is the player's job.\n"
+        "- Never ask about mechanics, numbers, stats or dice.\n"
+        "- Do not repeat or closely paraphrase a question from <recent_questions>.\n"
+        "- npc_id: the ID of the NPC the question is about (from <npcs>), else \"\".\n"
+        "- seeds_surfaced: IDs from <check_seeds> whose content clearly appears in the "
+        "narration (not just a vague overlap). Empty list if none.\n"
+        f"- Write the question in {lang}."
+    )
+    npcs = [n for n in game.npcs if n.get("status") in ("active", "background")][:12]
+    npc_lines = "\n".join(
+        f'<npc id="{_xa(n.get("id", ""))}">{html.escape(n.get("name", ""))}: '
+        f'{html.escape((n.get("description") or "")[:120])}</npc>' for n in npcs)
+    recent = "\n".join(f"- {html.escape(q)}" for q in c.get("recent_questions", []))
+    seeds = "\n".join(f'<seed id="{_xa(s["id"])}">{html.escape(s.get("text", ""))}</seed>'
+                      for s in check_seeds)
+    prompt = (
+        f"<protagonist>{html.escape(game.player_name)}: "
+        f"{html.escape(game.character_concept[:200])}</protagonist>\n"
+        f"<location>{html.escape(game.current_location)}</location>\n"
+        f"<npcs>\n{npc_lines}\n</npcs>\n"
+        f"<recent_questions>\n{recent}\n</recent_questions>\n"
+        f"<check_seeds>\n{seeds}\n</check_seeds>\n\n"
+        f"<narration>{narration}</narration>\n\n"
+        f"Write the next {qtype.upper()} question for the Co-GM."
+    )
+    response = _api_create_with_retry(
+        client, max_retries=2,
+        model=BRAIN_MODEL, max_tokens=COGM_QUESTION_MAX_TOKENS,
+        system=system,
+        messages=[{"role": "user", "content": prompt}],
+        output_config={"format": {"type": "json_schema", "schema": COGM_QUESTION_SCHEMA}},
+    )
+    return json.loads(_response_text(response))
+
+
+def generate_cogm_question(client: anthropic.Anthropic, game: GameState, narration: str,
+                           config: Optional[EngineConfig] = None) -> Optional[dict]:
+    """After a narration in an active co-op session: mark surfaced seeds and set
+    the next Co-GM question. Returns the question, or None if the call failed
+    (the UI then simply does not wait for the Co-GM this scene)."""
+    c = coop_state(game)
+    qtype = _cogm_next_question_type(game)
+    # Seeds the scene could have used: last turn's offered seeds + its NOW answer
+    last = (game.session_log[-1].get("cogm") if game.session_log else None) or {}
+    offered = set(last.get("seeds_offered", []))
+    now_seed = (last.get("answer") or {}).get("seed_id")
+    if now_seed:
+        offered.add(now_seed)
+    check = [s for s in c["seeds"] if not s.get("used") and s["id"] in offered]
+    try:
+        result = call_cogm_question(client, game, narration, qtype, check, config)
+    except Exception as e:
+        log(f"[CoGM] Question call failed ({type(e).__name__}: {e})", level="warning")
+        c["question"] = None
+        return None
+    check_ids = {s["id"] for s in check}
+    for s in c["seeds"]:
+        if s["id"] in check_ids and s["id"] in (result.get("seeds_surfaced") or []):
+            s["used"] = True
+            s["used_scene"] = game.scene_count
+            log(f"[CoGM] Seed {s['id']} surfaced in scene {game.scene_count}")
+    q = coop_set_question(game, result.get("question", ""), qtype, result.get("npc_id", ""))
+    if q:
+        c["questions_asked"] = int(c.get("questions_asked", 0)) + 1
+        log(f"[CoGM] {qtype.upper()} question: {q['text'][:100]}")
+    return q
+
+
+def coop_reveal(game: GameState) -> dict:
+    """"Behind the scenes": what the Co-GM contributed that already happened in
+    the story — every NOW answer (used in the scene it was given for) and every
+    seed, rumour, secret or false trail that surfaced. Unsurfaced content is
+    only counted, so the reveal never spoils what is still to come."""
+    c = coop_state(game)
+    items, hidden = [], 0
+    for s in c["seeds"]:
+        kind = s.get("kind", "answer")
+        if kind == "now" and s.get("injected") and not s.get("used"):
+            scene = s.get("scene")                    # given to the Narrator for this scene
+        elif s.get("used"):
+            scene = s.get("used_scene")
+        else:
+            hidden += 1
+            continue
+        items.append({"chapter": int(s.get("chapter") or 1), "scene": int(scene or 0),
+                      "kind": kind, "question": s.get("question", ""),
+                      "text": s.get("text", ""),
+                      "npc_name": _coop_npc_name(game, s.get("npc_id", ""))})
+    items.sort(key=lambda i: (i["chapter"], i["scene"]))
+    return {"items": items, "hidden": hidden, "partner": c.get("partner", "")}
+
+
+def coop_pending_impulse(game: GameState) -> Optional[dict]:
+    """The impulse queued for the next scene, or None (slot free)."""
+    if not isinstance(game.coop, dict):
+        return None
+    return next((s for s in game.coop.get("signals", []) if s.get("impulse")), None)
+
+
+def coop_public_view(game: GameState) -> dict:
+    """What the Co-GM's cockpit lists: running signals and unused planted lore
+    (with display names). The Narrator-only seed texts of SEED answers are shown
+    too — the Co-GM wrote them."""
+    c = coop_state(game)
+    impulse, background = None, []
+    for s in c["signals"]:
+        item = {**s, "npc_name": _coop_npc_name(game, s.get("npc_id", ""))}
+        if s.get("impulse"):
+            impulse = item
+        else:
+            background.append(item)
+    seeds = [dict(s) for s in c["seeds"] if not s.get("used")]
+    return {"impulse": impulse, "signals": background, "seeds": seeds}
 
 
 # ===============================================================
@@ -7962,6 +8566,8 @@ SAVE_FIELDS = [
     "last_turn_snapshot",
     # 0.9.96: version history lives in GameState (no read-before-write in save_game)
     "version_history",
+    # Co-op mode: Co-GM question/answer, cockpit signals, planted seeds
+    "coop",
 ]
 
 # Compact JSON for game saves and chapter archives: no indentation/spaces. Saves
@@ -8021,6 +8627,10 @@ def load_game(username: str, name: str = "autosave") -> tuple[Optional[GameState
         game.version_history = []
     if not game.version_history and data.get("engine_version"):
         game.version_history = [data["engine_version"]]
+    # Co-op state: older saves have none; a turn-transient key never survives a load
+    if not isinstance(game.coop, dict):
+        game.coop = {}
+    game.coop.pop("_turn", None)
     # Reconstruct RollResult dataclass from plain dict (was serialized in save_game)
     if (game.last_turn_snapshot is not None
             and isinstance(game.last_turn_snapshot.get("roll"), dict)):
@@ -9223,7 +9833,9 @@ def process_turn(client: anthropic.Anthropic, game: GameState,
     """Transactional wrapper — see _process_turn_impl(). On any exception the
     GameState is rolled back to its state at call time (_rollback_on_error)."""
     with _rollback_on_error(game, "Turn"):
-        return _process_turn_impl(client=client, game=game, player_message=player_message, config=config)
+        result = _process_turn_impl(client=client, game=game, player_message=player_message, config=config)
+        _coop_end_turn(game)
+        return result
 
 
 def _process_turn_impl(client: anthropic.Anthropic, game: GameState,
@@ -9238,6 +9850,9 @@ def _process_turn_impl(client: anthropic.Anthropic, game: GameState,
     # Snapshot BEFORE any mutation — used by ## correction flow and burn
     game.last_turn_snapshot = _build_turn_snapshot(game)
     game.last_turn_snapshot["player_input"] = player_message
+    # Co-op: consume the Co-GM's answer and due cockpit signals for this scene.
+    # Stored in the snapshot so ## corrections and momentum burns re-use them.
+    game.last_turn_snapshot["coop_inputs"] = _coop_begin_turn(game)
 
     brain = call_brain(client, game, player_message, config)
     game.last_turn_snapshot["brain"] = dict(brain)
@@ -9951,7 +10566,15 @@ def process_correction(client: anthropic.Anthropic, game: GameState,
     """Transactional wrapper — see _process_correction_impl(). On any exception the
     GameState is rolled back to its state at call time (_rollback_on_error)."""
     with _rollback_on_error(game, "Correction"):
-        return _process_correction_impl(client=client, game=game, correction_text=correction_text, config=config)
+        _coop_resume_turn(game, (game.last_turn_snapshot or {}).get("coop_inputs"))
+        try:
+            result = _process_correction_impl(client=client, game=game, correction_text=correction_text, config=config)
+            # An input_misread re-run replaced the turn's session_log entry — log the
+            # Co-GM inputs again so surfaced seeds are still recognised afterwards
+            _coop_end_turn(game)
+            return result
+        finally:
+            _coop_drop_turn(game)
 
 
 def _process_correction_impl(client: anthropic.Anthropic, game: GameState,
@@ -10161,7 +10784,11 @@ def process_momentum_burn(client: anthropic.Anthropic, game: GameState,
     """Transactional wrapper — see _process_momentum_burn_impl(). On any exception the
     GameState is rolled back to its state at call time (_rollback_on_error)."""
     with _rollback_on_error(game, "Burn"):
-        return _process_momentum_burn_impl(client=client, game=game, old_roll=old_roll, new_result=new_result, brain_data=brain_data, player_words=player_words, config=config, pre_snapshot=pre_snapshot, chaos_interrupt=chaos_interrupt)
+        _coop_resume_turn(game, (pre_snapshot or {}).get("coop_inputs"))
+        try:
+            return _process_momentum_burn_impl(client=client, game=game, old_roll=old_roll, new_result=new_result, brain_data=brain_data, player_words=player_words, config=config, pre_snapshot=pre_snapshot, chaos_interrupt=chaos_interrupt)
+        finally:
+            _coop_drop_turn(game)
 
 
 def _process_momentum_burn_impl(client: anthropic.Anthropic, game: GameState,
