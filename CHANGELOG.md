@@ -5,6 +5,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- The save info tooltip showed the raw code "custom" for a self-described archetype; it now shows a localized label ("Eigene Idee" / "Custom idea").
+
 ## [1.1.0] - 2026-10-12
 
 ### Added

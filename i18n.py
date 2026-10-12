@@ -271,6 +271,7 @@ _STRINGS = {
         "save_info.genre": "Genre",
         "save_info.tone": "Ton",
         "save_info.archetype": "Archetyp",
+        "save_info.archetype_custom": "Eigene Idee",
         "save_info.concept": "Konzept",
         "save_info.backstory": "Hintergrund",
         "save_info.wishes": "W\u00fcnsche",
@@ -822,6 +823,7 @@ _STRINGS = {
         "save_info.genre": "Genre",
         "save_info.tone": "Tone",
         "save_info.archetype": "Archetype",
+        "save_info.archetype_custom": "Custom idea",
         "save_info.concept": "Concept",
         "save_info.backstory": "Backstory",
         "save_info.wishes": "Wishes",
@@ -1665,6 +1667,8 @@ def get_tone_label(code: str, lang: str = DEFAULT_LANG) -> str:
 
 def get_archetype_label(code: str, lang: str = DEFAULT_LANG) -> str:
     """Get display label for an archetype code."""
+    if code == "custom":
+        return t("save_info.archetype_custom", lang)
     return _ARCHETYPES.get(lang, _ARCHETYPES[FALLBACK_LANG]).get(code, code)
 
 

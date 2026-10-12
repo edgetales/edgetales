@@ -536,7 +536,7 @@ Key translation functions:
 |---|---|
 | `t(key, lang)` | Main lookup — returns string or raises KeyError |
 | `ta(key, lang)` | ARIA label variant (separate `ARIA_LABELS` dict) |
-| `get_genre_label(code, lang)` / `get_tone_label(code, lang)` / `get_archetype_label(code, lang)` | Code → localized label |
+| `get_genre_label(code, lang)` / `get_tone_label(code, lang)` / `get_archetype_label(code, lang)` | Code → localized label (`get_archetype_label("custom")` → `save_info.archetype_custom`) |
 | `get_story_phase_labels(lang)` | Story arc phases: `{"setup": "Exposition", ...}` |
 | `translate_consequence(text, lang)` | Consequence keys → target language (word-boundary regex, backward compat) |
 

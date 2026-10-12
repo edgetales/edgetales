@@ -24,3 +24,8 @@ def test_placeholders_match_between_languages():
     for key, de_text in i18n._STRINGS["de"].items():
         en_text = i18n._STRINGS["en"][key]
         assert set(ph.findall(de_text)) == set(ph.findall(en_text)), key
+
+
+def test_custom_archetype_label_is_translated():
+    assert i18n.get_archetype_label("custom", "de") == "Eigene Idee"
+    assert i18n.get_archetype_label("custom", "en") == "Custom idea"
