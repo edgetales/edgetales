@@ -8,10 +8,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Changed
+- **Co-op on phones:** putting the browser in the background while waiting for the other side is now fully supported. A co-op partner whose browser is in the background reads as "not active for N min" instead of "offline", and both sides get a notice when it is their turn ("elvira has answered - it's your turn", "New scene - Lars is waiting for your answer").
+- Returning to the app within 10 minutes (previously 3) replays everything that happened meanwhile; after a longer break the page reloads by itself once a scene finished in the meantime, and shows a note while it is still being narrated.
 - **Co-op status at a glance:** during a live session the co-op button in the header is highlighted and shows your partner's name. The co-op menu now always opens with the session status - your role, your partner and whether they are online.
 - **Leaving co-op is always confirmed:** loading a save, starting a new game, restarting after the end of a story or switching player while in a co-op session - as host or co-GM, from any tab - now asks once whether you really want to leave the session (this replaces the usual confirmation, so there is only one dialog). Previously the host's session ended silently - even when just reloading the active save - and a co-GM could open another game while staying in the session.
 
 ### Fixed
+- **A turn no longer stalls or gets lost when the player's phone is in the background.** In co-op the host's scene froze right after the co-GM answered while the host's browser was in the background, and could end without being saved or shown. The turn now completes, is saved and hands over to the co-GM regardless of the browser; it shows up when the player returns.
+- Text typed into the game input is kept in the browser until the server has received it. If it was sent over a dropped connection, it is back in the input field after the page reloads, with a short note.
 - A player in a running co-op session (host or co-GM) can no longer be deleted on the user selection screen, and the save of a running session can no longer be deleted - both show a short note instead. Deleting a user also clears their open invites.
 - An invite that reached someone who has joined another co-op session in the meantime is no longer shown to them; it is withdrawn and the sender is told. When a session starts, any other open invites sent by either participant are withdrawn.
 - Opening the co-op menu from another tab or device during a running session only said "You are already in another co-op session", with no way out. It now shows the session and offers its controls there too: the host can pause, continue solo or remove the co-GM, and the co-GM can leave.

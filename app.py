@@ -116,7 +116,7 @@ from pathlib import Path
 from typing import Optional
 
 import anthropic
-from nicegui import app, ui, Client
+from nicegui import app, ui, Client, context
 
 # ---------------------------------------------------------------------------
 # Engine & Voice imports
@@ -263,7 +263,8 @@ if _dep:
 # --- Tuning constants ---
 SCROLL_DELAY_MS = 500                  # Delay before auto-scroll to new content
 TEMP_CLEANUP_DELAY_SEC = 60.0          # Seconds before temp audio files are deleted
-RECONNECT_TIMEOUT_SEC = 180            # WebSocket reconnect timeout (mobile-friendly)
+RECONNECT_TIMEOUT_SEC = 600            # WebSocket reconnect timeout: a phone tab parked in the background
+                                       # (e.g. waiting for the co-GM) gets missed updates replayed on return
 INVITE_MAX_ATTEMPTS = 5                # Max failed invite code attempts before lockout
 INVITE_LOCKOUT_SEC = 300               # Lockout duration in seconds (5 min)
 
@@ -595,29 +596,68 @@ def build_roll_data(roll: RollResult, consequences=None, clock_events=None, brai
 
 # Scroll helpers — .q-page-container is the scroll container (app shell, see
 # custom_head.html); documentElement is only the fallback.
+async def _await_js(code: str, timeout: float = 3.0):
+    """Run JavaScript and wait for it only while the browser is connected.
+
+    NiceGUI 3 awaits the client connection without a time limit before a
+    JavaScript call (the timeout only covers the reply). A tab in the background
+    (mobile browsers suspend it within seconds) would block the caller until the
+    player returns - in co-op the host's turn froze right after the co-GM's
+    answer. Disconnected: queue it fire-and-forget; NiceGUI replays it when the
+    tab reconnects within RECONNECT_TIMEOUT_SEC."""
+    try:
+        client = context.client
+        if not client.has_socket_connection:
+            client.run_javascript(code)
+            return None
+        return await client.run_javascript(code, timeout=timeout)
+    except Exception:
+        return None
+
+
+def _draft_key(username: str) -> str:
+    return _json.dumps(f"edgetales_draft_{username}")
+
+
+def _draft_track_js(username: str) -> str:
+    """Mirror the game input into the browser's localStorage while typing, so a
+    text sent over a dropped connection (phone in the background) survives the
+    page being rebuilt. Cleared once the server has received the input."""
+    return f'''setTimeout(() => {{
+        const el = document.querySelector('.q-footer input');
+        if (!el || el._etDraft) return;
+        el._etDraft = true;
+        el.addEventListener('input', () => {{
+            try {{ localStorage.setItem({_draft_key(username)}, el.value); }} catch (e) {{}}
+        }});
+    }}, 300);'''
+
+
+def _draft_read_js(username: str) -> str:
+    return f"(() => {{ try {{ return localStorage.getItem({_draft_key(username)}) || ''; }} catch (e) {{ return ''; }} }})()"
+
+
+def _draft_clear_js(username: str) -> str:
+    return f"try {{ localStorage.removeItem({_draft_key(username)}); }} catch (e) {{}}"
+
+
 async def _scroll_chat_bottom(delay_ms: int = 0) -> None:
     """Scroll to bottom of page (instant by default for DOM forcing)."""
-    try:
-        await ui.run_javascript(f'''
-            setTimeout(() => {{
-                const sc = document.querySelector('.q-page-container') || document.documentElement;
-                sc.scrollTo({{top: sc.scrollHeight}});
-            }}, {delay_ms or 10});
-        ''', timeout=3.0)
-    except TimeoutError:
-        pass
+    await _await_js(f'''
+        setTimeout(() => {{
+            const sc = document.querySelector('.q-page-container') || document.documentElement;
+            sc.scrollTo({{top: sc.scrollHeight}});
+        }}, {delay_ms or 10});
+    ''', timeout=3.0)
 
 async def _scroll_to_element(element_id: str) -> None:
     """Scroll smoothly so element is near top of viewport."""
-    try:
-        await ui.run_javascript(f'''
-            setTimeout(() => {{
-                const el = document.getElementById("{element_id}");
-                if (el) el.scrollIntoView({{behavior: "smooth", block: "start"}});
-            }}, {SCROLL_DELAY_MS});
-        ''', timeout=3.0)
-    except TimeoutError:
-        pass
+    await _await_js(f'''
+        setTimeout(() => {{
+            const el = document.getElementById("{element_id}");
+            if (el) el.scrollIntoView({{behavior: "smooth", block: "start"}});
+        }}, {SCROLL_DELAY_MS});
+    ''', timeout=3.0)
 
 
 def render_audio_player(audio_bytes: bytes, fmt: str = "audio/mp3", autoplay: bool = False):
@@ -2349,7 +2389,7 @@ def _render_confirm():
                     _msg1 = t("creation.world_awakens", lang)
                     _msg2 = t("creation.world_awakens_2", lang)
                     _msg3 = t("creation.world_awakens_3", lang)
-                    await ui.run_javascript(f'''
+                    await _await_js(f'''
                         window._loadingMsgs = {_json.dumps([_msg1, _msg2, _msg3], ensure_ascii=False)};
                         window._loadingIdx = 0;
                         window._loadingTimer = setInterval(() => {{
@@ -2380,7 +2420,7 @@ def _render_confirm():
                 except Exception as e:
                     start_row.delete()
                     try:
-                        await ui.run_javascript('clearInterval(window._loadingTimer)', timeout=3.0)
+                        await _await_js('clearInterval(window._loadingTimer)', timeout=3.0)
                     except Exception:
                         pass
                     start_btn.enable(); reroll_btn.enable()
@@ -2429,6 +2469,9 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
         return
     s["processing"] = True
     turn_gen = s.get("_turn_gen", 0)  # Capture generation to detect save-switch during processing
+    # The page that runs this turn. If the player's browser drops it meanwhile
+    # (phone in the background), a rebuilt page reloads once the turn is done.
+    s["_turn_client"] = context.client.id
     config=get_engine_config();username=s["current_user"]
     # On retry, the message is already in s["messages"] and rendered — don't duplicate
     if not is_retry:
@@ -2438,6 +2481,8 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
         if _is_corr_input:
             msg_entry["correction_input"] = True
         s["messages"].append(msg_entry)
+        # The input reached the server: drop the browser-side draft copy
+        context.client.run_javascript(_draft_clear_js(username))
         with chat_container:
             css_corr = " correction" if _is_corr_input else ""
             _user_col = ui.column().classes(f"chat-msg user{css_corr} w-full")
@@ -2461,7 +2506,7 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
         await _scroll_chat_bottom()
         # Stop any playing audio
         try:
-            await ui.run_javascript('document.querySelectorAll("audio").forEach(a=>{a.pause();a.currentTime=0})', timeout=3.0)
+            await _await_js('document.querySelectorAll("audio").forEach(a=>{a.pause();a.currentTime=0})', timeout=3.0)
         except TimeoutError:
             pass
         client=anthropic.Anthropic(api_key=s["api_key"])
@@ -2539,58 +2584,67 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
                     break
         else:
             s["messages"].append({"role":"assistant","content":narration,"roll_data":roll_data})
-        # Render AI response
-        if _is_correction:
-            # Fade out the green correction input message before re-rendering
-            try:
-                await ui.run_javascript('''
-                    const msgs = document.querySelectorAll('.chat-msg.user.correction');
-                    const last = msgs[msgs.length - 1];
-                    if (last) {
-                        last.style.transition = 'opacity 0.5s ease-out';
-                        last.style.opacity = '0';
-                    }
-                ''', timeout=3.0)
-            except TimeoutError:
-                pass
-            await asyncio.sleep(0.6)
-            # Full re-render without the correction input
-            chat_container.clear()
-            with chat_container:
-                scroll_target_id = render_chat_messages(chat_container)
-        else:
-            scroll_target_id = f"msg-{len(s['messages'])}"
-            with chat_container:
-                if game.scene_count > 1:
-                    ui.html(t("game.scene_marker", L(), n=game.scene_count, location=game.current_location)).classes("scene-marker").props(f'id="{scroll_target_id}"')
-                else:
-                    ui.element('div').props(f'id="{scroll_target_id}"')
-                _has_chaos_interrupt = bool(roll_data and roll_data.get("chaos_interrupt"))
-                msg_col = ui.column().classes("chat-msg assistant w-full et-new" + (" et-chaos" if _has_chaos_interrupt else ""))
-                if not s.get("sr_chat", True):
-                    msg_col.props('aria-hidden="true"')
-                elif s.get("sr_chat", True):
-                    msg_col.props(f'aria-label="{t("aria.narrator_says", L())}"')
-                with msg_col:
-                    _narr = _clean_narration(narration)
-                    if s.get("narrator_font") == "highlight":
-                        _narr = _highlight_dialog(_narr)
-                    ui.markdown(_narr)
-                    if roll_data: render_dice_display(roll_data)
-        # Entity highlights (Design mode) — process newly rendered message
-        # For corrections: render_chat_messages() already called _inject_entity_highlights
-        if s.get("narrator_font") == "highlight" and not _is_correction:
-            _inject_entity_highlights(game, scope_new=True)
-        # Two-step scroll: bottom first (forces DOM render), then up to scene marker
-        await _scroll_chat_bottom()
-        if scroll_target_id:
-            await _scroll_to_element(scroll_target_id)
-        # Save after rendering — player sees narration immediately, save doesn't block display
+        # Persist and hand over to the Co-GM before rendering: the turn's outcome must
+        # not depend on the player's browser. A phone in the background has no
+        # connection - tab storage and JS calls fail or wait until it returns.
         save_game(game,username,s["messages"],s.get("active_save","autosave"))
+        s["_turn_seq"] = s.get("_turn_seq", 0) + 1  # a rebuilt page of this tab notices it missed the scene
         # Co-op: show the scene to the Co-GM and ask the next question (not while a
         # momentum burn decision is pending — that narration may still change)
         if not burn_info:
             _coop_after_narration(s, narration, correction=_is_correction)
+        msg_col = None
+        try:
+            if _is_correction:
+                # Fade out the green correction input message before re-rendering
+                try:
+                    await _await_js('''
+                        const msgs = document.querySelectorAll('.chat-msg.user.correction');
+                        const last = msgs[msgs.length - 1];
+                        if (last) {
+                            last.style.transition = 'opacity 0.5s ease-out';
+                            last.style.opacity = '0';
+                        }
+                    ''', timeout=3.0)
+                except TimeoutError:
+                    pass
+                await asyncio.sleep(0.6)
+                # Full re-render without the correction input
+                chat_container.clear()
+                with chat_container:
+                    scroll_target_id = render_chat_messages(chat_container)
+            else:
+                scroll_target_id = f"msg-{len(s['messages'])}"
+                with chat_container:
+                    if game.scene_count > 1:
+                        ui.html(t("game.scene_marker", L(), n=game.scene_count, location=game.current_location)).classes("scene-marker").props(f'id="{scroll_target_id}"')
+                    else:
+                        ui.element('div').props(f'id="{scroll_target_id}"')
+                    _has_chaos_interrupt = bool(roll_data and roll_data.get("chaos_interrupt"))
+                    msg_col = ui.column().classes("chat-msg assistant w-full et-new" + (" et-chaos" if _has_chaos_interrupt else ""))
+                    if not s.get("sr_chat", True):
+                        msg_col.props('aria-hidden="true"')
+                    elif s.get("sr_chat", True):
+                        msg_col.props(f'aria-label="{t("aria.narrator_says", L())}"')
+                    with msg_col:
+                        _narr = _clean_narration(narration)
+                        if s.get("narrator_font") == "highlight":
+                            _narr = _highlight_dialog(_narr)
+                        ui.markdown(_narr)
+                        if roll_data: render_dice_display(roll_data)
+            # Entity highlights (Design mode) — process newly rendered message
+            # For corrections: render_chat_messages() already called _inject_entity_highlights
+            if s.get("narrator_font") == "highlight" and not _is_correction:
+                _inject_entity_highlights(game, scope_new=True)
+            # Two-step scroll: bottom first (forces DOM render), then up to scene marker
+            await _scroll_chat_bottom()
+            if scroll_target_id:
+                await _scroll_to_element(scroll_target_id)
+        except Exception as e:
+            # Browser gone mid-turn (tab storage / UI need a live connection): the
+            # turn is saved; the rebuilt page renders the history and reloads once
+            log(f"[Turn] Render skipped ({type(e).__name__}: {e})", level="warning")
+
         # Director — awaited inline while the processing lock is still held.
         # A detached background task raced with the next turn: both threads mutated
         # the same GameState, and stale-guard early returns silently dropped results
@@ -2627,7 +2681,10 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
         else:
             # For corrections msg_col is None (full re-render) — TTS still works, no container needed
             tts_container = msg_col if not _is_correction else None
-            await do_tts(narration, tts_container)
+            try:
+                await do_tts(narration, tts_container)
+            except Exception as e:
+                log(f"[TTS] Skipped ({type(e).__name__}: {e})", level="warning")
             await _finish_director()
             # Reload if game state now requires special UI (epilogue offer, game over)
             # These cards only render on page load, so a reload is needed to show them.
@@ -2726,7 +2783,7 @@ def render_momentum_burn() -> bool:
                     if s.get("tts_enabled",False): s["pending_tts"]=narration
                     # Rewind effect: VHS-Scan-Linien + Chrom-Schimmer vor dem Reload
                     try:
-                        await ui.run_javascript('''
+                        await _await_js('''
                             (function(){
                                 var style = document.createElement('style');
                                 style.textContent =
@@ -3246,10 +3303,25 @@ async def _coop_wait_for_answer(sess: "CoopLive", chat_container) -> None:
         pass
 
 
+def _coop_presence_text(name: str, lang: str) -> str:
+    """Presence of a co-op partner. A phone browser in the background stops sending
+    heartbeats within seconds - that is normal while waiting for the other side, so
+    it reads as "not active for N min", not as a fault. "Offline" only if never seen."""
+    if _coop_online(name):
+        return t("coop.partner_online", lang, name=name)
+    last = _COOP_PRESENCE.get(name)
+    if not last:
+        return t("coop.status_offline", lang, name=name)
+    mins = int((_time.time() - last) // 60)
+    if mins < 1:
+        return t("coop.status_away_now", lang, name=name)
+    return t("coop.status_away", lang, name=name, n=mins)
+
+
 def _coop_status_text(sess: "CoopLive", lang: str) -> str:
     game = sess.game
     if not _coop_online(sess.cogm):
-        return f"{E['people']} {t('coop.status_offline', lang, name=sess.cogm)}"
+        return f"{E['people']} {_coop_presence_text(sess.cogm, lang)}"
     if game is not None and coop_waiting_for_cogm(game):
         return f"{E['people']} {t('coop.status_thinking', lang, name=sess.cogm)}"
     q = coop_state(game).get("question") if game is not None else None
@@ -3633,10 +3705,8 @@ def _render_coop_session_status(s: dict, sess: "CoopLive", role: str, lang: str)
             "text-sm font-semibold")
         if role == "host":
             status = _coop_status_text(sess, lang)
-        elif _coop_online(partner):
-            status = f"{E['people']} {t('coop.partner_online', lang, name=partner)}"
         else:
-            status = f"{E['people']} {t('coop.status_offline', lang, name=partner)}"
+            status = f"{E['people']} {_coop_presence_text(partner, lang)}"
         ui.label(status).classes("text-sm").style("color: var(--text-secondary)")
         if not _coop_runs_here(s, sess, role):
             ui.label(t("coop.elsewhere", lang)).classes("text-xs mt-1").style("color: var(--text-secondary)")
@@ -4051,6 +4121,9 @@ async def main_page(client: Client):
             .classes("text-gray-400 hover:text-white") \
             .style("min-width: 44px; min-height: 44px")
     _coop_hdr_cache: dict = {}  # last rendered co-op header state (see _coop_update_header_button)
+    # Turn sequence this page has shown; a turn finished on a page the browser
+    # dropped (phone in the background) makes this rebuilt page reload once
+    _page_turn: dict = {"seq": None, "pending_row": None}
     header.set_value(False)
 
     # Left drawer (created at page level, hidden initially, populated in main phase)
@@ -4362,6 +4435,9 @@ async def main_page(client: Client):
                 _chat_aria_props += ' role="log" aria-live="polite"'
             chat_container.props(_chat_aria_props)
             s["_chat_container"] = chat_container  # Store reference for sidebar actions (recap etc.)
+            _page_turn["seq"] = s.get("_turn_seq", 0)
+            _page_turn["pending_row"] = None
+            _page_turn["chat"] = chat_container
             with chat_container:
                 # Chapter viewing banner
                 viewing_chapter = s.get("viewing_chapter")
@@ -4500,6 +4576,17 @@ async def main_page(client: Client):
             footer.set_value(True)
             # Dynamically align footer input bar with page content
             ui.run_javascript(_FOOTER_ALIGN_JS)
+            # Keep a browser-side copy of the typed text until the server has it
+            ui.run_javascript(_draft_track_js(s["current_user"]))
+            _draft = await _await_js(_draft_read_js(s["current_user"]))
+            if isinstance(_draft, str) and _draft.strip():
+                _last_user = next((m.get("content", "") for m in reversed(s.get("messages", []))
+                                   if m.get("role") == "user"), "")
+                if _draft.strip() != (_last_user or "").strip() and not s.get("processing"):
+                    inp.value = _draft
+                    ui.notify(t("game.draft_restored", L()), type="info", position="top")
+                else:
+                    ui.run_javascript(_draft_clear_js(s["current_user"]))
         else:
             footer.set_value(False)
 
@@ -4722,10 +4809,45 @@ async def main_page(client: Client):
                 s["coop_host"] = None
                 await _show_main_phase()
                 return
+            # The co-GM may have parked the phone while the host played: say it's their turn
+            q = coop_state(sess.game).get("question") if sess.game is not None else None
+            if q and q.get("status") == "open" and s.get("_coop_q_notified") != q.get("id"):
+                s["_coop_q_notified"] = q.get("id")
+                ui.notify(t("coop.your_turn_cogm", lang, name=sess.host), type="info", position="top")
             _cogm_refresh(sess)
             return
+        # A turn finished on a page the browser dropped meanwhile (phone in the
+        # background past the reconnect timeout): this rebuilt page shows a note
+        # while it runs and reloads once to show the new scene.
+        if phase == "main" and _page_turn.get("seq") is not None:
+            seq = s.get("_turn_seq", 0)
+            if s.get("_turn_client") == client.id:
+                _page_turn["seq"] = seq
+            elif not s.get("processing"):
+                if seq != _page_turn["seq"]:
+                    _page_turn["seq"] = seq
+                    ui.navigate.reload()
+                    return
+            elif _page_turn.get("pending_row") is None and _page_turn.get("chat") is not None:
+                try:
+                    with _page_turn["chat"]:
+                        row = ui.row().classes("w-full items-center gap-2 py-1 px-3")
+                        row.props('role="status" aria-live="polite"')
+                        with row:
+                            ui.spinner("dots", size="sm")
+                            ui.label(t("game.turn_running_elsewhere", lang)).classes("text-xs")
+                    _page_turn["pending_row"] = row
+                except Exception:
+                    pass
         # Host tab: end the session when the host leaves the co-op save; update status line
         hs = _coop_host_session(s)
+        if hs and hs.game is not None:
+            q = coop_state(hs.game).get("question")
+            if q and q.get("status") in ("answered", "passed") and s.get("_coop_a_notified") != q.get("id"):
+                s["_coop_a_notified"] = q.get("id")
+                if not s.get("processing"):  # mid-turn the scene simply continues
+                    key = "coop.your_turn_host" if q.get("status") == "answered" else "coop.your_turn_host_passed"
+                    ui.notify(t(key, lang, name=hs.cogm), type="positive", position="top")
         lbl = _ui_refs.get("coop_status")
         if hs:
             if lbl is not None:
