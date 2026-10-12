@@ -544,7 +544,7 @@ Environment=ANTHROPIC_API_KEY=sk-ant-YOUR-KEY-HERE
 
 ### Co-op: play with a Co-GM
 
-A second player on the same server can join as **Co-GM** (co game master). The Co-GM plays no character. After each scene they answer one question from the narrator - "Who is sitting in the car?" - and the answer shapes the next scene, so the player is surprised by it. Some questions are asked "for later": the answer is stored quietly and surfaces when the story is ready. Through the **Director's Cockpit** the Co-GM sets **one impulse per scene** - a free direction, a character's appearance or line, a disruption, a detail, time pressure, a moment of rest or a cliffhanger - and can add as much **background** as they like: a character's secret intention, rumours, secrets, false trails and the weather.
+A second player on the same server can join as **Co-GM** (co game master). The Co-GM plays no character. After each scene they answer one question from the narrator - "Who is sitting in the car?" - and the answer shapes the next scene, so the player is surprised by it. Some questions are asked "for later": the answer is stored quietly and surfaces when the story is ready. Through the **Director's Cockpit** the Co-GM sets **one impulse per scene** - a free direction, a character's appearance or line, a disruption, a detail, time pressure, a moment of rest or a cliffhanger - and can add as much **background** as they like: a character's secret intention, rumours, secrets and false trails. Weather or mood go into a free direction.
 
 - Open the co-op menu (people icon, top right) and invite another player. Offline players see the invite at their next login.
 - The Co-GM sees the story, the characters and your stats - not your inputs, the clocks or the chaos factor.

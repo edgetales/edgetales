@@ -3501,9 +3501,11 @@ _COOP_IMPULSE_TILES = (
 )
 _COOP_BACKGROUND_TILES = (
     ("secret_intent", "visibility_off"), ("rumor", "campaign"),
-    ("plant_secret", "lock"), ("false_trail", "alt_route"), ("weather", "cloud"),
+    ("plant_secret", "lock"), ("false_trail", "alt_route"),
 )
-_COOP_TILE_ICONS = dict(_COOP_IMPULSE_TILES + _COOP_BACKGROUND_TILES)
+# Weather has no tile any more (a direction covers it); the engine still knows the
+# signal, so a save with weather still active lists it with its icon until removed.
+_COOP_TILE_ICONS = dict(_COOP_IMPULSE_TILES + _COOP_BACKGROUND_TILES + (("weather", "cloud"),))
 # Placeholder key per text-carrying signal type
 _COOP_TEXT_KEYS = {
     "direction": "coop.text_direction", "npc_line": "coop.text_npc_line",
@@ -3569,7 +3571,7 @@ def open_cockpit(sess: "CoopLive", on_open=None) -> None:
         ui.label(t("coop.background_title", lang)).classes("text-xs font-semibold").style(
             "color: var(--accent-light); letter-spacing: 0.06em; text-transform: uppercase")
         ui.label(t("coop.background_hint", lang)).classes("text-xs").style("color: var(--text-secondary)")
-        background_tiles = ui.element("div").classes("grid grid-cols-2 sm:grid-cols-5 gap-2 w-full")
+        background_tiles = ui.element("div").classes("grid grid-cols-2 sm:grid-cols-4 gap-2 w-full")
         background_editor = ui.column().classes("w-full")
         background_list = ui.column().classes("w-full gap-1")
 
@@ -3654,29 +3656,6 @@ def open_cockpit(sess: "CoopLive", on_open=None) -> None:
                         return
                     opts = {n["id"]: n.get("name", n["id"]) for n in npcs}
                     npc_sel = ui.select(opts, value=next(iter(opts)), label=t("coop.npc_select", lang)).classes("w-full")
-                if needs == "value":
-                    current = next((sg.get("value") for sg in coop_state(game)["signals"]
-                                    if sg.get("type") == st), None)
-                    with ui.row().classes("gap-2 flex-wrap"):
-                        for v in spec.get("values", ()):
-                            def _pick(val=v):
-                                if _alive() and coop_add_signal(game, st, value=val) is not None:
-                                    _done(zone, st)
-                            vb = ui.button(t(f"coop.val_{v}", lang), on_click=_pick).props("dense no-caps size=sm")
-                            vb.props("unelevated color=primary" if v == current else "outline")
-                        if current:
-                            def _off():
-                                if not _alive():
-                                    return
-                                for sg in list(coop_state(game)["signals"]):
-                                    if sg.get("type") == st:
-                                        coop_remove_signal(game, sg["id"])
-                                sess.bump()
-                                _coop_save(sess)
-                                sel[zone] = None
-                                _refresh_all()
-                            ui.button(t("coop.weather_off", lang), on_click=_off).props("flat dense no-caps size=sm")
-                    return
                 field = None
                 if needs in ("text", "npc_text", "optional_text"):
                     field = ui.textarea(placeholder=t(_COOP_TEXT_KEYS.get(st, "coop.text_direction"), lang)).props(
