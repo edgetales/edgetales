@@ -173,9 +173,9 @@ The narrative tone reference: *Studio Ghibli, Avatar: The Last Airbender, Harry 
   <td align="center" valign="top"><img src="docs/help.png" width="280" alt="Help menu"></td>
 </tr></table>
 
-**Visual mode** — highlights direct speech, color-codes names by bond, visual effects on certain events:
+**Visual Effects** (default narrator style, switchable in Settings) — highlights direct speech, color-codes names by bond, visual effects on certain events:
 
-<img src="docs/visual_mode.png" width="420" alt="Visual mode">
+<img src="docs/visual_mode.png" width="420" alt="Visual Effects narrator style">
 
 **Correction mode** — start your text with `##` to fix AI misunderstandings:
 
