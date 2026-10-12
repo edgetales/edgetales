@@ -5,7 +5,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## [Unreleased]
+## [0.9.102] - 2026-10-12
 
 ### Changed
 - **Line icons instead of emoji.** Every symbol in the interface - sidebar, dice results, menus, help, buttons and the whole new-adventure flow - is now drawn as a thin line icon (Lucide) in the text colour instead of a colourful emoji, so the screen reads calmer and more consistent on every device. Colour stays where it carries meaning: red heart for health, blue for spirit, gold for supply, the result colour on dice lines, and small colour dots instead of coloured circles for dispositions, positions and clock types. The icons are built into the app, no internet needed.
