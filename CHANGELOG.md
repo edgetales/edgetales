@@ -5,7 +5,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## [Unreleased]
+## [1.2.0] - 2026-10-12
 
 ### Added
 - **The next scene waits for the director's cockpit:** while the co-GM has the cockpit open, the next scene waits - just like it waits for the answer to the question - so an impulse no longer lands a round late because the player was faster. A banner at the top of the cockpit says so and turns prominent when the player is actually waiting ("Lars is waiting for you!"); the scene goes on as soon as an impulse is set, the co-GM taps "No impulse this round" (or "Done") or closes the cockpit. A cockpit left open into the next scene holds that one too. The player sees "elvira is in the director's cockpit..." and can still continue without waiting.
