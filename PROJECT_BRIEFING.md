@@ -420,6 +420,8 @@ MISS (all three): bond -1, spirit -1 or -2. Disposition ladder: `hostile → dis
 - **`<h2>` font-size**: Browser default sets `<h2>` to ~1.5rem; `em`-based CSS compounds. Use `<div>` with direct `rem` sizing.
 - **App shell — `.q-page-container` is the scroll container**, not the document (`custom_head.html`: `html, body { overflow: hidden }`, `.q-page-container { position: fixed; inset: 0; overflow-y: auto }`). Reason: iOS 26 Safari keeps `position: fixed; bottom: 0` footers at the edge of the expanded toolbar while document content scrolls into the space the collapsed toolbar frees (text visible below the input bar), and it does not render fixed content behind its controls, so no background trick helps. Any scroll JS must target `.q-page-container` (fallback `document.documentElement`), never `window`/`documentElement` alone — see `_scroll_chat_bottom()`. `scrollIntoView()` works unchanged.
 
+- **Footer input bar sizing**: `.rpg-input-bar > .q-field` uses `flex: 1 1 0; min-width: 0` (`custom_head.html`). With the default `flex-basis: auto` Chromium sizes the 20-char input at ~266 px and the wrapping NiceGUI row pushes the send button below the field on 360–390 px phones (Safari sizes it narrower, so iPhones never showed it).
+
 - **Post-turn errors never offer a retry:** `process_player_input()` sets `_turn_applied` once the engine turn returned; a later failure (render, save, TTS, Director) is only reported, because a retry would play the turn twice.
 
 ### AI / Tokens

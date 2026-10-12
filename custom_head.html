@@ -103,6 +103,9 @@ body[data-narrator-font="highlight"] .chat-msg.assistant { font-family: system-u
 .stt-spinner-inline { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--text-secondary); border-top-color: var(--accent); border-radius: 50%; animation: stt-spin 0.8s linear infinite; vertical-align: middle; margin-right: 6px; }
 @keyframes stt-spin { to { transform: rotate(360deg); } }
 .q-footer { padding-bottom: var(--sab) !important; }
+/* Input bar: the text field takes the leftover width. Without a 0 basis Chromium
+   sizes the 20-char input at ~266px and the send button wraps below it on phones. */
+.rpg-input-bar > .q-field { flex: 1 1 0 !important; min-width: 0 !important; }
 /* APP SHELL: the page container is the scroll container, not the document.
    iOS 26 Safari keeps fixed footers at the edge of the expanded toolbar while
    document content scrolls into the area the collapsed toolbar frees up
