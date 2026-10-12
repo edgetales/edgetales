@@ -108,6 +108,8 @@ E = {
     "feather": "\U0001FAB6",
     "bulb": "\U0001F4A1",
     "backpack": "\U0001F392",
+    "clapper": "\U0001F3AC",
+    "ticket": "\U0001F39F\uFE0F",
 }
 
 

@@ -3310,7 +3310,7 @@ def open_cockpit(sess: "CoopLive", on_open=None) -> None:
             "max-width: 560px; max-height: 88vh; overflow-y: auto"):
         dlg.props(f'aria-label="{t("coop.cockpit", lang)}"')
         with ui.row().classes("w-full items-center justify-between no-wrap"):
-            ui.label(f"{E['crystal']} {t('coop.cockpit', lang)}").classes("text-lg font-bold")
+            ui.label(f"{E['clapper']} {t('coop.cockpit', lang)}").classes("text-lg font-bold")
             ui.button(icon="close", on_click=dlg.close).props(
                 f'flat round dense aria-label="{t("coop.close", lang)}"')
         ui.label(t("coop.cockpit_hint", lang)).classes("text-xs").style("color: var(--text-secondary)")
@@ -3580,7 +3580,7 @@ def open_coop_reveal(game: Optional[GameState]) -> None:
             "max-width: 560px; max-height: 85vh; overflow-y: auto"):
         dlg.props(f'aria-label="{t("coop.reveal", lang)}"')
         with ui.row().classes("w-full items-center justify-between"):
-            ui.label(f"{E['mask']} {t('coop.reveal', lang)}").classes("text-lg font-bold")
+            ui.label(f"{E['ticket']} {t('coop.reveal', lang)}").classes("text-lg font-bold")
             ui.button(icon="close", on_click=dlg.close).props(
                 f'flat round dense aria-label="{t("coop.close", lang)}"')
         if data["partner"]:
