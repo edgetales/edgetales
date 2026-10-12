@@ -548,7 +548,7 @@ A second player on the same server can join as **Co-GM** (co game master). The C
 
 - Open the co-op menu (people icon, top right) and invite another player. Offline players see the invite at their next login.
 - The Co-GM sees the story, the characters and your stats - not your inputs, the clocks or the chaos factor.
-- Your next scene waits for the Co-GM's answer; you can always continue without it.
+- Your next scene waits for the Co-GM's answer - and while the Co-GM has the Director's Cockpit open - so their input lands in time; you can always continue without waiting. An answer the scene cannot use is not forced: it is kept and surfaces later.
 - Pause, continue solo or end the session at any time. The save stays yours; everything the Co-GM planted stays in the world.
 
 ---

@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **The next scene waits for the director's cockpit:** while the co-GM has the cockpit open, the next scene waits - just like it waits for the answer to the question - so an impulse no longer lands a round late because the player was faster. A banner at the top of the cockpit says so and turns prominent when the player is actually waiting ("Lars is waiting for you!"); the scene goes on as soon as an impulse is set, the co-GM taps "No impulse this round" (or "Done") or closes the cockpit. A cockpit left open into the next scene holds that one too. The player sees "elvira is in the director's cockpit..." and can still continue without waiting.
 - **Display settings for the co-GM:** the co-GM's menu now has a "Display" section with interface language, narrator font (including the highlighted mode with coloured dialogue and characters), chat font size and the screen reader chat option. These only affect the co-GM's own view and are saved to their profile; previously the co-GM had to leave the session to change them.
 
 ### Changed

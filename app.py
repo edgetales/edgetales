@@ -2566,7 +2566,8 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
         # Co-op: the scene waits for the Co-GM's answer (player can skip)
         _coop_sess = _coop_host_session(s)
         if (_coop_sess and not text.startswith("##")
-                and (coop_waiting_for_cogm(game) or _coop_sess.question_pending)):
+                and (coop_waiting_for_cogm(game) or _coop_sess.question_pending
+                     or _coop_sess.cockpit_hold)):
             await _coop_wait_for_answer(_coop_sess, chat_container)
         with chat_container:
             spinner=ui.spinner("dots", size="lg")
@@ -3121,6 +3122,8 @@ class CoopLive:
         self.version = 0              # bumped on every change the other tab must see
         self.typing_at = 0.0          # host's last keystroke
         self.question_pending = False  # question generation running
+        self.cockpit_hold = False     # Co-GM has the cockpit open and has not released this round
+        self.host_waiting = False     # host's turn is waiting for the Co-GM right now
         self.active = True
 
     @property
@@ -3331,7 +3334,7 @@ async def _coop_wait_for_answer(sess: "CoopLive", chat_container) -> None:
         row.props('role="status" aria-live="polite"')
         with row:
             ui.spinner("dots", size="sm")
-            ui.label(t("coop.waiting", lang, name=sess.cogm)).classes("text-xs flex-grow")
+            wait_lbl = ui.label(t("coop.waiting", lang, name=sess.cogm)).classes("text-xs flex-grow")
 
             def _skip():
                 skip["now"] = True
@@ -3340,8 +3343,14 @@ async def _coop_wait_for_answer(sess: "CoopLive", chat_container) -> None:
     started = _time.time()
     asked = False
     dlg = None
+    sess.host_waiting = True
+    sess.bump()
     while (sess.active and game is sess.game and not skip["now"]
-           and (coop_waiting_for_cogm(game) or sess.question_pending)):
+           and (coop_waiting_for_cogm(game) or sess.question_pending or sess.cockpit_hold)):
+        _key = ("coop.waiting_cockpit" if sess.cockpit_hold and not coop_waiting_for_cogm(game)
+                and not sess.question_pending else "coop.waiting")
+        if wait_lbl.text != t(_key, lang, name=sess.cogm):
+            wait_lbl.text = t(_key, lang, name=sess.cogm)
         if not asked and _time.time() - started > COOP_WAIT_TIMEOUT_SEC:
             asked = True
             with ui.dialog() as dlg, ui.card().classes("p-4"):
@@ -3358,11 +3367,15 @@ async def _coop_wait_for_answer(sess: "CoopLive", chat_container) -> None:
                     ui.button(t("coop.skip_wait", lang), on_click=_go, color="primary").props("no-caps")
             dlg.open()
         await asyncio.sleep(0.5)
+    sess.host_waiting = False
+    sess.bump()
     if dlg is not None:
         try:
             dlg.close()
         except Exception:
             pass
+    if skip["now"]:
+        sess.cockpit_hold = False  # the host chose to go on: this round is over for the cockpit
     if skip["now"] and coop_waiting_for_cogm(game):
         coop_submit_answer(game, passed=True)
         sess.bump()
@@ -3393,6 +3406,8 @@ def _coop_status_text(sess: "CoopLive", lang: str) -> str:
         return f"{E['people']} {_coop_presence_text(sess.cogm, lang)}"
     if game is not None and coop_waiting_for_cogm(game):
         return f"{E['people']} {t('coop.status_thinking', lang, name=sess.cogm)}"
+    if sess.cockpit_hold:
+        return f"{E['people']} {t('coop.status_cockpit', lang, name=sess.cogm)}"
     q = coop_state(game).get("question") if game is not None else None
     if q and q.get("status") == "answered":
         return f"{E['people']} {t('coop.status_answered', lang, name=sess.cogm)}"
@@ -3528,6 +3543,8 @@ def open_cockpit(sess: "CoopLive", on_open=None) -> None:
         return
     sel = {"impulse": None, "background": None}
     ed: dict = {}                     # live refs of the impulse editor button
+    sess.cockpit_hold = True          # the next scene waits while the cockpit is open
+    sess.bump()
 
     with ui.dialog() as dlg, ui.card().classes("w-full p-4 gap-2").style(
             "max-width: 560px; max-height: 88vh; overflow-y: auto"):
@@ -3537,6 +3554,8 @@ def open_cockpit(sess: "CoopLive", on_open=None) -> None:
             ui.button(icon="close", on_click=dlg.close).props(
                 f'flat round dense aria-label="{t("coop.close", lang)}"')
         ui.label(t("coop.cockpit_hint", lang)).classes("text-xs").style("color: var(--text-secondary)")
+        hold_box = ui.column().classes("w-full mt-2")
+        hold_state: dict = {"shown": None}
 
         # ── Zone 1: impulse ────────────────────────────────────────────
         ui.label(t("coop.impulse_title", lang)).classes("text-xs font-semibold mt-3").style(
@@ -3606,6 +3625,8 @@ def open_cockpit(sess: "CoopLive", on_open=None) -> None:
             _render_editor(zone)
 
         def _done(zone: str, st: str):
+            if zone == "impulse":
+                sess.cockpit_hold = False   # input given - the scene may go on
             sess.bump()
             _coop_save(sess)
             key = "coop.impulse_set" if zone == "impulse" else "coop.background_added"
@@ -3728,8 +3749,54 @@ def open_cockpit(sess: "CoopLive", on_open=None) -> None:
                             ui.button(icon="close", on_click=_rm).props(
                                 f'flat round dense size=sm aria-label="{t("aria.remove_signal", lang)}"')
 
+        def _release():
+            sess.cockpit_hold = False
+            sess.bump()
+            _render_hold()
+
+        def _render_hold():
+            """Tell the Co-GM that the scene waits while the cockpit is open and how
+            to let it go on - otherwise one easily lingers here."""
+            has_impulse = coop_public_view(game)["impulse"] is not None
+            state = (sess.cockpit_hold, sess.host_waiting, has_impulse)
+            if hold_state["shown"] == state:
+                return
+            hold_state["shown"] = state
+            hold_box.clear()
+            with hold_box:
+                if not sess.cockpit_hold:
+                    msg = t("coop.hold_impulse_set" if has_impulse else "coop.hold_released", lang)
+                    with ui.row().classes("w-full items-center gap-2 no-wrap").style(
+                            "border-radius: 8px; padding: 0.5rem 0.75rem; background: var(--success-dim)") as r:
+                        r.props('role="status"')
+                        ui.icon("play_circle").style("color: var(--success)")
+                        ui.label(msg).classes("text-sm")
+                    return
+                urgent = sess.host_waiting
+                with ui.column().classes("w-full gap-2").style(
+                        "border-radius: 8px; padding: 0.6rem 0.75rem; "
+                        + ("border: 2px solid var(--accent); background: var(--accent-dim)" if urgent
+                           else "border: 1px solid var(--border-light)")) as box:
+                    box.props('role="alert"' if urgent else 'role="status"')
+                    with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                        ui.icon("hourglass_top" if urgent else "pause_circle").classes("text-xl").style(
+                            "color: var(--accent-light)")
+                        ui.label(t("coop.hold_waiting" if urgent else "coop.hold_idle", lang,
+                                   name=sess.host)).classes("text-sm" + (" font-semibold" if urgent else ""))
+                    ui.button(t("coop.hold_done" if has_impulse else "coop.hold_release", lang),
+                              icon="skip_next", on_click=_release).props(
+                        ("unelevated color=primary" if urgent else "outline") + " no-caps").classes("w-full")
+
+        def _hold_tick():
+            if not dlg.value:
+                return
+            if not _alive():
+                return
+            _render_hold()
+
         def _refresh_all():
             ed.clear()
+            _render_hold()
             _render_slot()
             for zone in ("impulse", "background"):
                 _render_tiles(zone)
@@ -3738,12 +3805,29 @@ def open_cockpit(sess: "CoopLive", on_open=None) -> None:
 
         def _refresh_live():
             """Called by the Co-GM view on a new scene: slot, lists and the impulse
-            button update; open editors (and typed text) stay as they are."""
+            button update; open editors (and typed text) stay as they are. A cockpit
+            that stays open into the new scene holds that scene again."""
+            if dlg.value and not sess.host_waiting:
+                sess.cockpit_hold = True
+            _render_hold()
             _render_slot()
             _render_background_list()
             _update_editor_button()
 
+        hold_timer = ui.timer(1.0, _hold_tick)
         _refresh_all()
+
+    def _on_hide(*_):
+        hold_timer.deactivate()
+        if sess.cockpit_hold:
+            sess.cockpit_hold = False   # closing the cockpit lets the scene go on
+            sess.bump()
+    dlg.on("hide", _on_hide)
+    # A page that is dropped with the cockpit open never fires "hide"
+    try:
+        context.client.on_delete(_on_hide)
+    except Exception:
+        pass
     if on_open:
         on_open(_refresh_live)
         dlg.on("hide", lambda: on_open(None))
@@ -4763,6 +4847,8 @@ async def main_page(client: Client):
     async def _show_cogm_phase(sess):
         """Co-GM phase: read-only story of the host, question panel, cockpit."""
         s["_phase"] = "cogm"
+        sess.cockpit_hold = False   # a rebuilt view has no open cockpit
+
         lang = L()
         game = sess.game
         _ui_refs.clear()
