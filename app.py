@@ -140,6 +140,7 @@ from engine import (
     coop_add_signal, coop_remove_signal, coop_start_session, coop_end_session,
     coop_public_view, coop_pending_impulse, coop_reveal, generate_cogm_question,
 )
+from icons import icon_head_html
 from i18n import (
     t, UI_LANGUAGES, DEFAULT_LANG,
     get_stat_labels, get_move_labels, get_result_labels,
@@ -947,6 +948,8 @@ def _setup_stt_button(mic_btn, inp, chat_container, stt_status, stt_status_conte
 
 _CSS_FILE = Path(__file__).resolve().parent / "custom_head.html"
 CUSTOM_CSS = _CSS_FILE.read_text(encoding="utf-8") if _CSS_FILE.exists() else ""
+# UI emoji are drawn as Lucide line icons in the browser (icons.py)
+CUSTOM_CSS += icon_head_html()
 
 
 # ===============================================================
@@ -1003,7 +1006,7 @@ def render_sidebar_status(game: GameState, session=None, cogm_view: bool = False
     kid = s.get("kid_friendly", False)
     sl = get_stat_labels(lang)
     _name_aria = game.player_name.replace('"', '&quot;')
-    ui.label(f"{E['mask']} {game.player_name}").classes("text-lg font-bold").props(f'aria-label="{_name_aria}"')
+    ui.label(f"{E['person']} {game.player_name}").classes("text-lg font-bold").props(f'aria-label="{_name_aria}"')
     ui.label(game.character_concept).classes("text-sm text-gray-400 italic")
     if kid: ui.label(f"{E['green_heart']} {t('sidebar.kid_mode', lang)}").classes("text-xs text-green-400")
     tl = get_time_labels(lang)
@@ -1036,10 +1039,10 @@ def render_sidebar_status(game: GameState, session=None, cogm_view: bool = False
                 ui.html(str(_val)).classes('stat-value').props('aria-hidden="true"')
     ui.separator()
     # Tracks — label already communicates value, progressbar is visual-only
-    for track, label, cls in [("health",f"{E['heart_red']} {t('sidebar.health', lang)}","health"),("spirit",f"{E['heart_blue']} {t('sidebar.spirit', lang)}","spirit"),("supply",f"{E['yellow_dot']} {t('sidebar.supply', lang)}","supply")]:
+    for track, label, cls in [("health",f"{E['heart_red']} {t('sidebar.health', lang)}","health"),("spirit",f"{E['heart_blue']} {t('sidebar.spirit', lang)}","spirit"),("supply",f"{E['backpack']} {t('sidebar.supply', lang)}","supply")]:
         val = int(getattr(game, track))
         pct = max(0, val / 5 * 100)
-        ui.label(f"{label}: {val}/5").classes("text-sm font-semibold")
+        ui.label(f"{label}: {val}/5").classes(f"text-sm font-semibold track-label {cls}")
         with ui.element('div').classes('track-bar w-full').props('aria-hidden="true"'):
             ui.element('div').classes(f'track-fill {cls}').style(f'width:{pct:.0f}%')
     # Chaos — label only; danger level in progressbar aria-label for screen readers
@@ -1072,7 +1075,7 @@ def _render_sidebar_chaos(game: GameState, lang: str) -> None:
     _chaos_level_key = "aria.chaos_low" if chaos <= 4 else ("aria.chaos_medium" if chaos <= 6 else ("aria.chaos_high" if chaos <= 8 else "aria.chaos_critical"))
     _chaos_level = t(_chaos_level_key, lang)
     _chaos_aria = t("aria.chaos_bar", lang, n=chaos, level=_chaos_level)
-    ui.label(f'{E["tornado"]} {t("sidebar.chaos", lang)}: {chaos}/9').classes("text-sm font-semibold w-full")
+    ui.label(f'{E["tornado"]} {t("sidebar.chaos", lang)}: {chaos}/9').classes("text-sm font-semibold w-full track-label chaos")
     with ui.element('div').classes('track-bar w-full') \
             .props(f'role="progressbar" aria-valuenow="{int(pct)}" aria-valuemin="0" aria-valuemax="100" aria-label="{_chaos_aria}"'):
         ui.element('div').classes('track-fill chaos').style(f'width:{pct:.0f}%')
@@ -1829,20 +1832,20 @@ def render_help() -> None:
         ui.markdown(t("help.stats_title", lang))
         ui.label(t("help.stats_text", lang)).classes("text-xs text-gray-400")
         ui.html(
-            f"{E['lightning']} {t('help.stat_edge', lang)}<br>"
+            f"{E['feather']} {t('help.stat_edge', lang)}<br>"
             f"{E['heart_red']} {t('help.stat_heart', lang)}<br>"
             f"{E['shield']} {t('help.stat_iron', lang)}<br>"
             f"{E['dark_moon']} {t('help.stat_shadow', lang)}<br>"
-            f"{E['brain']} {t('help.stat_wits', lang)}"
+            f"{E['bulb']} {t('help.stat_wits', lang)}"
         ).style("font-size:0.85em; line-height:2")
         ui.separator()
 
         ui.markdown(t("help.tracks_title", lang))
         ui.label(t("help.tracks_text", lang)).classes("text-xs text-gray-400")
         ui.html(
-            f"{E['heart_red']} {t('help.track_health', lang)}<br>"
-            f"{E['heart_blue']} {t('help.track_spirit', lang)}<br>"
-            f"{E['yellow_dot']} {t('help.track_supply', lang)}"
+            f"<span class='track-label health'>{E['heart_red']} {t('help.track_health', lang)}</span><br>"
+            f"<span class='track-label spirit'>{E['heart_blue']} {t('help.track_spirit', lang)}</span><br>"
+            f"<span class='track-label supply'>{E['backpack']} {t('help.track_supply', lang)}</span>"
         ).style("font-size:0.85em; line-height:2")
         ui.separator()
 
@@ -2167,7 +2170,7 @@ def _render_confirm():
 
     # --- Character summary ---
     _name_esc = name.replace('"', '&quot;')
-    ui.markdown(f"### {E['mask']} {name}").props(f'aria-label="{_name_esc}"')
+    ui.markdown(f"### {E['person']} {name}").props(f'aria-label="{_name_esc}"')
     ui.markdown(f"*{concept}*")
     if setting_desc:
         ui.markdown(f"{setting_desc}")
@@ -2305,7 +2308,7 @@ def _render_confirm():
                     s["creation"] = dict(creation)
                     ui.navigate.reload()
                 with ui.column().classes("items-center gap-1"):
-                    btn = ui.button(f"{E['mask']} {d_name}", on_click=pick_draft, color="primary" if is_selected else None)
+                    btn = ui.button(f"{E['person']} {d_name}", on_click=pick_draft, color="primary" if is_selected else None)
                     btn.props("outline" if not is_selected else "")
                     ui.label(d_concept).classes("text-xs text-center").style("color: var(--text-secondary); max-width: 160px")
 

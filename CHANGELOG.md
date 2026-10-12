@@ -14,6 +14,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - The Co-GM sees the story, characters, the protagonist's stats and location - but not the player's inputs, dice, clocks or chaos factor.
 - **Behind the scenes:** player and Co-GM can open a scene-by-scene list of everything the Co-GM contributed that has already appeared in the story - answers, seeds, rumours, secrets and false trails. Content that has not surfaced yet is only counted, so nothing is spoiled. Also available after the session from the co-op menu.
 
+## [0.9.102] - 2026-10-12
+
+### Changed
+- **Line icons instead of emoji.** Every symbol in the interface - sidebar, dice results, menus, help, buttons and the whole new-adventure flow - is now drawn as a thin line icon (Lucide) in the text colour instead of a colourful emoji, so the screen reads calmer and more consistent on every device. Colour stays where it carries meaning: red heart for health, blue for spirit, gold for supply, the result colour on dice lines, and small colour dots instead of coloured circles for dispositions, positions and clock types. The icons are built into the app, no internet needed.
+- **One symbol per meaning:** genres, tones and archetypes each got their own symbol (e.g. columns for the Roman Empire, a fingerprint for Victorian crime, a fist for the hardboiled archetype) instead of sharing one emoji across different things; the player's character is shown with a person symbol instead of theatre masks.
+
 ## [0.9.101] - 2026-10-11
 
 ### Changed
