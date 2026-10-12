@@ -1428,10 +1428,17 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                                 def make_delete(n=sname):
                                     async def do_delete():
                                         display = t("actions.autosave", lang) if n == "autosave" else n
+                                        if _coop_save_in_use(username, n):
+                                            ui.notify(t("coop.save_in_use", lang, name=display), type="warning", position="top")
+                                            return
                                         with ui.dialog() as dlg, ui.card():
                                             ui.label(t("actions.delete_confirm", lang, name=display))
                                             with ui.row().classes("gap-4 mt-2"):
                                                 async def confirm_del():
+                                                    if _coop_save_in_use(username, n):
+                                                        dlg.close()
+                                                        ui.notify(t("coop.save_in_use", lang, name=display), type="warning", position="top")
+                                                        return
                                                     try:
                                                         delete_save(username, n)
                                                     except Exception as e:
@@ -3013,6 +3020,28 @@ def _coop_session_of(name: str) -> tuple[Optional["CoopLive"], str]:
     return None, ""
 
 
+def _coop_save_in_use(user: str, save: str) -> bool:
+    """Whether a save is the game of the user's live co-op session (as host)."""
+    sess = _COOP_SESSIONS.get(user)
+    return bool(sess and sess.active and sess.save == save)
+
+
+def _coop_withdraw_invites(*hosts: str) -> None:
+    """Drop open invites sent by these users (they just became busy). An invite
+    dialog that is already open fails on accept with "no longer valid"."""
+    for who, inv in list(_COOP_INVITES.items()):
+        if inv.get("host") in hosts:
+            _COOP_INVITES.pop(who, None)
+
+
+def _coop_drop_user(name: str) -> None:
+    """Forget a deleted user's co-op traces (invites, notices, presence)."""
+    _coop_withdraw_invites(name)
+    _COOP_INVITES.pop(name, None)
+    _COOP_NOTICES.pop(name, None)
+    _COOP_PRESENCE.pop(name, None)
+
+
 def _coop_session_by_tab(s: dict) -> Optional["CoopLive"]:
     """The live session hosted from this tab, whatever the tab shows now."""
     for sess in list(_COOP_SESSIONS.values()):
@@ -3844,6 +3873,7 @@ async def coop_accept_invite(s: dict, inv: dict) -> Optional["CoopLive"]:
         return None
     sess = CoopLive(host, me, host_s, host_s.get("active_save", "autosave"))
     _COOP_SESSIONS[host] = sess
+    _coop_withdraw_invites(host, me)
     coop_start_session(game, me)
     _coop_save(sess)
     _coop_notify(host, "coop.joined", "positive", name=me)
@@ -4139,11 +4169,32 @@ async def main_page(client: Client):
                     with ui.expansion(f"{E['gear']} {t('user.manage', lang)}").classes("w-96"):
                         names = [u["name"] for u in users]
                         sel = ui.select(names, label=t("user.remove_label", lang), value=names[0]).classes("w-full")
+                        def _user_in_coop(name) -> bool:
+                            if _coop_session_of(name)[1]:
+                                ui.notify(t("coop.user_in_session", lang, name=name), type="warning", position="top")
+                                return True
+                            return False
+
+                        def _confirm_del_user(name):
+                            dlg_close = _del_dlg.get("dlg")
+                            if dlg_close:
+                                dlg_close.close()
+                            if _user_in_coop(name):
+                                return
+                            delete_user(name)
+                            _coop_drop_user(name)
+                            _show_user_selection_phase()
+
+                        _del_dlg: dict = {}
+
                         async def del_user():
+                            if _user_in_coop(sel.value):
+                                return
                             with ui.dialog() as dlg, ui.card():
+                                _del_dlg["dlg"] = dlg
                                 ui.label(t("user.confirm_delete", lang, name=sel.value))
                                 with ui.row():
-                                    ui.button(t("user.yes", lang), on_click=lambda: (delete_user(sel.value), dlg.close(), _show_user_selection_phase()), color="negative")
+                                    ui.button(t("user.yes", lang), on_click=lambda n=sel.value: _confirm_del_user(n), color="negative")
                                     ui.button(t("user.no", lang), on_click=dlg.close)
                             dlg.open()
                         ui.button(f"{E['trash']} {t('user.remove_label', lang)}", on_click=del_user, color="red").classes("w-full mt-2")
@@ -4656,6 +4707,10 @@ async def main_page(client: Client):
         inv = _COOP_INVITES.get(me)
         if inv and now - inv.get("at", 0) > COOP_INVITE_TTL_SEC:
             _COOP_INVITES.pop(me, None)
+            inv = None
+        if inv and _coop_session_of(me)[1]:
+            _COOP_INVITES.pop(me, None)
+            _coop_notify(inv["host"], "coop.invitee_busy", "info", name=me)
             inv = None
         if (inv and phase == "main" and s.get("_coop_invite_shown") != inv["id"]
                 and not s.get("processing")):
