@@ -9,7 +9,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 - **Co-op status at a glance:** during a live session the co-op button in the header is highlighted and shows your partner's name. The co-op menu now always opens with the session status - your role, your partner and whether they are online.
-
 - **Leaving co-op is always confirmed:** loading a save, starting a new game, restarting after the end of a story or switching player while in a co-op session - as host or co-GM, from any tab - now asks once whether you really want to leave the session (this replaces the usual confirmation, so there is only one dialog). Previously the host's session ended silently - even when just reloading the active save - and a co-GM could open another game while staying in the session.
 
 ### Fixed
