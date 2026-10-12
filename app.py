@@ -3527,8 +3527,72 @@ def open_cockpit(sess: "CoopLive", on_open=None) -> None:
     dlg.open()
 
 
+def _coop_partner(sess: "CoopLive", role: str) -> str:
+    """The other participant of a session from the given role's point of view."""
+    return sess.cogm if role == "host" else sess.host
+
+
+def _coop_runs_here(s: dict, sess: "CoopLive", role: str) -> bool:
+    """Whether this tab is the session's game tab (host) or Co-GM view."""
+    if role == "host":
+        return sess.host_s is s
+    return s.get("_phase") == "cogm" and s.get("coop_host") == sess.host
+
+
+def _render_coop_session_status(s: dict, sess: "CoopLive", role: str, lang: str) -> None:
+    """Status block at the top of the co-op menu: role, partner and presence.
+    Also shown when the session runs in another tab, so it can be ended here."""
+    partner = _coop_partner(sess, role)
+    with ui.column().classes("w-full gap-1 mt-2 p-3").style(
+            "border: 1px solid var(--accent-light); border-radius: 8px"):
+        ui.label(t("coop.session_title", lang)).classes("text-xs font-semibold uppercase").style(
+            "color: var(--accent-light)")
+        ui.label(t("coop.role_host" if role == "host" else "coop.role_cogm", lang, name=partner)).classes(
+            "text-sm font-semibold")
+        if role == "host":
+            status = _coop_status_text(sess, lang)
+        elif _coop_online(partner):
+            status = f"{E['people']} {t('coop.partner_online', lang, name=partner)}"
+        else:
+            status = f"{E['people']} {t('coop.status_offline', lang, name=partner)}"
+        ui.label(status).classes("text-sm").style("color: var(--text-secondary)")
+        if not _coop_runs_here(s, sess, role):
+            ui.label(t("coop.elsewhere", lang)).classes("text-xs mt-1").style("color: var(--text-secondary)")
+
+
+def _coop_update_header_button(btn, me: str, lang: str, cache: dict) -> None:
+    """Highlight the header co-op button during a live session and show the
+    partner's name next to the icon. Only touches the element on change."""
+    sess, role = _coop_session_of(me)
+    partner = _coop_partner(sess, role) if sess else ""
+    state = (role, partner, lang)
+    if cache.get("header") == state:
+        return
+    cache["header"] = state
+    try:
+        if sess:
+            btn.set_text(partner[:14])
+            btn.props(remove="round")
+            btn.props(f'no-caps aria-label="{t("aria.coop_menu_active", lang, name=partner)}"')
+            btn.classes(remove="text-gray-400").style("color: var(--accent-light)")
+            tip = t("coop.header_tooltip_host" if role == "host" else "coop.header_tooltip_cogm", lang, name=partner)
+        else:
+            btn.set_text("")
+            btn.props(f'round aria-label="{t("aria.coop_menu", lang)}"')
+            btn.classes(add="text-gray-400").style(remove="color: var(--accent-light)")
+            tip = t("coop.menu_title", lang)
+        if cache.get("tooltip") is not None:
+            cache["tooltip"].text = tip
+        else:
+            with btn:
+                cache["tooltip"] = ui.tooltip(tip)
+    except Exception:
+        pass
+
+
 def open_coop_menu(s: dict) -> None:
-    """Header co-op menu: invite (no session), host controls, or Co-GM leave."""
+    """Header co-op menu: session status (role, partner, presence) with host
+    controls or Co-GM leave — also from another tab — or the invite form."""
     lang = L()
     me = s.get("current_user", "")
     sess, role = _coop_session_of(me)
@@ -3544,8 +3608,10 @@ def open_coop_menu(s: dict) -> None:
             if sess:
                 _coop_end(sess, reason)  # the Co-GM tab switches back on its next tick
 
-        if role == "host" and sess.host_s is s:
-            ui.label(_coop_status_text(sess, lang)).classes("text-sm")
+        if role:
+            _render_coop_session_status(s, sess, role, lang)
+
+        if role == "host":
             with ui.column().classes("w-full gap-2 mt-2"):
                 ui.button(t("coop.reveal", lang), icon="theater_comedy",
                           on_click=lambda: (dlg.close(), open_coop_reveal(sess.game))).props("outline no-caps").classes("w-full")
@@ -3553,12 +3619,9 @@ def open_coop_menu(s: dict) -> None:
                 ui.button(t("coop.solo", lang), icon="person", on_click=lambda: _end("solo")).props("outline no-caps").classes("w-full")
                 ui.button(t("coop.remove", lang), icon="person_remove", on_click=lambda: _end("remove")).props("flat no-caps").classes("w-full text-red-300")
         elif role == "cogm":
-            ui.label(t("coop.cogm_of", lang, host=sess.host)).classes("text-sm")
             ui.button(t("coop.reveal", lang), icon="theater_comedy",
                       on_click=lambda: (dlg.close(), open_coop_reveal(sess.game))).props("outline no-caps").classes("w-full mt-2")
             ui.button(t("coop.leave", lang), icon="logout", on_click=lambda: _end("leave")).props("outline no-caps").classes("w-full mt-2")
-        elif role == "host":
-            ui.label(t("coop.self_busy", lang)).classes("text-sm")
         else:
             _render_invite_form(s, dlg)
             game = s.get("game")
@@ -3904,6 +3967,7 @@ async def main_page(client: Client):
             .props(f'flat round dense aria-label="{t("aria.coop_menu", L())}"') \
             .classes("text-gray-400 hover:text-white") \
             .style("min-width: 44px; min-height: 44px")
+    _coop_hdr_cache: dict = {}  # last rendered co-op header state (see _coop_update_header_button)
     header.set_value(False)
 
     # Left drawer (created at page level, hidden initially, populated in main phase)
@@ -4128,6 +4192,8 @@ async def main_page(client: Client):
             return
         s["_phase"] = "main"
         _coop_btn.props(f'aria-label="{t("aria.coop_menu", _user_lang)}"')
+        _coop_hdr_cache.pop("header", None)
+        _coop_update_header_button(_coop_btn, s.get("current_user", ""), _user_lang, _coop_hdr_cache)
         _ui_refs.clear()
         # Re-set skeleton ARIA labels (were set at build time with default language)
         _hamburger_btn.props(f'aria-label="{t("aria.menu_open", _user_lang)}"')
@@ -4532,6 +4598,7 @@ async def main_page(client: Client):
         lang = L()
         for key, typ, kw in _COOP_NOTICES.pop(me, []):
             ui.notify(t(key, lang, **kw), type=typ, position="top")
+        _coop_update_header_button(_coop_btn, me, lang, _coop_hdr_cache)
         # Invites (only shown in the normal game view, never mid-turn)
         inv = _COOP_INVITES.get(me)
         if inv and now - inv.get("at", 0) > COOP_INVITE_TTL_SEC:

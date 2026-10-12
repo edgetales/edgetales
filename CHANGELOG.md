@@ -7,7 +7,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+- **Co-op status at a glance:** during a live session the co-op button in the header is highlighted and shows your partner's name. The co-op menu now always opens with the session status - your role, your partner and whether they are online.
+
 ### Fixed
+- Opening the co-op menu from another tab or device during a running session only said "You are already in another co-op session", with no way out. It now shows the session and offers its controls there too: the host can pause, continue solo or remove the co-GM, and the co-GM can leave.
 - The save info tooltip showed the raw code "custom" for a self-described archetype; it now shows a localized label ("Eigene Idee" / "Custom idea").
 
 ## [1.1.0] - 2026-10-12
