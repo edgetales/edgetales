@@ -1367,6 +1367,8 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                                             # Persist last used save so next login restores it
                                             _ucfg = load_user_config(username); _ucfg["last_save"] = n; save_user_config(username, _ucfg)
                                             ui.navigate.reload()
+                                    if coop_confirm_leave(s, _execute_load):
+                                        return
                                     if game and not _active:
                                         with ui.dialog() as dlg, ui.card():
                                             ui.label(t("actions.load_confirm", lang, name=dn))
@@ -1499,28 +1501,31 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
 
         # --- New game ---
         ui.separator().classes("my-1")
+        def _reset_for_new_game():
+            if game:
+                # The new game starts in the autosave slot: clear THAT slot's
+                # archives. A named active save keeps its file and its chapters.
+                delete_chapter_archives(username, "autosave")
+            s["game"]=None;s["creation"]=None;s["pending_burn"]=None;s["messages"]=[];s["active_save"]="autosave"
+            s["processing"]=False;s["_turn_gen"]=s.get("_turn_gen",0)+1
+            s["viewing_chapter"]=None;s["chapter_view_messages"]=None
+            ui.navigate.reload()
+
         async def new_game():
+            if coop_confirm_leave(s, _reset_for_new_game):
+                return
             if game:
                 with ui.dialog() as dlg, ui.card():
                     ui.label(t("actions.new_game_confirm", lang))
                     with ui.row().classes("gap-4 mt-2"):
                         async def confirm_new():
                             dlg.close()
-                            # The new game starts in the autosave slot: clear THAT slot's
-                            # archives. A named active save keeps its file and its chapters.
-                            delete_chapter_archives(username, "autosave")
-                            s["game"]=None;s["creation"]=None;s["pending_burn"]=None;s["messages"]=[];s["active_save"]="autosave"
-                            s["processing"]=False;s["_turn_gen"]=s.get("_turn_gen",0)+1
-                            s["viewing_chapter"]=None;s["chapter_view_messages"]=None
-                            ui.navigate.reload()
+                            _reset_for_new_game()
                         ui.button(t("user.yes", lang), on_click=confirm_new, color="positive")
                         ui.button(t("user.no", lang), on_click=dlg.close)
                 dlg.open()
             else:
-                s["game"]=None;s["creation"]=None;s["pending_burn"]=None;s["messages"]=[];s["active_save"]="autosave"
-                s["processing"]=False;s["_turn_gen"]=s.get("_turn_gen",0)+1
-                s["viewing_chapter"]=None;s["chapter_view_messages"]=None
-                ui.navigate.reload()
+                _reset_for_new_game()
         ui.button(f"{t('actions.new_game', lang)}", on_click=new_game, color="red").props("flat").classes("w-full")
 
         # --- Export ---
@@ -1536,6 +1541,11 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
     # Switch user
     ui.separator()
     async def switch():
+        if coop_confirm_leave(s, _do_switch, host_reason="pause"):
+            return
+        await _do_switch()
+
+    async def _do_switch():
         s["current_user"]="";s["game"]=None;s["creation"]=None;s["messages"]=[];s["user_config_loaded"]=False;s["active_save"]="autosave"
         s["processing"]=False;s["_turn_gen"]=s.get("_turn_gen",0)+1
         s["viewing_chapter"]=None;s["chapter_view_messages"]=None;s["chapter_view_title"]=None
@@ -2795,6 +2805,11 @@ def _make_chapter_action(game, chapter_msg_key: str):
             ui.notify(t("game.error", lang, error=e), type="negative")
 
     def full_new():
+        if coop_confirm_leave(s, _full_new):
+            return
+        _full_new()
+
+    def _full_new():
         # New game goes into the autosave slot — clear its archives, never those of a
         # named save that stays on disk.
         delete_chapter_archives(s["current_user"], "autosave")
@@ -3048,7 +3063,9 @@ def _coop_save(sess: "CoopLive") -> None:
 
 
 def _coop_end(sess: "CoopLive", reason: str) -> None:
-    """End a live session. reason: pause | solo | remove | leave | save."""
+    """End a live session. reason: pause | solo | remove | leave | save | switch.
+    "save": the host's tab already swapped the game (nothing left to wrap up);
+    "switch": ended on purpose right before a save change (wrapped up and saved)."""
     if not sess.active:
         return
     sess.active = False
@@ -3058,15 +3075,51 @@ def _coop_end(sess: "CoopLive", reason: str) -> None:
         _coop_save(sess)
     host_msgs = {"pause": ("coop.paused_host", sess.cogm), "solo": ("coop.solo_host", sess.cogm),
                  "remove": ("coop.removed_host", sess.cogm), "leave": ("coop.left_host", sess.cogm),
-                 "save": ("coop.ended_save_host", sess.cogm)}
+                 "save": ("coop.ended_save_host", sess.cogm),
+                 "switch": ("coop.ended_save_host", sess.cogm)}
     cogm_msgs = {"pause": "coop.paused_cogm", "solo": "coop.solo_cogm",
                  "remove": "coop.removed_cogm", "leave": "coop.left_cogm",
-                 "save": "coop.ended_save_cogm"}
+                 "save": "coop.ended_save_cogm", "switch": "coop.ended_save_cogm"}
     hk, hname = host_msgs.get(reason, host_msgs["solo"])
     _coop_notify(sess.host, hk, "info", name=hname)
     _coop_notify(sess.cogm, cogm_msgs.get(reason, "coop.solo_cogm"), "info", name=sess.host)
     sess.bump()
     log(f"[Coop] Session {sess.host} + {sess.cogm} ended ({reason})")
+
+
+def coop_confirm_leave(s: dict, action, host_reason: str = "switch") -> bool:
+    """Guard for actions that take this user out of a live co-op session (load,
+    new game, restart, switch user) — from any tab, as host or Co-GM. Returns
+    False when there is no session: the caller proceeds with its own flow.
+    Otherwise shows one confirm dialog (replacing the caller's own confirm);
+    on confirm the session ends (host: host_reason, Co-GM: "leave") and
+    action() runs (sync or async)."""
+    me = s.get("current_user", "")
+    sess, role = _coop_session_of(me)
+    if not sess:
+        return False
+    lang = L()
+    partner = _coop_partner(sess, role)
+    with ui.dialog() as dlg, ui.card().classes("p-4").style("max-width: 420px"):
+        dlg.props(f'aria-label="{t("coop.leave_confirm_title", lang)}"')
+        ui.label(f"{E['people']} {t('coop.leave_confirm_title', lang)}").classes("text-lg font-bold")
+        ui.label(t("coop.leave_confirm_host" if role == "host" else "coop.leave_confirm_cogm",
+                   lang, name=partner)).classes("text-sm mt-1")
+
+        async def _confirm():
+            dlg.close()
+            if sess.active:
+                _coop_end(sess, host_reason if role == "host" else "leave")
+            result = action()
+            if asyncio.iscoroutine(result):
+                await result
+
+        with ui.row().classes("gap-2 mt-3 justify-end w-full"):
+            ui.button(t("coop.leave_confirm_cancel", lang), on_click=dlg.close).props("flat no-caps")
+            ui.button(t("coop.leave_confirm_ok", lang), icon="logout", on_click=_confirm,
+                      color="negative").props("no-caps")
+    dlg.open()
+    return True
 
 
 async def _coop_generate_question(sess: "CoopLive", narration: str,
