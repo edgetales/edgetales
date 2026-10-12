@@ -5,7 +5,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## [Unreleased]
+## [1.1.0] - 2026-10-12
 
 ### Added
 - **Co-op mode with a Co-GM (co game master).** A second player on the same server can join a running game as Co-GM. The Co-GM plays no character: after each scene the narrator asks them one question ("Who is sitting in the car?"), and the answer is woven into the next scene as a surprise for the player. Every third question is asked "for later" - the answer is stored and surfaces when the story touches its subject. An answer the player's action makes unusable is not forced but can appear later.

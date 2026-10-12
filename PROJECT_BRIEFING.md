@@ -9,7 +9,7 @@
 
 | | |
 |---|---|
-| **Version** | v1.0.0 |
+| **Version** | v1.1.0 |
 | **Codebase** | ~18,100 lines across 5 source files + config, plus offline test suite in `tests/` |
 | **Tests** | `python -m pytest tests -q` (pytest + jsonschema; fake AI, no API key) |
 | **Stack** | Python 3.11+, NiceGUI, Anthropic SDK (Structured Outputs), reportlab, edge-tts, faster-whisper, wonderwords, stop-words, nameparser, cryptography |
@@ -315,7 +315,7 @@ Extended chapter summary: `npc_evolutions` (projected NPC changes in time skip) 
 
 `GameState.epilogue_text` persisted in `SAVE_FIELDS`. `generate_epilogue()` writes it; `start_new_chapter()` passes it to `call_chapter_summary()` then clears it — prevents bleed into chapter-3 summaries.
 
-### Co-op Mode (Co-GM) *(on `feat/coop-gm`, planned for v1.1)*
+### Co-op Mode (Co-GM) *(since v1.1.0)*
 
 Asymmetric co-op: a **Player** (host, owns the save) and a **Co-GM** (guest, plays no character). After each scene the Co-GM answers one question from the Narrator; through the **Director's Cockpit** they send signals about atmosphere, pacing and direction. The player only experiences the result in the story. Concept: `coopgm.md` (internal, Project root).
 
