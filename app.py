@@ -1367,6 +1367,8 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                                             # Persist last used save so next login restores it
                                             _ucfg = load_user_config(username); _ucfg["last_save"] = n; save_user_config(username, _ucfg)
                                             ui.navigate.reload()
+                                    if coop_confirm_leave(s, _execute_load):
+                                        return
                                     if game and not _active:
                                         with ui.dialog() as dlg, ui.card():
                                             ui.label(t("actions.load_confirm", lang, name=dn))
@@ -1426,10 +1428,17 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                                 def make_delete(n=sname):
                                     async def do_delete():
                                         display = t("actions.autosave", lang) if n == "autosave" else n
+                                        if _coop_save_in_use(username, n):
+                                            ui.notify(t("coop.save_in_use", lang, name=display), type="warning", position="top")
+                                            return
                                         with ui.dialog() as dlg, ui.card():
                                             ui.label(t("actions.delete_confirm", lang, name=display))
                                             with ui.row().classes("gap-4 mt-2"):
                                                 async def confirm_del():
+                                                    if _coop_save_in_use(username, n):
+                                                        dlg.close()
+                                                        ui.notify(t("coop.save_in_use", lang, name=display), type="warning", position="top")
+                                                        return
                                                     try:
                                                         delete_save(username, n)
                                                     except Exception as e:
@@ -1499,28 +1508,31 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
 
         # --- New game ---
         ui.separator().classes("my-1")
+        def _reset_for_new_game():
+            if game:
+                # The new game starts in the autosave slot: clear THAT slot's
+                # archives. A named active save keeps its file and its chapters.
+                delete_chapter_archives(username, "autosave")
+            s["game"]=None;s["creation"]=None;s["pending_burn"]=None;s["messages"]=[];s["active_save"]="autosave"
+            s["processing"]=False;s["_turn_gen"]=s.get("_turn_gen",0)+1
+            s["viewing_chapter"]=None;s["chapter_view_messages"]=None
+            ui.navigate.reload()
+
         async def new_game():
+            if coop_confirm_leave(s, _reset_for_new_game):
+                return
             if game:
                 with ui.dialog() as dlg, ui.card():
                     ui.label(t("actions.new_game_confirm", lang))
                     with ui.row().classes("gap-4 mt-2"):
                         async def confirm_new():
                             dlg.close()
-                            # The new game starts in the autosave slot: clear THAT slot's
-                            # archives. A named active save keeps its file and its chapters.
-                            delete_chapter_archives(username, "autosave")
-                            s["game"]=None;s["creation"]=None;s["pending_burn"]=None;s["messages"]=[];s["active_save"]="autosave"
-                            s["processing"]=False;s["_turn_gen"]=s.get("_turn_gen",0)+1
-                            s["viewing_chapter"]=None;s["chapter_view_messages"]=None
-                            ui.navigate.reload()
+                            _reset_for_new_game()
                         ui.button(t("user.yes", lang), on_click=confirm_new, color="positive")
                         ui.button(t("user.no", lang), on_click=dlg.close)
                 dlg.open()
             else:
-                s["game"]=None;s["creation"]=None;s["pending_burn"]=None;s["messages"]=[];s["active_save"]="autosave"
-                s["processing"]=False;s["_turn_gen"]=s.get("_turn_gen",0)+1
-                s["viewing_chapter"]=None;s["chapter_view_messages"]=None
-                ui.navigate.reload()
+                _reset_for_new_game()
         ui.button(f"{t('actions.new_game', lang)}", on_click=new_game, color="red").props("flat").classes("w-full")
 
         # --- Export ---
@@ -1536,6 +1548,11 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
     # Switch user
     ui.separator()
     async def switch():
+        if coop_confirm_leave(s, _do_switch, host_reason="pause"):
+            return
+        await _do_switch()
+
+    async def _do_switch():
         s["current_user"]="";s["game"]=None;s["creation"]=None;s["messages"]=[];s["user_config_loaded"]=False;s["active_save"]="autosave"
         s["processing"]=False;s["_turn_gen"]=s.get("_turn_gen",0)+1
         s["viewing_chapter"]=None;s["chapter_view_messages"]=None;s["chapter_view_title"]=None
@@ -2795,6 +2812,11 @@ def _make_chapter_action(game, chapter_msg_key: str):
             ui.notify(t("game.error", lang, error=e), type="negative")
 
     def full_new():
+        if coop_confirm_leave(s, _full_new):
+            return
+        _full_new()
+
+    def _full_new():
         # New game goes into the autosave slot — clear its archives, never those of a
         # named save that stays on disk.
         delete_chapter_archives(s["current_user"], "autosave")
@@ -2998,6 +3020,28 @@ def _coop_session_of(name: str) -> tuple[Optional["CoopLive"], str]:
     return None, ""
 
 
+def _coop_save_in_use(user: str, save: str) -> bool:
+    """Whether a save is the game of the user's live co-op session (as host)."""
+    sess = _COOP_SESSIONS.get(user)
+    return bool(sess and sess.active and sess.save == save)
+
+
+def _coop_withdraw_invites(*hosts: str) -> None:
+    """Drop open invites sent by these users (they just became busy). An invite
+    dialog that is already open fails on accept with "no longer valid"."""
+    for who, inv in list(_COOP_INVITES.items()):
+        if inv.get("host") in hosts:
+            _COOP_INVITES.pop(who, None)
+
+
+def _coop_drop_user(name: str) -> None:
+    """Forget a deleted user's co-op traces (invites, notices, presence)."""
+    _coop_withdraw_invites(name)
+    _COOP_INVITES.pop(name, None)
+    _COOP_NOTICES.pop(name, None)
+    _COOP_PRESENCE.pop(name, None)
+
+
 def _coop_session_by_tab(s: dict) -> Optional["CoopLive"]:
     """The live session hosted from this tab, whatever the tab shows now."""
     for sess in list(_COOP_SESSIONS.values()):
@@ -3048,7 +3092,9 @@ def _coop_save(sess: "CoopLive") -> None:
 
 
 def _coop_end(sess: "CoopLive", reason: str) -> None:
-    """End a live session. reason: pause | solo | remove | leave | save."""
+    """End a live session. reason: pause | solo | remove | leave | save | switch.
+    "save": the host's tab already swapped the game (nothing left to wrap up);
+    "switch": ended on purpose right before a save change (wrapped up and saved)."""
     if not sess.active:
         return
     sess.active = False
@@ -3058,15 +3104,51 @@ def _coop_end(sess: "CoopLive", reason: str) -> None:
         _coop_save(sess)
     host_msgs = {"pause": ("coop.paused_host", sess.cogm), "solo": ("coop.solo_host", sess.cogm),
                  "remove": ("coop.removed_host", sess.cogm), "leave": ("coop.left_host", sess.cogm),
-                 "save": ("coop.ended_save_host", sess.cogm)}
+                 "save": ("coop.ended_save_host", sess.cogm),
+                 "switch": ("coop.ended_save_host", sess.cogm)}
     cogm_msgs = {"pause": "coop.paused_cogm", "solo": "coop.solo_cogm",
                  "remove": "coop.removed_cogm", "leave": "coop.left_cogm",
-                 "save": "coop.ended_save_cogm"}
+                 "save": "coop.ended_save_cogm", "switch": "coop.ended_save_cogm"}
     hk, hname = host_msgs.get(reason, host_msgs["solo"])
     _coop_notify(sess.host, hk, "info", name=hname)
     _coop_notify(sess.cogm, cogm_msgs.get(reason, "coop.solo_cogm"), "info", name=sess.host)
     sess.bump()
     log(f"[Coop] Session {sess.host} + {sess.cogm} ended ({reason})")
+
+
+def coop_confirm_leave(s: dict, action, host_reason: str = "switch") -> bool:
+    """Guard for actions that take this user out of a live co-op session (load,
+    new game, restart, switch user) — from any tab, as host or Co-GM. Returns
+    False when there is no session: the caller proceeds with its own flow.
+    Otherwise shows one confirm dialog (replacing the caller's own confirm);
+    on confirm the session ends (host: host_reason, Co-GM: "leave") and
+    action() runs (sync or async)."""
+    me = s.get("current_user", "")
+    sess, role = _coop_session_of(me)
+    if not sess:
+        return False
+    lang = L()
+    partner = _coop_partner(sess, role)
+    with ui.dialog() as dlg, ui.card().classes("p-4").style("max-width: 420px"):
+        dlg.props(f'aria-label="{t("coop.leave_confirm_title", lang)}"')
+        ui.label(f"{E['people']} {t('coop.leave_confirm_title', lang)}").classes("text-lg font-bold")
+        ui.label(t("coop.leave_confirm_host" if role == "host" else "coop.leave_confirm_cogm",
+                   lang, name=partner)).classes("text-sm mt-1")
+
+        async def _confirm():
+            dlg.close()
+            if sess.active:
+                _coop_end(sess, host_reason if role == "host" else "leave")
+            result = action()
+            if asyncio.iscoroutine(result):
+                await result
+
+        with ui.row().classes("gap-2 mt-3 justify-end w-full"):
+            ui.button(t("coop.leave_confirm_cancel", lang), on_click=dlg.close).props("flat no-caps")
+            ui.button(t("coop.leave_confirm_ok", lang), icon="logout", on_click=_confirm,
+                      color="negative").props("no-caps")
+    dlg.open()
+    return True
 
 
 async def _coop_generate_question(sess: "CoopLive", narration: str,
@@ -3527,8 +3609,72 @@ def open_cockpit(sess: "CoopLive", on_open=None) -> None:
     dlg.open()
 
 
+def _coop_partner(sess: "CoopLive", role: str) -> str:
+    """The other participant of a session from the given role's point of view."""
+    return sess.cogm if role == "host" else sess.host
+
+
+def _coop_runs_here(s: dict, sess: "CoopLive", role: str) -> bool:
+    """Whether this tab is the session's game tab (host) or Co-GM view."""
+    if role == "host":
+        return sess.host_s is s
+    return s.get("_phase") == "cogm" and s.get("coop_host") == sess.host
+
+
+def _render_coop_session_status(s: dict, sess: "CoopLive", role: str, lang: str) -> None:
+    """Status block at the top of the co-op menu: role, partner and presence.
+    Also shown when the session runs in another tab, so it can be ended here."""
+    partner = _coop_partner(sess, role)
+    with ui.column().classes("w-full gap-1 mt-2 p-3").style(
+            "border: 1px solid var(--accent-light); border-radius: 8px"):
+        ui.label(t("coop.session_title", lang)).classes("text-xs font-semibold uppercase").style(
+            "color: var(--accent-light)")
+        ui.label(t("coop.role_host" if role == "host" else "coop.role_cogm", lang, name=partner)).classes(
+            "text-sm font-semibold")
+        if role == "host":
+            status = _coop_status_text(sess, lang)
+        elif _coop_online(partner):
+            status = f"{E['people']} {t('coop.partner_online', lang, name=partner)}"
+        else:
+            status = f"{E['people']} {t('coop.status_offline', lang, name=partner)}"
+        ui.label(status).classes("text-sm").style("color: var(--text-secondary)")
+        if not _coop_runs_here(s, sess, role):
+            ui.label(t("coop.elsewhere", lang)).classes("text-xs mt-1").style("color: var(--text-secondary)")
+
+
+def _coop_update_header_button(btn, me: str, lang: str, cache: dict) -> None:
+    """Highlight the header co-op button during a live session and show the
+    partner's name next to the icon. Only touches the element on change."""
+    sess, role = _coop_session_of(me)
+    partner = _coop_partner(sess, role) if sess else ""
+    state = (role, partner, lang)
+    if cache.get("header") == state:
+        return
+    cache["header"] = state
+    try:
+        if sess:
+            btn.set_text(partner[:14])
+            btn.props(remove="round")
+            btn.props(f'no-caps aria-label="{t("aria.coop_menu_active", lang, name=partner)}"')
+            btn.classes(remove="text-gray-400").style("color: var(--accent-light)")
+            tip = t("coop.header_tooltip_host" if role == "host" else "coop.header_tooltip_cogm", lang, name=partner)
+        else:
+            btn.set_text("")
+            btn.props(f'round aria-label="{t("aria.coop_menu", lang)}"')
+            btn.classes(add="text-gray-400").style(remove="color: var(--accent-light)")
+            tip = t("coop.menu_title", lang)
+        if cache.get("tooltip") is not None:
+            cache["tooltip"].text = tip
+        else:
+            with btn:
+                cache["tooltip"] = ui.tooltip(tip)
+    except Exception:
+        pass
+
+
 def open_coop_menu(s: dict) -> None:
-    """Header co-op menu: invite (no session), host controls, or Co-GM leave."""
+    """Header co-op menu: session status (role, partner, presence) with host
+    controls or Co-GM leave — also from another tab — or the invite form."""
     lang = L()
     me = s.get("current_user", "")
     sess, role = _coop_session_of(me)
@@ -3544,8 +3690,10 @@ def open_coop_menu(s: dict) -> None:
             if sess:
                 _coop_end(sess, reason)  # the Co-GM tab switches back on its next tick
 
-        if role == "host" and sess.host_s is s:
-            ui.label(_coop_status_text(sess, lang)).classes("text-sm")
+        if role:
+            _render_coop_session_status(s, sess, role, lang)
+
+        if role == "host":
             with ui.column().classes("w-full gap-2 mt-2"):
                 ui.button(t("coop.reveal", lang), icon="theater_comedy",
                           on_click=lambda: (dlg.close(), open_coop_reveal(sess.game))).props("outline no-caps").classes("w-full")
@@ -3553,12 +3701,9 @@ def open_coop_menu(s: dict) -> None:
                 ui.button(t("coop.solo", lang), icon="person", on_click=lambda: _end("solo")).props("outline no-caps").classes("w-full")
                 ui.button(t("coop.remove", lang), icon="person_remove", on_click=lambda: _end("remove")).props("flat no-caps").classes("w-full text-red-300")
         elif role == "cogm":
-            ui.label(t("coop.cogm_of", lang, host=sess.host)).classes("text-sm")
             ui.button(t("coop.reveal", lang), icon="theater_comedy",
                       on_click=lambda: (dlg.close(), open_coop_reveal(sess.game))).props("outline no-caps").classes("w-full mt-2")
             ui.button(t("coop.leave", lang), icon="logout", on_click=lambda: _end("leave")).props("outline no-caps").classes("w-full mt-2")
-        elif role == "host":
-            ui.label(t("coop.self_busy", lang)).classes("text-sm")
         else:
             _render_invite_form(s, dlg)
             game = s.get("game")
@@ -3728,6 +3873,7 @@ async def coop_accept_invite(s: dict, inv: dict) -> Optional["CoopLive"]:
         return None
     sess = CoopLive(host, me, host_s, host_s.get("active_save", "autosave"))
     _COOP_SESSIONS[host] = sess
+    _coop_withdraw_invites(host, me)
     coop_start_session(game, me)
     _coop_save(sess)
     _coop_notify(host, "coop.joined", "positive", name=me)
@@ -3904,6 +4050,7 @@ async def main_page(client: Client):
             .props(f'flat round dense aria-label="{t("aria.coop_menu", L())}"') \
             .classes("text-gray-400 hover:text-white") \
             .style("min-width: 44px; min-height: 44px")
+    _coop_hdr_cache: dict = {}  # last rendered co-op header state (see _coop_update_header_button)
     header.set_value(False)
 
     # Left drawer (created at page level, hidden initially, populated in main phase)
@@ -4022,11 +4169,32 @@ async def main_page(client: Client):
                     with ui.expansion(f"{E['gear']} {t('user.manage', lang)}").classes("w-96"):
                         names = [u["name"] for u in users]
                         sel = ui.select(names, label=t("user.remove_label", lang), value=names[0]).classes("w-full")
+                        def _user_in_coop(name) -> bool:
+                            if _coop_session_of(name)[1]:
+                                ui.notify(t("coop.user_in_session", lang, name=name), type="warning", position="top")
+                                return True
+                            return False
+
+                        def _confirm_del_user(name):
+                            dlg_close = _del_dlg.get("dlg")
+                            if dlg_close:
+                                dlg_close.close()
+                            if _user_in_coop(name):
+                                return
+                            delete_user(name)
+                            _coop_drop_user(name)
+                            _show_user_selection_phase()
+
+                        _del_dlg: dict = {}
+
                         async def del_user():
+                            if _user_in_coop(sel.value):
+                                return
                             with ui.dialog() as dlg, ui.card():
+                                _del_dlg["dlg"] = dlg
                                 ui.label(t("user.confirm_delete", lang, name=sel.value))
                                 with ui.row():
-                                    ui.button(t("user.yes", lang), on_click=lambda: (delete_user(sel.value), dlg.close(), _show_user_selection_phase()), color="negative")
+                                    ui.button(t("user.yes", lang), on_click=lambda n=sel.value: _confirm_del_user(n), color="negative")
                                     ui.button(t("user.no", lang), on_click=dlg.close)
                             dlg.open()
                         ui.button(f"{E['trash']} {t('user.remove_label', lang)}", on_click=del_user, color="red").classes("w-full mt-2")
@@ -4128,6 +4296,8 @@ async def main_page(client: Client):
             return
         s["_phase"] = "main"
         _coop_btn.props(f'aria-label="{t("aria.coop_menu", _user_lang)}"')
+        _coop_hdr_cache.pop("header", None)
+        _coop_update_header_button(_coop_btn, s.get("current_user", ""), _user_lang, _coop_hdr_cache)
         _ui_refs.clear()
         # Re-set skeleton ARIA labels (were set at build time with default language)
         _hamburger_btn.props(f'aria-label="{t("aria.menu_open", _user_lang)}"')
@@ -4532,10 +4702,15 @@ async def main_page(client: Client):
         lang = L()
         for key, typ, kw in _COOP_NOTICES.pop(me, []):
             ui.notify(t(key, lang, **kw), type=typ, position="top")
+        _coop_update_header_button(_coop_btn, me, lang, _coop_hdr_cache)
         # Invites (only shown in the normal game view, never mid-turn)
         inv = _COOP_INVITES.get(me)
         if inv and now - inv.get("at", 0) > COOP_INVITE_TTL_SEC:
             _COOP_INVITES.pop(me, None)
+            inv = None
+        if inv and _coop_session_of(me)[1]:
+            _COOP_INVITES.pop(me, None)
+            _coop_notify(inv["host"], "coop.invitee_busy", "info", name=me)
             inv = None
         if (inv and phase == "main" and s.get("_coop_invite_shown") != inv["id"]
                 and not s.get("processing")):
