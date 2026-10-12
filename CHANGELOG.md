@@ -10,6 +10,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 - **README screenshots show the current interface.** All 14 mobile screenshots were retaken with the line icons, the renamed genres, tones and archetypes, the neutral "Story" heading and the Visual Effects narrator style that is now the default.
 
+### Fixed
+- **Send button no longer drops below the input field on phones.** In Chrome and other Chromium browsers (e.g. on Android) the text field claimed about 270 px, so on screens around 360-390 px wide the send button wrapped into a second line under the input. The field now takes only the width that is left next to the microphone and send buttons. Safari on the iPhone was not affected.
+
 ## [0.9.103] - 2026-10-12
 
 ### Changed
