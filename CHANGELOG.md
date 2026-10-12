@@ -14,6 +14,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - The Co-GM sees the story, characters, the protagonist's stats and location - but not the player's inputs, dice, clocks or chaos factor.
 - **Behind the scenes:** player and Co-GM can open a scene-by-scene list of everything the Co-GM contributed that has already appeared in the story - answers, seeds, rumours, secrets and false trails. Content that has not surfaced yet is only counted, so nothing is spoiled. Also available after the session from the co-op menu.
 
+## [1.0.0] - 2026-10-12
+
+### Changed
+- **EdgeTales 1.0 - first stable release.** No new features compared to 0.9.104: this version marks the engine as stable after the 0.9 series - the "AI narrates, dice decide" pipeline (Brain, Narrator, Metadata Extractor, Director, Story Architect) with Ironsworn rolls and routine actions without dice, persistent NPCs with memories and relationships, clocks, chaos and multi-chapter campaigns, `##` corrections and momentum burns, the German/English interface with line icons, voice input and output, and PDF export. Existing save games load unchanged.
+
+## [0.9.104] - 2026-10-12
+
+### Changed
+- **README screenshots show the current interface.** All 14 mobile screenshots were retaken with the line icons, the renamed genres, tones and archetypes, the neutral "Story" heading and the Visual Effects narrator style that is now the default.
+
+### Fixed
+- **Send button no longer drops below the input field on phones.** In Chrome and other Chromium browsers (e.g. on Android) the text field claimed about 270 px, so on screens around 360-390 px wide the send button wrapped into a second line under the input. The field now takes only the width that is left next to the microphone and send buttons. Safari on the iPhone was not affected.
+
 ## [0.9.103] - 2026-10-12
 
 ### Changed
