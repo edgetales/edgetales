@@ -1841,6 +1841,75 @@ def render_settings() -> None:
         save_confirm.set_visibility(False)
 
 
+def render_display_settings(on_saved=None) -> None:
+    """Display-only settings for the Co-GM view: UI language, narrator font, chat
+    font size, screen reader chat. They affect only this player's own view - no
+    TTS/STT/dice and nothing that changes the host's game (API key, narration
+    language, kid mode). Saved to the user config like the full settings.
+    on_saved(changed) is called with {"highlight": bool, "sr_chat": bool} when
+    the chat has to be re-rendered; a UI language change reloads the page."""
+    s = S()
+    lang = L()
+    username = s["current_user"]
+    with ui.expansion(f"{E['gear']} {t('settings.display_title', lang)}").classes("w-full"):
+        ui_lang_labels = list(UI_LANGUAGES.keys())
+        _code_to_label = {v: k for k, v in UI_LANGUAGES.items()}
+        ui_lang_sel = ui.select(ui_lang_labels, label=t("settings.ui_lang", lang),
+                                value=_code_to_label.get(s.get("ui_lang", DEFAULT_LANG), ui_lang_labels[0])).classes("w-full")
+        _font_opts = {
+            t("settings.narrator_font_sans",      lang): "sans",
+            t("settings.narrator_font_serif",     lang): "serif",
+            t("settings.narrator_font_highlight", lang): "highlight",
+        }
+        _cur_font = s.get("narrator_font", "sans")
+        font_sel = ui.select(list(_font_opts.keys()), label=t("settings.narrator_font", lang),
+                             value=next((k for k, v in _font_opts.items() if v == _cur_font),
+                                        list(_font_opts.keys())[0])).classes("w-full")
+        font_sel.on("update:model-value", lambda e: ui.run_javascript(
+            f"document.body.setAttribute('data-narrator-font', '{_font_opts.get(e.args, 'sans')}')"))
+        _cur_size = s.get("chat_font_size", 1.0)
+        with ui.row().classes("w-full items-center gap-2"):
+            ui.label(t("settings.chat_font_size", lang)).classes("text-sm flex-1")
+            size_lbl = ui.label(f"{_cur_size:.2f}×").classes("text-sm").style(
+                "min-width:3rem; text-align:right; color: var(--text-secondary)")
+        size_slider = ui.slider(min=0.75, max=1.5, step=0.05, value=_cur_size).classes("w-full")
+
+        def _apply_size(val):
+            size_lbl.set_text(f"{val:.2f}×")
+            ui.run_javascript(f"document.documentElement.style.setProperty('--chat-font-size', '{val:.2f}rem')")
+        size_slider.on("update:model-value", lambda e: _apply_size(float(e.args)))
+        with ui.row().classes("w-full items-center justify-between"):
+            sr_chat_sw = ui.switch(t("settings.sr_chat", lang), value=s.get("sr_chat", True))
+            _info_btn(t("settings.sr_chat_tooltip", lang))
+
+        def save_display():
+            new_ui_lang = UI_LANGUAGES.get(ui_lang_sel.value, DEFAULT_LANG)
+            old_ui_lang = s.get("ui_lang", DEFAULT_LANG)
+            new_font = _font_opts.get(font_sel.value, "sans")
+            old_font = s.get("narrator_font", "sans")
+            old_sr = s.get("sr_chat", True)
+            s["ui_lang"] = new_ui_lang
+            s["narrator_font"] = new_font
+            s["chat_font_size"] = size_slider.value
+            s["sr_chat"] = sr_chat_sw.value
+            ucfg = load_user_config(username)
+            ucfg.update({"ui_lang": new_ui_lang, "narrator_font": new_font,
+                         "chat_font_size": size_slider.value, "sr_chat": sr_chat_sw.value})
+            save_user_config(username, ucfg)
+            if new_ui_lang != old_ui_lang:
+                s["user_config_loaded"] = False
+                ui.navigate.reload()  # the Co-GM view is rebuilt in the new language
+                return
+            ui.run_javascript(f"document.body.setAttribute('data-narrator-font', '{new_font}')")
+            changed = {"highlight": (new_font == "highlight") != (old_font == "highlight"),
+                       "sr_chat": sr_chat_sw.value != old_sr}
+            if on_saved and any(changed.values()):
+                on_saved(changed)
+            ui.notify(t("settings.saved_confirm", lang), type="positive", position="top")
+        ui.button(f"{E['floppy']} {t('settings.save_btn', lang)}", on_click=save_display,
+                  color="primary").classes("w-full")
+
+
 def render_help() -> None:
     lang = L()
     with ui.expansion(f"{E['question']} {t('help.title', lang)}").classes("w-full"):
@@ -4713,6 +4782,20 @@ async def main_page(client: Client):
                 render_sidebar_status(game, session=s, cogm_view=True)
             ui.separator()
             ui.button(t("coop.cockpit", lang), icon="tune", on_click=lambda: open_cockpit(sess, on_open=_register_cockpit)).props("outline no-caps").classes("w-full mt-2")
+
+            def _cogm_display_changed(changed):
+                chat_el = _ui_refs.get("cogm_chat")
+                if chat_el is None:
+                    return
+                if changed.get("sr_chat"):
+                    if s.get("sr_chat", True):
+                        chat_el.props('role="log" aria-live="polite"')
+                    else:
+                        chat_el.props(remove="role aria-live")
+                _ui_refs["cogm_msg_key"] = None  # re-render the story (quote spans are server-side)
+                _cogm_refresh(sess)
+            ui.separator().classes("mt-2")
+            render_display_settings(on_saved=_cogm_display_changed)
             async def _leave_now():
                 _coop_end(sess, "leave")
                 await _coop_left()

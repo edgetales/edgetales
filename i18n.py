@@ -279,6 +279,7 @@ _STRINGS = {
 
         # Settings
         "settings.title": "Einstellungen",
+        "settings.display_title": "Anzeige",
         "settings.api_key": "API Key",
         "settings.narration_lang": "Erz\u00e4hlsprache",
         "settings.ui_lang": "Oberfl\u00e4chensprache",
@@ -854,6 +855,7 @@ _STRINGS = {
 
         # Settings
         "settings.title": "Settings",
+        "settings.display_title": "Display",
         "settings.api_key": "API Key",
         "settings.narration_lang": "Narration Language",
         "settings.ui_lang": "Interface Language",

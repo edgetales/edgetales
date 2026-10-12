@@ -7,6 +7,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **Display settings for the co-GM:** the co-GM's menu now has a "Display" section with interface language, narrator font (including the highlighted mode with coloured dialogue and characters), chat font size and the screen reader chat option. These only affect the co-GM's own view and are saved to their profile; previously the co-GM had to leave the session to change them.
+
 ### Changed
 - **Co-op on phones:** putting the browser in the background while waiting for the other side is now fully supported. A co-op partner whose browser is in the background reads as "not active for N min" instead of "offline", and both sides get a notice when it is their turn ("elvira has answered - it's your turn", "New scene - Lars is waiting for your answer").
 - Returning to the app within 10 minutes (previously 3) replays everything that happened meanwhile; after a longer break the page reloads by itself once a scene finished in the meantime, and shows a note while it is still being narrated.
