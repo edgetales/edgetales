@@ -41,7 +41,7 @@ def test_every_ui_emoji_has_an_icon():
 
 
 def test_icon_names_exist_and_none_unused():
-    used = set(icons.EMOJI_ICON.values())
+    used = set(icons.EMOJI_ICON.values()) | set(icons.MATERIAL_ICON.values())
     assert used <= set(icons.ICON_SVG), sorted(used - set(icons.ICON_SVG))
     assert set(icons.ICON_SVG) <= used, sorted(set(icons.ICON_SVG) - used)
 
@@ -58,6 +58,7 @@ def test_head_html_embeds_valid_data():
     m = re.search(r"var D = (\{.*?\});\n", html, re.S)
     data = json.loads(m.group(1))
     assert data["icons"] == icons.EMOJI_ICON and data["dots"] == icons.DOT_COLORS
+    assert data["mi"] == icons.MATERIAL_ICON
     assert set(data["svg"]) == set(icons.ICON_SVG)
 
 
@@ -67,3 +68,19 @@ def test_choice_labels_use_one_symbol_per_meaning():
         for lang, labels in table.items():
             firsts = [EMOJI_RE.search(v).group(0) for v in labels.values()]
             assert len(firsts) == len(set(firsts)), (lang, firsts)
+
+
+def _material_names(src):
+    names = set(re.findall(r"""icon\s*=\s*["']([a-z0-9_]+)["']""", src))
+    names |= set(re.findall(r"""ui\.icon\(\s*["']([a-z0-9_]+)["']""", src))
+    names |= set(re.findall(r"""\["icon"\]\s*=\s*["']([a-z0-9_]+)["']""", src))
+    for block in re.findall(r"_COOP_(?:IMPULSE|BACKGROUND)_TILES = \((.*?)\n\)", src, re.S):
+        names |= set(re.findall(r'\("[a-z_]+",\s*"([a-z0-9_]+)"\)', block))
+    return names
+
+
+def test_every_material_icon_has_a_lucide_icon():
+    """Quasar icons used by the app (buttons, ui.icon, co-op tiles) are drawn as Lucide too."""
+    src = (ROOT / "app.py").read_text(encoding="utf-8")
+    missing = sorted(_material_names(src) - set(icons.MATERIAL_ICON))
+    assert not missing, "Add to icons.MATERIAL_ICON: " + ", ".join(missing)

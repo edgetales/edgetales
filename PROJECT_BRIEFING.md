@@ -9,7 +9,7 @@
 
 | | |
 |---|---|
-| **Version** | v0.9.102 |
+| **Version** | v0.9.103 |
 | **Codebase** | ~18,100 lines across 5 source files + config, plus offline test suite in `tests/` |
 | **Tests** | `python -m pytest tests -q` (pytest + jsonschema; fake AI, no API key) |
 | **Stack** | Python 3.11+, NiceGUI, Anthropic SDK (Structured Outputs), reportlab, edge-tts, faster-whisper, wonderwords, stop-words, nameparser, cryptography |
@@ -478,7 +478,7 @@ MISS (all three): bond -1, spirit -1 or -2. Disposition ladder: `hostile → dis
 - ARIA labels need **both** `de` and `en` entries.
 - Voice/TTS labels resolved via `resolve_voice_id()` / `resolve_tts_backend()` — never assume label == ID.
 - **Sidebar story heading is structure-neutral** (`sidebar.story`: "Handlung" / "Story", always 📖) — never show the blueprint's `structure_type` to the player.
-- **UI symbols are Lucide line icons, not emoji.** Python strings keep emoji (`E[...]`, label dicts) as stable tokens and as fallback text outside the browser; `icons.icon_head_html()` (appended to `CUSTOM_CSS`) swaps every mapped emoji for an inline SVG in the browser via a MutationObserver. Vue-safe: the original text node keeps the text before the first emoji and the icons/rest follow as `data-et-own` siblings, rebuilt when Vue rewrites the node. **One emoji per meaning** — a new symbol needs its own emoji in `E` plus an `icons.EMOJI_ICON` entry (`tests/test_icons.py` fails otherwise); coloured circles become dots (`DOT_COLORS`). Icon colour only where it carries meaning: `track-label health|spirit|supply|chaos` classes on the sidebar and help lines, accent colour in creation choice buttons.
+- **UI symbols are Lucide line icons, not emoji.** Python strings keep emoji (`E[...]`, label dicts) as stable tokens and as fallback text outside the browser; `icons.icon_head_html()` (appended to `CUSTOM_CSS`) swaps every mapped emoji for an inline SVG in the browser via a MutationObserver. Vue-safe: the original text node keeps the text before the first emoji and the icons/rest follow as `data-et-own` siblings, rebuilt when Vue rewrites the node. **One emoji per meaning** — a new symbol needs its own emoji in `E` plus an `icons.EMOJI_ICON` entry (`tests/test_icons.py` fails otherwise); coloured circles become dots (`DOT_COLORS`). Quasar/Material ligature icons (`ui.button(icon=...)`, `ui.icon(...)`, Quasar internals like the expansion/select arrows) are mapped via `icons.MATERIAL_ICON`: the ligature text stays in the `<i>` (transparent, keeps the size) and a Lucide SVG is laid over it; a new Material icon name needs an entry (tested). Icon colour only where it carries meaning: `track-label health|spirit|supply|chaos` classes on the sidebar and help lines, accent colour in creation choice buttons.
 - **Visible UI text uses a plain hyphen `-`, never an em dash.** `E['dash']` stays `—` because `engine.py` uses it inside AI prompts — do not use it for UI strings in `app.py`; write `-` directly.
 
 ### Voice

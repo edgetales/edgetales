@@ -14,6 +14,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - The Co-GM sees the story, characters, the protagonist's stats and location - but not the player's inputs, dice, clocks or chaos factor.
 - **Behind the scenes:** player and Co-GM can open a scene-by-scene list of everything the Co-GM contributed that has already appeared in the story - answers, seeds, rumours, secrets and false trails. Content that has not surfaced yet is only counted, so nothing is spoiled. Also available after the session from the co-op menu.
 
+## [0.9.103] - 2026-10-12
+
+### Changed
+- **Buttons and controls use the same line icons.** The remaining filled symbols - menu, send, microphone, the arrows of expandable sections and drop-down lists, play, info, close and delete buttons, notifications - are now drawn in the same thin Lucide line style as the rest of the interface.
+
 ## [0.9.102] - 2026-10-12
 
 ### Changed
