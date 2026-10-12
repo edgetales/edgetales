@@ -198,14 +198,13 @@ _ICON_CSS = """
 .et-dot { display:inline-block; width:0.55em; height:0.55em; border-radius:50%;
           margin:0 0.5em 0.08em 0.1em; vertical-align:middle; flex-shrink:0; }
 .et-dot.et-end { margin-right:0; }
-/* colour only where it carries meaning */
-.track-label.health .et-ic { color:#ef4444; }
-.track-label.spirit .et-ic { color:#60a5fa; }
-.track-label.supply .et-ic { color:var(--accent-light); }
-.track-label.chaos  .et-ic { color:#c98f85; }
-.choice-btn .et-ic { width:1.22em; height:1.22em; vertical-align:-0.24em; margin-right:0.45em; color:var(--accent-light); }
 .q-expansion-item .q-item__label > .et-ic, .q-drawer .text-sm.font-semibold > .et-ic { color:var(--text-secondary); }
-.q-drawer .track-label > .et-ic { opacity:1; }
+/* colour only where it carries meaning */
+.q-drawer .track-label.health > .et-ic, .track-label.health .et-ic { color:#ef4444; }
+.q-drawer .track-label.spirit > .et-ic, .track-label.spirit .et-ic { color:#60a5fa; }
+.q-drawer .track-label.supply > .et-ic, .track-label.supply .et-ic { color:var(--accent-light); }
+.q-drawer .track-label.chaos > .et-ic,  .track-label.chaos  .et-ic { color:#c98f85; }
+.choice-btn .et-ic { width:1.22em; height:1.22em; vertical-align:-0.24em; margin-right:0.45em; color:var(--accent-light); }
 """
 
 # Runs in the browser. Vue owns the text nodes it renders and may later write a

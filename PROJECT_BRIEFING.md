@@ -91,6 +91,8 @@ i18n.py          (~1,400 L) — UI strings, emojis, label dicts, voice options, 
 voice.py           (~590 L) — EdgeTTS, Chatterbox, VoiceEngine, STT (faster-whisper)
 custom_head.html   (~450 L) — CSS, meta tags, PWA, Google Fonts (Inter + Cinzel), CSS
                               variable system, EdgeTales Design Mode CSS, entity-highlight JS
+icons.py           (~250 L) — Lucide line icons for the UI: emoji -> icon table, SVG bodies,
+                              browser runtime that draws them (appended to the page head)
 ```
 
 **Key design principle**: `engine.py`, `voice.py`, and `i18n.py` have zero NiceGUI imports — framework-independent. Easy to test and swap frontend.
@@ -455,6 +457,7 @@ MISS (all three): bond -1, spirit -1 or -2. Disposition ladder: `hostile → dis
 - ARIA labels need **both** `de` and `en` entries.
 - Voice/TTS labels resolved via `resolve_voice_id()` / `resolve_tts_backend()` — never assume label == ID.
 - **Sidebar story heading is structure-neutral** (`sidebar.story`: "Handlung" / "Story", always 📖) — never show the blueprint's `structure_type` to the player.
+- **UI symbols are Lucide line icons, not emoji.** Python strings keep emoji (`E[...]`, label dicts) as stable tokens and as fallback text outside the browser; `icons.icon_head_html()` (appended to `CUSTOM_CSS`) swaps every mapped emoji for an inline SVG in the browser via a MutationObserver. Vue-safe: the original text node keeps the text before the first emoji and the icons/rest follow as `data-et-own` siblings, rebuilt when Vue rewrites the node. **One emoji per meaning** — a new symbol needs its own emoji in `E` plus an `icons.EMOJI_ICON` entry (`tests/test_icons.py` fails otherwise); coloured circles become dots (`DOT_COLORS`). Icon colour only where it carries meaning: `track-label health|spirit|supply|chaos` classes on the sidebar and help lines, accent colour in creation choice buttons.
 - **Visible UI text uses a plain hyphen `-`, never an em dash.** `E['dash']` stays `—` because `engine.py` uses it inside AI prompts — do not use it for UI strings in `app.py`; write `-` directly.
 
 ### Voice
