@@ -5,7 +5,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## [Unreleased]
+## [0.9.103] - 2026-10-12
 
 ### Changed
 - **Buttons and controls use the same line icons.** The remaining filled symbols - menu, send, microphone, the arrows of expandable sections and drop-down lists, play, info, close and delete buttons, notifications - are now drawn in the same thin Lucide line style as the rest of the interface.
