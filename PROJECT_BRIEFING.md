@@ -9,7 +9,7 @@
 
 | | |
 |---|---|
-| **Version** | v0.9.104 |
+| **Version** | v1.0.0 |
 | **Codebase** | ~14,200 lines across 5 source files + config, plus offline test suite in `tests/` |
 | **Tests** | `python -m pytest tests -q` (pytest + jsonschema; fake AI, no API key) |
 | **Stack** | Python 3.11+, NiceGUI, Anthropic SDK (Structured Outputs), reportlab, edge-tts, faster-whisper, wonderwords, stop-words, nameparser, cryptography |
