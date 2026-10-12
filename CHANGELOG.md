@@ -5,6 +5,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [1.0.0] - 2026-10-12
+
+### Changed
+- **EdgeTales 1.0 - first stable release.** No new features compared to 0.9.104: this version marks the engine as stable after the 0.9 series - the "AI narrates, dice decide" pipeline (Brain, Narrator, Metadata Extractor, Director, Story Architect) with Ironsworn rolls and routine actions without dice, persistent NPCs with memories and relationships, clocks, chaos and multi-chapter campaigns, `##` corrections and momentum burns, the German/English interface with line icons, voice input and output, and PDF export. Existing save games load unchanged.
+
 ## [0.9.104] - 2026-10-12
 
 ### Changed
