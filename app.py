@@ -3123,6 +3123,7 @@ class CoopLive:
         self.typing_at = 0.0          # host's last keystroke
         self.question_pending = False  # question generation running
         self.cockpit_hold = False     # Co-GM has the cockpit open and has not released this round
+        self.cockpit_owner = None     # token of the open cockpit dialog that holds (stale pages must not release)
         self.host_waiting = False     # host's turn is waiting for the Co-GM right now
         self.active = True
 
@@ -3545,8 +3546,11 @@ def open_cockpit(sess: "CoopLive", on_open=None) -> None:
         return
     sel = {"impulse": None, "background": None}
     ed: dict = {}                     # live refs of the impulse editor button
+    owner = object()                  # this dialog's token
+    sess.cockpit_owner = owner
     sess.cockpit_hold = True          # the next scene waits while the cockpit is open
     sess.bump()
+    armed_scene = {"n": (game.chapter_number, game.scene_count)}  # scene this cockpit last held
 
     with ui.dialog() as dlg, ui.card().classes("w-full p-4 gap-2").style(
             "max-width: 560px; max-height: 88vh; overflow-y: auto"):
@@ -3786,7 +3790,11 @@ def open_cockpit(sess: "CoopLive", on_open=None) -> None:
             """Called by the Co-GM view on a new scene: slot, lists and the impulse
             button update; open editors (and typed text) stay as they are. A cockpit
             that stays open into the new scene holds that scene again."""
-            if dlg.value and not sess.host_waiting:
+            # Re-arm only for a NEW scene - the host's own input also changes the
+            # message list, and must not undo "no impulse this round".
+            if (dlg.value and not sess.host_waiting and sess.cockpit_owner is owner
+                    and (game.chapter_number, game.scene_count) != armed_scene["n"]):
+                armed_scene["n"] = (game.chapter_number, game.scene_count)
                 sess.cockpit_hold = True
             _render_hold()
             _render_slot()
@@ -3798,6 +3806,9 @@ def open_cockpit(sess: "CoopLive", on_open=None) -> None:
 
     def _on_hide(*_):
         hold_timer.deactivate()
+        if sess.cockpit_owner is not owner:
+            return                      # a newer cockpit (e.g. after a reload) holds now
+        sess.cockpit_owner = None
         if sess.cockpit_hold:
             sess.cockpit_hold = False   # closing the cockpit lets the scene go on
             sess.bump()
@@ -4827,7 +4838,7 @@ async def main_page(client: Client):
         """Co-GM phase: read-only story of the host, question panel, cockpit."""
         s["_phase"] = "cogm"
         sess.cockpit_hold = False   # a rebuilt view has no open cockpit
-
+        sess.cockpit_owner = None
         lang = L()
         game = sess.game
         _ui_refs.clear()
