@@ -1386,7 +1386,9 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                         title_html = f"<b>{_dn_safe}</b>"
                         if is_active:
                             title_html += f" {E['check']}"
-                        with ui.row().classes("w-full items-center no-wrap gap-1"):
+                        # Right padding matches the action grid below, so the send
+                        # button sits in line with the delete button
+                        with ui.row().classes("w-full items-center no-wrap gap-1").style("padding-right: 0.25rem"):
                             ui.html(title_html).classes("text-sm").style("flex: 1 1 auto; min-width: 0")
                             # --- Send scenario start to another user (top-right mini button) ---
                             if share_targets and info.get("has_opening"):
@@ -1408,7 +1410,7 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                                 _do_share = make_share(sname)
                                 with ui.button(icon="send").props(
                                     f'flat round dense size=sm aria-label="{_share_aria}" aria-haspopup="menu"'
-                                ).style("margin: -6px -4px -6px 0; flex: 0 0 auto"):
+                                ).style("margin: -6px 0; flex: 0 0 auto"):
                                     with ui.menu().props("anchor='bottom right' self='top right'"):
                                         ui.label(t("actions.share_title", lang)).classes(
                                             "text-xs font-semibold px-3 pt-2")
