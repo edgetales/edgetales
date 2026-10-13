@@ -5,7 +5,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## [Unreleased]
+## [1.3.0] - 2026-10-13
 
 ### Added
 - **New character from the director's cockpit:** the co-GM can invent a character with the new "New character" tile - name and a short description are required, goal, behaviour under pressure, a secret and the attitude toward the protagonist are optional. "In the next scene" uses the impulse for the next scene, "When it fits" lets the narrator bring the character in when the story offers an opening (with a stronger nudge after five scenes). The character only becomes part of the story when it actually appears: until then the player sees nothing of it, and afterwards it is an ordinary character - nothing shows that it came from the co-GM. Goal, behaviour and secret shape how it acts without being revealed. Up to two characters can wait for their entrance; a waiting one can be removed again.
