@@ -218,14 +218,6 @@ _STRINGS = {
         "sidebar.story": "Handlung",
         "sidebar.act": "Akt",
 
-        # Story Arc Phase Labels
-        "story.setup": "Einf\u00fchrung",
-        "story.confrontation": "Konfrontation",
-        "story.climax": "Klimax",
-        "story.ki_introduction": "Ki",
-        "story.sho_development": "Sh\u014d",
-        "story.ten_twist": "Ten",
-        "story.ketsu_resolution": "Ketsu",
 
         # Sidebar — Actions
         "actions.recap": "Was bisher geschah...",
@@ -801,14 +793,6 @@ _STRINGS = {
         "sidebar.story": "Story",
         "sidebar.act": "Act",
 
-        # Story Arc Phase Labels
-        "story.setup": "Setup",
-        "story.confrontation": "Confrontation",
-        "story.climax": "Climax",
-        "story.ki_introduction": "Ki",
-        "story.sho_development": "Sh\u014d",
-        "story.ten_twist": "Ten",
-        "story.ketsu_resolution": "Ketsu",
 
         # Sidebar — Actions
         "actions.recap": "Story so far...",
@@ -1732,23 +1716,6 @@ def get_archetype_label(code: str, lang: str = DEFAULT_LANG) -> str:
     if code == "custom":
         return t("save_info.archetype_custom", lang)
     return _ARCHETYPES.get(lang, _ARCHETYPES[FALLBACK_LANG]).get(code, code)
-
-
-# ===============================================================
-# STORY ARC PHASE LABEL MAPPING
-# ===============================================================
-
-def get_story_phase_labels(lang: str = DEFAULT_LANG) -> dict:
-    """Returns {phase_key: display_label} for story arc phases."""
-    return {
-        "setup": t("story.setup", lang),
-        "confrontation": t("story.confrontation", lang),
-        "climax": t("story.climax", lang),
-        "ki_introduction": t("story.ki_introduction", lang),
-        "sho_development": t("story.sho_development", lang),
-        "ten_twist": t("story.ten_twist", lang),
-        "ketsu_resolution": t("story.ketsu_resolution", lang),
-    }
 
 
 # ===============================================================
