@@ -5,6 +5,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **Story sidebar shows only act numbers:** the current act is now labelled just "Act 1" instead of "Act 1 - Ki" / "Act 1 - Setup". The phase names gave away the story structure and confused more than they helped.
+
 ## [1.2.0] - 2026-10-12
 
 ### Added

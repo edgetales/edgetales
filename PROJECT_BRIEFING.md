@@ -485,7 +485,7 @@ MISS (all three): bond -1, spirit -1 or -2. Disposition ladder: `hostile → dis
 - Every user-visible string through `t(key, lang)` — no hardcoded strings.
 - ARIA labels need **both** `de` and `en` entries.
 - Voice/TTS labels resolved via `resolve_voice_id()` / `resolve_tts_backend()` — never assume label == ID.
-- **Sidebar story heading is structure-neutral** (`sidebar.story`: "Handlung" / "Story", always 📖) — never show the blueprint's `structure_type` to the player.
+- **Sidebar story heading is structure-neutral** (`sidebar.story`: "Handlung" / "Story", always 📖) — never show the blueprint's `structure_type` to the player. Acts are listed by number only ("Akt 1" / "Act 1"); phase names (Ki, Setup, …) are never shown.
 - **UI symbols are Lucide line icons, not emoji.** Python strings keep emoji (`E[...]`, label dicts) as stable tokens and as fallback text outside the browser; `icons.icon_head_html()` (appended to `CUSTOM_CSS`) swaps every mapped emoji for an inline SVG in the browser via a MutationObserver. Vue-safe: the original text node keeps the text before the first emoji and the icons/rest follow as `data-et-own` siblings, rebuilt when Vue rewrites the node. **One emoji per meaning** — a new symbol needs its own emoji in `E` plus an `icons.EMOJI_ICON` entry (`tests/test_icons.py` fails otherwise); coloured circles become dots (`DOT_COLORS`). Quasar/Material ligature icons (`ui.button(icon=...)`, `ui.icon(...)`, Quasar internals like the expansion/select arrows) are mapped via `icons.MATERIAL_ICON`: the ligature text stays in the `<i>` (transparent, keeps the size) and a Lucide SVG is laid over it; a new Material icon name needs an entry (tested). Icon colour only where it carries meaning: `track-label health|spirit|supply|chaos` classes on the sidebar and help lines, accent colour in creation choice buttons.
 - **Visible UI text uses a plain hyphen `-`, never an em dash.** `E['dash']` stays `—` because `engine.py` uses it inside AI prompts — do not use it for UI strings in `app.py`; write `-` directly.
 
@@ -543,7 +543,6 @@ Key translation functions:
 | `t(key, lang)` | Main lookup — returns string or raises KeyError |
 | `ta(key, lang)` | ARIA label variant (separate `ARIA_LABELS` dict) |
 | `get_genre_label(code, lang)` / `get_tone_label(code, lang)` / `get_archetype_label(code, lang)` | Code → localized label (`get_archetype_label("custom")` → `save_info.archetype_custom`) |
-| `get_story_phase_labels(lang)` | Story arc phases: `{"setup": "Exposition", ...}` |
 | `translate_consequence(text, lang)` | Consequence keys → target language (word-boundary regex, backward compat) |
 
 **Archetype codes** (stable Dict keys in `_ARCHETYPE_PRIMARY_STAT` / `_ARCHETYPE_STAT_DEFAULTS` — renaming requires updating those structures):  

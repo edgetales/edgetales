@@ -146,7 +146,7 @@ from i18n import (
     get_stat_labels, get_move_labels, get_result_labels,
     get_disposition_labels, get_position_labels, get_effect_labels,
     get_time_labels, get_dice_display_options, get_no_voice_sample_label,
-    get_whisper_models, get_story_phase_labels,
+    get_whisper_models,
     get_genres, get_tones, get_archetypes,
     get_genre_label, get_tone_label, get_archetype_label,
     translate_consequence,
@@ -1131,20 +1131,19 @@ def _render_sidebar_story_npcs(game: GameState, lang: str) -> None:
         bp = game.story_blueprint
         act = get_current_act(game)
         ui.separator()
-        # Neutral heading: never reveal which act structure the blueprint uses
+        # Neutral heading and act labels: never reveal the act structure or phase names
         si = E['book']
         sl_arc = t("sidebar.story", lang)
         ch_l = f" - {t('sidebar.chapter', lang)} {game.chapter_number}" if game.chapter_number > 1 else ""
         ui.label(f"{si} {sl_arc}{ch_l}").classes("text-sm font-semibold")
         act_l = t("sidebar.act", lang)
-        pl = get_story_phase_labels(lang)
         for i,a in enumerate(bp["acts"]):
-            an = i+1; sr = a.get("scene_range",[1,20]); phase = pl.get(a["phase"],a["phase"])
+            an = i+1; sr = a.get("scene_range",[1,20])
             if an < act["act_number"]: ui.label(f"{act_l} {an} {E['check']}").classes("text-xs text-gray-500")
             elif an == act["act_number"]:
                 p = max(0,min(100,(game.scene_count-sr[0])/max(1,sr[1]-sr[0])*100))
                 _act_aria = t("aria.story_progress", lang, n=an)
-                ui.label(f"{E['play']} {act_l} {an} - {phase}").classes("text-xs font-bold")
+                ui.label(f"{E['play']} {act_l} {an}").classes("text-xs font-bold")
                 with ui.element('div').classes('track-bar w-full') \
                         .props(f'role="progressbar" aria-valuenow="{int(p)}" aria-valuemin="0" aria-valuemax="100" aria-label="{_act_aria}"'):
                     ui.element('div').classes('track-fill progress').style(f'width:{p:.0f}%')
