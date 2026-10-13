@@ -3411,6 +3411,11 @@ class GameState:
     # live while turns run; the inputs a turn consumed are stored separately in
     # last_turn_snapshot["coop_inputs"]. See the CO-OP section.
     coop: dict = field(default_factory=dict)
+    # Scenario start (chapter 1 opening, before any player input): persisted state
+    # fields + opening chat messages. Captured once by save_game() while the game is
+    # still at its opening, kept by "Save as" and chapters, never by the turn
+    # snapshot. Used to send the scenario to another user (copy_scenario_to_user()).
+    opening_state: Optional[dict] = field(default=None, repr=False)
 
     def get_stat(self, name: str) -> int:
         return getattr(self, name, 0)
@@ -8568,7 +8573,48 @@ SAVE_FIELDS = [
     "version_history",
     # Co-op mode: Co-GM question/answer, cockpit signals, planted seeds
     "coop",
+    # Scenario start for "send scenario to another user"
+    "opening_state",
 ]
+
+# Fields that never travel inside opening_state: the opening itself (no nesting),
+# the turn snapshot (none exists at the opening) and live Co-GM state.
+_OPENING_EXCLUDED_FIELDS = {"opening_state", "last_turn_snapshot", "coop"}
+
+
+def _is_at_opening(game: GameState) -> bool:
+    """True while the game is still at its very first scene: chapter 1, opening
+    logged, no player turn played yet."""
+    log_ = game.session_log or []
+    return (game.chapter_number == 1
+            and game.scene_count <= 1
+            and len(log_) == 1
+            and log_[0].get("result") == "opening"
+            and not game.last_turn_snapshot)
+
+
+def _clean_chat_messages(chat_messages: list | None) -> list:
+    """Chat history as stored on disk: no audio binary data, no transient recaps."""
+    return [
+        {k: v for k, v in msg.items() if k not in ("audio_bytes", "audio_format")}
+        for msg in (chat_messages or [])
+        if not msg.get("recap")
+    ]
+
+
+def capture_opening_state(game: GameState, chat_messages: list = None) -> bool:
+    """Record the scenario start once, while the game is still at its opening.
+    Returns True if it was captured now."""
+    if game.opening_state or not _is_at_opening(game):
+        return False
+    game.opening_state = {
+        "fields": copy.deepcopy({k: getattr(game, k) for k in SAVE_FIELDS
+                                 if k not in _OPENING_EXCLUDED_FIELDS}),
+        "chat_messages": copy.deepcopy(_clean_chat_messages(chat_messages)),
+        "captured_at": datetime.now().isoformat(),
+    }
+    log(f"[Save] Opening state captured ({game.player_name})")
+    return True
 
 # Compact JSON for game saves and chapter archives: no indentation/spaces. Saves
 # carry the whole chat history and are written twice per turn — compact output is
@@ -8586,6 +8632,8 @@ def save_game(game: GameState, username: str, chat_messages: list = None,
     # list, chapters and "Save As" copies inherit it — no read of the old file.
     if not game.version_history or game.version_history[-1] != VERSION:
         game.version_history.append(VERSION)
+    # First save of a new game (or an older save still untouched): keep its start
+    capture_opening_state(game, chat_messages)
     data = {"saved_at": datetime.now().isoformat()}
     data["engine_version"] = VERSION
     data.update({k: getattr(game, k) for k in SAVE_FIELDS})
@@ -8594,12 +8642,7 @@ def save_game(game: GameState, username: str, chat_messages: list = None,
         data["last_turn_snapshot"] = dict(data["last_turn_snapshot"])
         data["last_turn_snapshot"]["roll"] = dataclasses.asdict(data["last_turn_snapshot"]["roll"])
     # Chat history for visual restoration (strip audio binary data and transient recaps)
-    raw_messages = chat_messages or []
-    data["chat_messages"] = [
-        {k: v for k, v in msg.items() if k not in ("audio_bytes", "audio_format")}
-        for msg in raw_messages
-        if not msg.get("recap")
-    ]
+    data["chat_messages"] = _clean_chat_messages(chat_messages)
     _atomic_write_text(path, json.dumps(data, **_SAVE_JSON_KW))
     log(f"[Save] Game saved: {username}/{name} (Scene {game.scene_count}, {len(data['chat_messages'])} chat msgs)")
     return path
@@ -8631,6 +8674,10 @@ def load_game(username: str, name: str = "autosave") -> tuple[Optional[GameState
     if not isinstance(game.coop, dict):
         game.coop = {}
     game.coop.pop("_turn", None)
+    # Scenario start: older saves have none (captured later only if still at opening)
+    if not (isinstance(game.opening_state, dict)
+            and isinstance(game.opening_state.get("fields"), dict)):
+        game.opening_state = None
     # Reconstruct RollResult dataclass from plain dict (was serialized in save_game)
     if (game.last_turn_snapshot is not None
             and isinstance(game.last_turn_snapshot.get("roll"), dict)):
@@ -8799,6 +8846,7 @@ def _read_save_info(path: Path, name: str) -> dict:
             "content_lines": data.get("content_lines", ""),
             "engine_version": data.get("engine_version", ""),
             "version_history": data.get("version_history", []),
+            "has_opening": _save_data_has_opening(data),
         }
     except Exception:
         return {"name": name, "player_name": "?", "scene_count": 0,
@@ -8806,7 +8854,8 @@ def _read_save_info(path: Path, name: str) -> dict:
                 "setting_tone": "", "setting_archetype": "",
                 "character_concept": "", "backstory": "", "player_wishes": "",
                 "content_lines": "",
-                "engine_version": "", "version_history": []}
+                "engine_version": "", "version_history": [],
+                "has_opening": False}
 
 
 def list_saves_with_info(username: str) -> list[dict]:
@@ -8831,6 +8880,85 @@ def delete_save(username: str, name: str) -> bool:
         log(f"[Save] Deleted: {username}/{name}")
         return True
     return False
+
+
+# ===============================================================
+# SCENARIO SHARING (send a save's start state to another user)
+# ===============================================================
+
+SAVE_NAME_MAX_CHARS = 60
+
+
+def _save_data_has_opening(data: dict) -> bool:
+    """True if a raw save dict can provide its scenario start: a stored
+    opening_state, or an older save that is still at its opening scene."""
+    op = data.get("opening_state")
+    if isinstance(op, dict) and isinstance(op.get("fields"), dict):
+        return True
+    log_ = data.get("session_log") or []
+    return (data.get("chapter_number", 1) == 1
+            and data.get("scene_count", 0) <= 1
+            and len(log_) == 1
+            and isinstance(log_[0], dict)
+            and log_[0].get("result") == "opening"
+            and not data.get("last_turn_snapshot"))
+
+
+def _safe_save_name(name: str) -> str:
+    """Turn free text (e.g. a character name) into a usable save-slot name."""
+    n = re.sub(r'[/\\.\s]+', '_', str(name or ""))
+    n = _INVALID_NAME_RE.sub("", n).strip("_")[:SAVE_NAME_MAX_CHARS].strip("_")
+    return n if n and n != "autosave" else "scenario"
+
+
+def _unique_save_name(username: str, base: str) -> str:
+    """base, or base_2, base_3, ... if a slot of that name already exists."""
+    existing = set(list_saves(username))
+    if base not in existing:
+        return base
+    i = 2
+    while f"{base}_{i}" in existing:
+        i += 1
+    return f"{base}_{i}"
+
+
+def copy_scenario_to_user(src_user: str, save_name: str, dest_user: str) -> str | None:
+    """Copy the scenario start of src_user's save into a new slot of dest_user.
+
+    Only the start state travels: character, setting, story blueprint, opening NPCs,
+    clocks and the opening narration. Player inputs, later scenes, chapters, the
+    turn snapshot and Co-GM state do not. The copy keeps the opening_state, so the
+    recipient can pass the scenario on. Never overwrites an existing slot.
+    Returns the new slot name, or None if the copy was not possible."""
+    if not (is_valid_username(src_user) and is_valid_username(dest_user)):
+        return None
+    if not _get_user_dir(dest_user).is_dir():
+        log(f"[Share] Unknown recipient: {dest_user!r}", level="warning")
+        return None
+    src, _chat = load_game(src_user, save_name)
+    if src is None:
+        return None
+    if not src.opening_state:
+        # Older save still at its opening: its current state is the start state
+        capture_opening_state(src, _chat)
+    opening = src.opening_state
+    if not opening:
+        log(f"[Share] {src_user}/{save_name} has no scenario start", level="warning")
+        return None
+
+    game = GameState()
+    for k, v in copy.deepcopy(opening.get("fields") or {}).items():
+        if k in SAVE_FIELDS and k not in _OPENING_EXCLUDED_FIELDS:
+            setattr(game, k, v)
+    game.last_turn_snapshot = None
+    game.coop = {}
+    game.opening_state = copy.deepcopy(opening)
+    chat = copy.deepcopy(opening.get("chat_messages") or [])
+
+    name = _unique_save_name(dest_user, _safe_save_name(game.player_name))
+    save_game(game, dest_user, chat, name)
+    log(f"[Share] Scenario {src_user}/{save_name} -> {dest_user}/{name}")
+    return name
 
 
 # ===============================================================

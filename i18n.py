@@ -238,6 +238,10 @@ _STRINGS = {
         "actions.delete": "L\u00f6schen",
         "actions.delete_confirm": "Spielstand \u00ab{name}\u00bb wirklich l\u00f6schen?",
         "actions.deleted": "Gel\u00f6scht!",
+        "actions.share_title": "Spielstart senden an:",
+        "actions.share_hint": "Kopiert nur den Startzustand - ohne bisherige Eingaben.",
+        "actions.share_done": "Szenario an {user} gesendet (Spielstand \u00ab{name}\u00bb).",
+        "actions.share_failed": "Szenario konnte nicht gesendet werden.",
         "actions.new_game": "Neues Spiel",
         "actions.new_game_confirm": "Aktuelles Spiel beenden und neu starten?",
         "actions.export": "PDF Export",
@@ -555,6 +559,7 @@ _STRINGS = {
         "aria.load_save": "Spielstand {name} laden",
         "aria.delete_save": "Spielstand {name} löschen",
         "aria.save_info": "Spielstand-Info anzeigen",
+        "aria.share_save": "Startzustand von {name} an anderen Benutzer senden",
         "aria.location": "Ort",
 
         # Settings
@@ -813,6 +818,10 @@ _STRINGS = {
         "actions.delete": "Delete",
         "actions.delete_confirm": "Really delete save \u00ab{name}\u00bb?",
         "actions.deleted": "Deleted!",
+        "actions.share_title": "Send game start to:",
+        "actions.share_hint": "Copies only the starting state - no inputs so far.",
+        "actions.share_done": "Scenario sent to {user} (save \u00ab{name}\u00bb).",
+        "actions.share_failed": "Could not send the scenario.",
         "actions.new_game": "New Game",
         "actions.new_game_confirm": "End current game and start fresh?",
         "actions.export": "PDF Export",
@@ -1129,6 +1138,7 @@ _STRINGS = {
         "aria.load_save": "Load save {name}",
         "aria.delete_save": "Delete save {name}",
         "aria.save_info": "Show save info",
+        "aria.share_save": "Send starting state of {name} to another user",
         "aria.location": "Location",
 
         # Settings
