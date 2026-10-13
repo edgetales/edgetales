@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **New character from the director's cockpit:** the co-GM can invent a character with the new "New character" tile - name and a short description are required, goal, behaviour under pressure, a secret and the attitude toward the protagonist are optional. "In the next scene" uses the impulse for the next scene, "When it fits" lets the narrator bring the character in when the story offers an opening (with a stronger nudge after five scenes). The character only becomes part of the story when it actually appears: until then the player sees nothing of it, and afterwards it is an ordinary character - nothing shows that it came from the co-GM. Goal, behaviour and secret shape how it acts without being revealed. Up to two characters can wait for their entrance; a waiting one can be removed again.
 - **Send a scenario to another player:** save cards now have a small send button in the top-right corner. It lists the other players; picking one copies the game's starting point - character, setting, story and opening scene - into a new save of that player, without any of your inputs or later scenes. The recipient finds it in their save list (named after the character, never overwriting an existing save) and can pass it on in turn. Works for games started from this version on, and for older saves that are still at their opening scene. The send button lines up with the delete button below it.
 
 ### Changed

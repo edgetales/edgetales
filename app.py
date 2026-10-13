@@ -137,8 +137,8 @@ from engine import (
     call_setup_brain, start_new_game, start_new_chapter,
     process_turn, process_momentum_burn, process_correction, call_recap,
     run_deferred_director, generate_epilogue,
-    COGM_SIGNALS, coop_state, coop_waiting_for_cogm, coop_submit_answer,
-    coop_add_signal, coop_remove_signal, coop_start_session, coop_end_session,
+    COGM_SIGNALS, COGM_NPC_DISPOSITIONS, coop_state, coop_waiting_for_cogm, coop_submit_answer,
+    coop_add_signal, coop_add_new_npc, coop_remove_signal, coop_start_session, coop_end_session,
     coop_public_view, coop_pending_impulse, coop_reveal, generate_cogm_question,
 )
 from icons import icon_head_html
@@ -3539,6 +3539,7 @@ _COOP_IMPULSE_TILES = (
 _COOP_BACKGROUND_TILES = (
     ("secret_intent", "visibility_off"), ("rumor", "campaign"),
     ("plant_secret", "lock"), ("false_trail", "alt_route"),
+    ("new_npc", "person"),
 )
 # Weather has no tile any more (a direction covers it); the engine still knows the
 # signal, so a save with weather still active lists it with its icon until removed.
@@ -3564,6 +3565,8 @@ def _coop_impulse_text(sg: dict, lang: str) -> str:
     if sg.get("scenes_left") and not sg.get("impulse"):
         label = f"{label} ({t('coop.scenes_left', lang, n=sg['scenes_left'])})"
     extra = t(f"coop.val_{sg['value']}", lang) if sg.get("value") else sg.get("text", "")
+    if sg.get("type") == "new_npc" and not sg.get("impulse"):
+        label = f"{label} - {t('coop.npc_waiting', lang)}"
     return f"{label}: {extra}" if extra else label
 
 
@@ -3682,6 +3685,9 @@ def open_cockpit(sess: "CoopLive", on_open=None) -> None:
             st = sel[zone]
             if not st:
                 return
+            if st == "new_npc":
+                _render_new_npc_editor(box, zone)
+                return
             spec = COGM_SIGNALS[st]
             needs = spec.get("needs")
             npcs = [n for n in game.npcs
@@ -3729,6 +3735,53 @@ def open_cockpit(sess: "CoopLive", on_open=None) -> None:
                     _update_editor_button()
                 else:
                     rep.set_visibility(False)
+
+        def _render_new_npc_editor(box, zone: str):
+            """Form for a character the Co-GM invents (name and description required)."""
+            def _inp(key: str, maxlen: int = 300):
+                return ui.input(t(key, lang)).classes("w-full").props(
+                    f'dense outlined dark maxlength={maxlen} aria-label="{t(key, lang)}"')
+            with box, ui.column().classes("w-full gap-2 mt-1").style(
+                    "border-left: 3px solid var(--accent-light); padding: 0.25rem 0 0.25rem 0.75rem"):
+                ui.label(t("coop.desc_new_npc", lang)).classes("text-sm")
+                name_in = _inp("coop.npc_name", 60)
+                desc_in = ui.textarea(t("coop.npc_desc", lang)).classes("w-full").props(
+                    f'dense outlined dark autogrow maxlength=300 aria-label="{t("coop.npc_desc", lang)}"')
+                agenda_in = _inp("coop.npc_agenda")
+                instinct_in = _inp("coop.npc_instinct")
+                secret_in = _inp("coop.npc_secret")
+                disp_opts = {d: t(f"coop.npc_disp_{d}", lang) for d in COGM_NPC_DISPOSITIONS}
+                disp_sel = ui.select(disp_opts, value="neutral", label=t("coop.npc_disposition", lang)).classes(
+                    "w-full").props(f'aria-label="{t("coop.npc_disposition", lang)}"')
+                ui.label(t("coop.npc_mode", lang)).classes("text-xs font-semibold")
+                mode_tg = ui.toggle({"fit": t("coop.npc_mode_fit", lang), "now": t("coop.npc_mode_now", lang)},
+                                    value="fit").props(f'no-caps dense aria-label="{t("coop.npc_mode", lang)}"')
+                now_hint = ui.label(t("coop.npc_mode_now_hint", lang)).classes("text-xs").style(
+                    "color: var(--text-secondary)")
+                now_hint.bind_visibility_from(mode_tg, "value", backward=lambda v: v == "now")
+
+                def _submit_npc():
+                    if not _alive():
+                        return
+                    sig, err = coop_add_new_npc(
+                        game, name_in.value or "", desc_in.value or "", agenda=agenda_in.value or "",
+                        instinct=instinct_in.value or "", secret=secret_in.value or "",
+                        disposition=disp_sel.value or "neutral", mode=mode_tg.value or "fit")
+                    if sig is None:
+                        ui.notify(t(f"coop.npc_err_{err}", lang), type="warning", position="top")
+                        return
+                    if sig.get("impulse"):
+                        sess.cockpit_hold = False   # an impulse was given - the scene may go on
+                    sess.bump()
+                    _coop_save(sess)
+                    ui.notify(t("coop.npc_added_now" if sig.get("impulse") else "coop.npc_added",
+                                lang, name=sig["profile"]["name"]),
+                              type="positive", position="top")
+                    sel[zone] = None
+                    _refresh_all()
+
+                ui.button(t("coop.npc_add", lang), on_click=_submit_npc, color="primary").props(
+                    f'dense no-caps aria-label="{t("coop.npc_add", lang)}"')
 
         def _update_editor_button():
             """Keep the impulse button honest without rebuilding the editor (a
