@@ -5451,13 +5451,13 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
 - NPC BACKSTORY: An NPC may only reference people, events, or relationships that appear in their description, agenda, arc, or a prior scene. Do NOT invent family members, past colleagues, formative events, or personal history for an NPC that was not established anywhere in the story. If an NPC's profile is sparse, let that sparseness show — give them presence through behavior and reaction, not through newly invented biography.
 - Describe only sensory impressions, never player thoughts
 - SENSORY RANGE: Don't default to sight {E['dash']} include at least one non-visual sense per scene (a specific sound, smell, texture, or temperature). These anchor scenes in memory more durably than visual description alone.
-- WORLD PERIPHERY: Once per scene, let one small background detail exist that has nothing to do with the player's immediate action {E['dash']} a sound from another room, a stranger's exchange, a worn object, weather shifting outside. Brief, never explained. It signals the world continues beyond this moment.
+- WORLD PERIPHERY: Optional, at most every 2-3 scenes and only when the word budget allows, let one small background detail exist that has nothing to do with the player's immediate action {E['dash']} a sound from another room, a stranger's exchange, a worn object, weather shifting outside. Brief, never explained. It signals the world continues beyond this moment.
 - PHRASE VARIETY: The construction "[noun] of a [person], who [relative clause]" — in German: "mit dem [abstract noun] eines/einer [noun], die/der [relative clause]" (e.g. "with the calm of a man who...", "with the stillness of a woman who...") — is a known stylistic crutch. AVOID it as a default: treat it as last resort, not a template. Use it AT MOST ONCE per response, and ONLY if no natural alternative fits. CROSS-RESPONSE: Check the preceding narrations visible in this conversation — if this pattern appeared there, do NOT use it in this response at all. SPECIFIC OVERUSE: The abstract noun "Tonfall" (tone of voice) has its own limit — if it appeared in any recent narration, replace it with something physical or behavioral. This pattern appears almost exclusively in NPC dialog attribution ("he said with the calm of a man who...") — prefer instead: a physical action before or after the speech ("He set the phone down. 'The pallets left at six.'"), a simple adverb ("He said it flatly."), a fragment of unattributed speech, or a body-registered reaction ("Her shoulders didn't move. 'That's not how it works.'"). The skeleton is detectable even when the content changes — "tone of voice / evenness / rhythm / matter-of-factness" are the same structure dressed differently. ATMOSPHERIC MOTIFS: The same risk applies to recurring sensory or mood anchors. A single dominant motif — silence, darkness, cold, a specific sound — can become the atmospheric default when it fits the tone too well. CROSS-RESPONSE: Scan the preceding narrations. If the same motif (e.g. "Stille", "Dunkelheit", "Kälte") has anchored the last two or more scenes, it is now a crutch. Replace it with a different sensory dimension: if silence has dominated, anchor the next scene in temperature, texture, or smell instead. The tone does not require the same motif every time — it requires SPECIFICITY. A horror scene built on heat and the smell of machine oil is more unsettling than the tenth scene ending in a new kind of silence. BODY AND PROP MOTIFS: The same applies to recurring physical details — an injury or pain the character carries, a reflexive gesture (a hand resting on a weapon), a recurring object. Mention such a detail at most once per response, and only when something about it changes or matters in this scene; if it already appeared in the previous narration and nothing changed, leave it out.
 - SCENE CONTINUITY: Begin in motion, not in setup. The player is still in the same body, the same emotional state as the last scene ended. Do NOT open with a fresh establishing paragraph. SAME LOCATION: Open with at most one sentence that holds the atmosphere or emotional residue of the previous scene's end — a sensation still in the air, a silence not yet broken, a weight not yet lifted — before moving into the player's action. This is not recap; it is continuity of experience. It should work as a bridge even if the player's action is very brief or sparse. NEW LOCATION (player has moved — compare <location> with <prev_locations>): Open with one brief sensory impression of the new space (a sound, smell, texture, or quality of light) that grounds the reader without summarizing what came before. The new place simply exists, indifferent to what preceded it; the character carries the previous moment in their body. Example: a character arriving somewhere unfamiliar after a tense moment elsewhere — the ambient sounds and physical details of the new space are registered first, through senses still sharpened by what just happened.
 - EMOTIONAL CARRY-THROUGH: If the previous scene ended with a significant emotional beat (betrayal, loss, triumph, relief, intimacy, shock), open this scene with that weight still present in the character's body language, perception, and attention. Emotional states do not reset between scenes. Show it through sensation and behavior, not through narration — the character did not process it yet.
 - SCENE ENDING: Close each narration on an open moment — not a plot cliffhanger, not a resolved beat, but a suspension that makes the NEXT scene feel anchored rather than arbitrary. The character should be mid-breath, not concluded. No option lists, no suggested actions. VARY the kind of ending from scene to scene: (a) the character's unresolved inner state, (b) a concrete image or sound left hanging, (c) an NPC's unanswered line or gesture, (d) a small physical action still in progress. CROSS-RESPONSE: do not repeat the kind of ending used in the previous narration, and use (a) at most every other scene. Keep the final sentence short — one clause, ideally under 20 words; avoid long trailing constructions that weigh two possibilities ("...and you don't know whether X or Y").
-- 2-4 paragraphs
-- TEMPORAL CONSISTENCY: If <time> is provided, maintain that time period. Time only moves FORWARD (never backward). If you mention specific times, they must be later than any previously mentioned time. Do NOT invent specific clock times unless narratively important {E['dash']} prefer atmospheric time cues (moonlight, sunset glow, morning mist). CRITICAL: Each scene transition represents minutes to hours of in-world time, NOT days or years. Events from recent scenes just happened {E['dash']} signs don't weather, wounds are fresh, sent NPCs are still en route or just arrived. Never describe recent events or objects as aged, decayed, or long-past unless the player explicitly time-skips. TEMPORAL TEXTURE: Even in a static location where nothing moves (a besieged trench, a locked room, a stakeout), time still passes through the world. Every 2–3 scenes, anchor one detail to the shifting day: a quality of light changing (afternoon glare giving way to a cooler, flatter grey), a temperature shift (the ground cooling under your hands), a change in ambient sound (fewer birds, different distant guns, the quality of silence shifting). These do not need to be prominent — a single phrase suffices. They exist so the story does not feel frozen.
+- LENGTH & FOCUS: Stay within the word budget given in <task>. A short player input gets a short scene {E['dash']} the length follows what actually happens, not the number of inputs. Build each scene around ONE central beat (the player's action and its immediate result) plus at most one or two supporting beats. PRIORITY when inputs compete for space: (1) the player's action, words and the roll result, (2) a <clock_fired> event or chaos interrupt, (3) co-game-master input, (4) <director_guidance>, (5) <npc_note> and <npc_agency>, (6) atmosphere and periphery. Lower-priority items that do not fit naturally are DEFERRED to a later scene {E['dash']} never squeezed in as an extra sentence, a passing cameo or an NPC monologue. Bring an absent NPC on stage only if <director_guidance> calls for it or the action requires it. Reveal facts through what happens or what a character does, not through one character explaining several facts at once. Every sentence must earn its place: no filler, no restating what the player already knows.
+- TEMPORAL CONSISTENCY: If <time> is provided, maintain that time period. Time only moves FORWARD (never backward). If you mention specific times, they must be later than any previously mentioned time. Do NOT invent specific clock times unless narratively important {E['dash']} prefer atmospheric time cues (moonlight, sunset glow, morning mist). CRITICAL: Each scene transition represents minutes to hours of in-world time, NOT days or years. Events from recent scenes just happened {E['dash']} signs don't weather, wounds are fresh, sent NPCs are still en route or just arrived. Never describe recent events or objects as aged, decayed, or long-past unless the player explicitly time-skips. TEMPORAL TEXTURE: Even in a static location where nothing moves (a besieged trench, a locked room, a stakeout), time still passes through the world. Every 2–3 scenes, anchor one detail to the shifting day: a quality of light changing (afternoon glare giving way to a cooler, flatter grey), a temperature shift (the ground cooling under your hands), a change in ambient sound (fewer birds, different distant guns, the quality of silence shifting). These do not need to be prominent — a single phrase suffices. They exist so the story does not feel frozen. Never repeat a time or weather cue from the previous narration (e.g. the same fog at the same window, the same cold at the ankles) {E['dash']} use a different one or none. A recurring sound that the story has tied to a threat (a bell, a clock, a siren) must not be used as background texture: each time it sounds it has to mean something.
 - SPATIAL CONSISTENCY: The <location> tag shows where the player currently IS. If <prev_locations> is provided, the player has LEFT those places. NEVER place the player back at a previous location unless they explicitly travel there. If an NPC has a last_seen attribute showing a DIFFERENT location than the player's current <location>, that NPC is NOT physically present {E['dash']} they cannot be heard through walls, seen, or interact directly. They can only appear if they plausibly traveled to the player's location (and the narration should describe their arrival). NPCs without last_seen or with last_seen matching <location> ARE present and can interact normally.
 - If <story_arc> is present, steer scenes toward the act goal and mood. If <story_arc> contains a thematic_thread, let it surface periodically through NPC dialog, character reactions, or incidental observations {E['dash']} not as lecture or internal monologue, but as a question the world keeps quietly asking. Not every scene, but it should feel like a recurring undercurrent.
 - If revelation_ready is set, weave it into the scene naturally (through NPC dialog, discovered evidence, or environmental storytelling) {E['dash']} NEVER dump exposition
@@ -6503,8 +6503,8 @@ TONE RULE: narrator_guidance and npc_guidance MUST honor the story's tone ("{_xa
 
 Field instructions:
 - scene_summary: 2-3 sentence summary of what happened and WHY it matters (in {lang})
-- narrator_guidance: Specific direction for the next 1-2 scenes (in {lang}). When relevant, anchor the guidance to the thematic_thread from <story_arc> — surface the aspect of it most alive in the current moment. TIME RULE: If <current_time stale_scenes> is present in context, time of day has not visibly advanced for that many scenes — your narrator_guidance MUST include a directive to anchor the next scene with at least one concrete atmospheric time cue (a shift in light quality, temperature, or ambient sound). LOCATION RULE: If <current_location stale_scenes> is present, the story has stayed at one place for that many scenes — your narrator_guidance MUST name a concrete reason or opportunity to move to a different place (a lead, a summons, a threat, a need), unless the current confrontation must resolve there first. The player decides whether to go. TRIGGER RULE: If <transition_trigger due="true"> is present and act_transition is false, the act is about to end without its core event — your narrator_guidance MUST steer the next scene toward that core event as a concrete on-page moment (a discovery, a confrontation, a confession, an arrival or a decision put to the player), in the established tone and without making the player's choice for them. FINAL ACT RULE: When phase is "ketsu_resolution" or "resolution", the insight and revelation phase is over. narrator_guidance MUST push toward a concrete, irreversible action or choice — not toward further reflection on what has already been established. Each scene in the final act should change something permanently: a decision made, a door closed, a relationship transformed. If the player has been circling the same existential question for two or more scenes, name that directly in your guidance and force a new variable into the scene.
-- npc_guidance: Array of {{"npc_id": "npc_1", "guidance": "what this NPC should do/feel next"}} — guidance text in {lang}
+- narrator_guidance: Specific direction for the next 1-2 scenes (in {lang}), at most 3 sentences. FOCUS RULE: name at most ONE concrete new event or development (an arrival, a discovery, a find, a demand); everything else is mood, undertone or an NPC's attitude. Never chain several events, objects or appearances into one guidance - the Narrator has to fit it into a short scene next to the player's own action. When the TIME, LOCATION or TRIGGER rules below apply, fold them into that single event instead of adding more. When relevant, anchor the guidance to the thematic_thread from <story_arc> — surface the aspect of it most alive in the current moment. TIME RULE: If <current_time stale_scenes> is present in context, time of day has not visibly advanced for that many scenes — your narrator_guidance MUST include a directive to anchor the next scene with at least one concrete atmospheric time cue (a shift in light quality, temperature, or ambient sound). LOCATION RULE: If <current_location stale_scenes> is present, the story has stayed at one place for that many scenes — your narrator_guidance MUST name a concrete reason or opportunity to move to a different place (a lead, a summons, a threat, a need), unless the current confrontation must resolve there first. The player decides whether to go. TRIGGER RULE: If <transition_trigger due="true"> is present and act_transition is false, the act is about to end without its core event — your narrator_guidance MUST steer the next scene toward that core event as a concrete on-page moment (a discovery, a confrontation, a confession, an arrival or a decision put to the player), in the established tone and without making the player's choice for them. FINAL ACT RULE: When phase is "ketsu_resolution" or "resolution", the insight and revelation phase is over. narrator_guidance MUST push toward a concrete, irreversible action or choice — not toward further reflection on what has already been established. Each scene in the final act should change something permanently: a decision made, a door closed, a relationship transformed. If the player has been circling the same existential question for two or more scenes, name that directly in your guidance and force a new variable into the scene.
+- npc_guidance: Array of {{"npc_id": "npc_1", "guidance": "what this NPC should do/feel next"}} — guidance text in {lang}. Only for NPCs who are present in <latest_scene> or whose appearance narrator_guidance plans - leave absent NPCs out (an entry makes the Narrator bring them on stage). One short sentence each.
 - pacing: one of tension_rising, building, climax, breather, resolution
 - npc_reflections: Only for NPCs listed in <reflect> tags. NPCs with status=lore or status=deceased appear in the overview for context only — NEVER include them in npc_reflections. Each object has:
   - npc_id: the NPC's ID from the <reflect> tag
@@ -6966,7 +6966,7 @@ def build_new_game_prompt(game: GameState) -> str:
 <situation>{html.escape(game.current_scene_context)}</situation>{crisis}
 {_status_context_block(game)}{story}</scene>
 <task>
-Opening scene: 3-4 paragraphs. Introduce 2 NPCs through action/dialog. Immediate tension. Create one threat clock.
+Opening scene: {_words_rule('opening')}, 3-4 paragraphs. Introduce 2 NPCs through action/dialog. Immediate tension. Create one threat clock.
 IMPORTANT: The <character> above is the PLAYER CHARACTER (the "you" in narration). Do NOT include them as an NPC. NPCs are OTHER people the player meets.
 If <backstory> exists in system context, treat those facts as established canon — reference naturally but don't retell.
 If player_wishes exist, do NOT address them in the opening — save them for later scenes. Focus on world and conflict first.
@@ -7185,6 +7185,75 @@ def _clock_fired_block(events: Optional[list]) -> str:
     return "".join(out)
 
 
+# Word budgets per narration type (min, max). German runs long, so the Narrator gets
+# words instead of paragraphs - paragraph counts stretched to 350-420 words per scene.
+NARRATION_WORDS = {
+    "routine": (120, 220),
+    "dialog":  (150, 250),
+    "action":  (200, 320),
+    "opening": (250, 360),
+}
+
+
+def _words_rule(kind: str) -> str:
+    lo, hi = NARRATION_WORDS[kind]
+    return f"About {lo}-{hi} words"
+
+
+def _npc_named_in(npc: dict, text_lower: str) -> bool:
+    """True if the NPC's name, a significant name part (>= 4 chars, no title) or an
+    alias appears in `text_lower` (already lower-cased)."""
+    names = [npc.get("name") or ""] + list(npc.get("aliases") or [])
+    for name in names:
+        name = name.lower().strip()
+        if not name:
+            continue
+        if name in text_lower:
+            return True
+        for part in name.split():
+            part = part.strip(".,;:")
+            if len(part) >= 4 and part not in _NAME_TITLES and \
+                    re.search(rf"\b{re.escape(part)}\b", text_lower):
+                return True
+    return False
+
+
+def _director_block(game: GameState, note_ids: Optional[set] = None) -> str:
+    """Narrator prompt block for the Director's guidance.
+    note_ids: NPC IDs that are in the scene (target, activated). Per-NPC
+    notes are only passed for those NPCs and for NPCs that <director_guidance> itself
+    names - notes for absent NPCs made the Narrator drag them into the scene. None
+    keeps every note (callers without activation data)."""
+    dg = game.director_guidance
+    if not dg:
+        return ""
+    block = ""
+    ng = dg.get("narrator_guidance") or ""
+    if ng:
+        block = f'\n<director_guidance>{html.escape(ng)}</director_guidance>'
+    ng_lower = ng.lower()
+    # NPC-specific guidance - independent of narrator_guidance
+    for npc_id, guidance in dg.get("npc_guidance", {}).items():
+        if note_ids is not None and npc_id not in note_ids:
+            npc = _find_npc(game, npc_id)       # also resolves legacy name keys
+            if not npc or (npc.get("id") not in note_ids
+                           and not _npc_named_in(npc, ng_lower)):
+                continue
+        block += f'\n<npc_note for="{npc_id}">{html.escape(guidance)}</npc_note>'
+    if dg.get("arc_notes"):                      # independent - survives empty narrator_guidance
+        block += f'\n<arc_notes>{html.escape(dg["arc_notes"])}</arc_notes>'
+    return block
+
+
+def _scene_note_ids(present_ids: set, activated_npcs: Optional[list]) -> Optional[set]:
+    """IDs whose Director npc_note may reach the Narrator: the target and the activated
+    NPCs. Merely mentioned NPCs (name-only in the prompt) are left out - their notes
+    invited cameos. None = no activation data (keep every note)."""
+    if activated_npcs is None:
+        return None
+    return {i for i in present_ids if i}
+
+
 def build_dialog_prompt(game: GameState, brain: dict, player_words: str = "",
                         chaos_interrupt: Optional[str] = None,
                         activated_npcs: list = None, mentioned_npcs: list = None,
@@ -7236,17 +7305,9 @@ def build_dialog_prompt(game: GameState, brain: dict, player_words: str = "",
     pw = f'\n<player_words>{html.escape(player_words)}</player_words>' if player_words else ""
     pacing = _pacing_block(game, chaos_interrupt, brain.get("dramatic_question", ""))
 
-    # Director guidance injection
-    director_block = ""
-    dg = game.director_guidance
-    if dg:
-        if dg.get("narrator_guidance"):
-            director_block = f'\n<director_guidance>{html.escape(dg["narrator_guidance"])}</director_guidance>'
-        # NPC-specific guidance — independent of narrator_guidance
-        for npc_id, guidance in dg.get("npc_guidance", {}).items():
-            director_block += f'\n<npc_note for="{npc_id}">{html.escape(guidance)}</npc_note>'
-        if dg.get("arc_notes"):                      # independent — survives empty narrator_guidance
-            director_block += f'\n<arc_notes>{html.escape(dg["arc_notes"])}</arc_notes>'
+    # Director guidance injection (npc_notes only for NPCs in the scene)
+    director_block = _director_block(
+        game, _scene_note_ids(_present_ids, activated_npcs))
 
     agency = (f'\n<npc_agency>{"| ".join(html.escape(a) for a in npc_agency)}</npc_agency>'
               if npc_agency else "")
@@ -7256,7 +7317,7 @@ def build_dialog_prompt(game: GameState, brain: dict, player_words: str = "",
         # Routine action (no roll): the action itself simply works.
         scene_type = "routine"
         intent = f"{brain.get('player_intent', '')} ({brain.get('approach', '')})".replace(" ()", "")
-        task = ("<task>1-3 paragraphs of immersive narration. The character's action is routine "
+        task = (f"<task>{_words_rule('routine')} of immersive narration. The character's action is routine "
                 "and succeeds without a roll: show it working cleanly and competently - no "
                 "failure, no injury, no cost and no new complication caused by the action "
                 "itself. Do not inflate it into a triumph or hand out more than the action "
@@ -7268,9 +7329,10 @@ def build_dialog_prompt(game: GameState, brain: dict, player_words: str = "",
     else:
         scene_type = "dialog"
         intent = brain.get('player_intent', '')
-        task = ("<task>2-3 paragraphs of immersive narration. Let the world breathe around the "
-                "conversation — small details of place, light, sound, and texture that make "
-                "this moment feel inhabited. Something between the characters should shift by "
+        task = (f"<task>{_words_rule('dialog')} of immersive narration. The conversation is the "
+                "scene: keep the focus on what is said and how. One small detail of place, "
+                "light or sound is enough to make the moment feel inhabited. Something between "
+                "the characters should shift by "
                 "the end. Let the current act's mood (from <story_arc>) shape the undertone of "
                 "the exchange — even a quiet conversation carries the weight of the surrounding "
                 "phase. If <director_guidance> is present, follow its direction while "
@@ -7370,17 +7432,9 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
                                + list(world_events or []))
     pacing = _pacing_block(game, chaos_interrupt, brain.get("dramatic_question", ""))
 
-    # Director guidance injection
-    director_block = ""
-    dg = game.director_guidance
-    if dg:
-        if dg.get("narrator_guidance"):
-            director_block = f'\n<director_guidance>{html.escape(dg["narrator_guidance"])}</director_guidance>'
-        # NPC-specific guidance — independent of narrator_guidance
-        for npc_id, guidance in dg.get("npc_guidance", {}).items():
-            director_block += f'\n<npc_note for="{npc_id}">{html.escape(guidance)}</npc_note>'
-        if dg.get("arc_notes"):                      # independent — survives empty narrator_guidance
-            director_block += f'\n<arc_notes>{html.escape(dg["arc_notes"])}</arc_notes>'
+    # Director guidance injection (npc_notes only for NPCs in the scene)
+    director_block = _director_block(
+        game, _scene_note_ids(_present_ids, activated_npcs))
 
     return f"""<scene type="action" n="{game.scene_count}">
 {_scene_header(game)}
@@ -7392,7 +7446,7 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
 {npc}{npcs_section}{wl}{flags}{agency}{fired}
 {pacing}{director_block}{_coop_block(game)}
 {_status_context_block(game)}{_story_context_block(game)}{_recent_events_block(game)}{_narrator_clocks_block(game)}{_npc_relations_block(game, _present_ids)}</scene>
-<task>2-4 paragraphs of immersive narration. Let the roll consequence open new story questions rather than just closing old ones — the scene should end in motion, with something shifted. Let the current act's mood (from <story_arc>) shape the texture of this moment — a STRONG_HIT in a desperate phase still tastes of the surrounding darkness. If <director_guidance> is present, follow its direction while maintaining your creative voice.</task>"""
+<task>{_words_rule('action')} of immersive narration. Let the roll consequence open new story questions rather than just closing old ones — the scene should end in motion, with something shifted. Let the current act's mood (from <story_arc>) shape the texture of this moment — a STRONG_HIT in a desperate phase still tastes of the surrounding darkness. If <director_guidance> is present, follow its direction while maintaining your creative voice.</task>"""
 
 
 # ===============================================================
@@ -9612,7 +9666,7 @@ def build_new_chapter_prompt(game: GameState) -> str:
 {npc_block}{evolutions_block}
 {_status_context_block(game)}{story}</scene>
 <task>
-Chapter {game.chapter_number} opening: 3-4 paragraphs. This is a NEW chapter in an ongoing campaign.
+Chapter {game.chapter_number} opening: {_words_rule('opening')}, 3-4 paragraphs. This is a NEW chapter in an ongoing campaign.
 - Reference the character's history and relationships naturally (don't recap everything, just hint)
 - Some time has passed since last chapter. Show how the world/relationships evolved
 - Use <npc_evolutions> as hints for how NPCs may have changed — show their evolution through behavior, dialog, and atmosphere rather than exposition
