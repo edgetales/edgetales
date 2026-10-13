@@ -7208,7 +7208,7 @@ def _npc_named_in(npc: dict, text_lower: str) -> bool:
         name = name.lower().strip()
         if not name:
             continue
-        if name in text_lower:
+        if re.search(rf"(?<!\w){re.escape(name)}(?!\w)", text_lower):
             return True
         for part in name.split():
             part = part.strip(".,;:")
@@ -7479,6 +7479,9 @@ COGM_SEED_MIN_AGE = 2              # Scenes before a SEED answer may surface
 COGM_RECENT_QUESTIONS = 6          # Previous questions shown to avoid repeats
 COGM_SEED_EVERY = 3                # Every 3rd question is a SEED question
 COGM_PRESSURE_SCENES = 2           # Duration of the "Clock is ticking" signal
+COGM_MAX_NEW_NPCS = 2              # Co-GM characters waiting for their first appearance
+COGM_NPC_NUDGE_SCENES = 5          # Scenes a waiting character is offered before the nudge
+COGM_NPC_DISPOSITIONS = ("hostile", "distrustful", "neutral", "friendly")
 
 # Cockpit signal catalog. Design rule: every option is either concrete (the player
 # notices it in the next scene) or free text written by the Co-GM - nothing that
@@ -7520,6 +7523,9 @@ COGM_SIGNALS = {
                           "prompt": "The protagonist has been through something hard. Offer something warm in this scene - a small victory, a kind gesture, a moment of calm."},
     "cliffhanger":       {"slot": "impulse", "kind": "once", "needs": None,
                           "prompt": "End this scene on a cliffhanger - an open threat, a revelation cut short or a question that demands an answer."},
+    # New character designed by the Co-GM (coop_add_new_npc, not coop_add_signal).
+    # mode "now" = impulse for the next scene, "fit" = background until it appears.
+    "new_npc":           {"slot": "background", "kind": "new_npc", "needs": "npc_profile"},
 }
 
 # Seed kinds → how the Narrator should treat them
@@ -7635,7 +7641,7 @@ def coop_add_signal(game: GameState, sig_type: str, value: str = "", text: str =
     rumor/secret/false trail), None if invalid. Validation is strict because the
     input comes straight from the UI."""
     spec = COGM_SIGNALS.get(sig_type)
-    if not spec:
+    if not spec or spec.get("kind") == "new_npc":       # new_npc: coop_add_new_npc()
         return None
     c = coop_state(game)
     needs = spec.get("needs")
@@ -7669,6 +7675,144 @@ def coop_add_signal(game: GameState, sig_type: str, value: str = "", text: str =
            "scene": game.scene_count}
     c["signals"].append(sig)
     return sig
+
+
+def _coop_pending_new_npcs(c: dict) -> list:
+    return [s for s in c.get("signals", []) if s.get("type") == "new_npc"]
+
+
+def coop_add_new_npc(game: GameState, name: str, description: str, agenda: str = "",
+                     instinct: str = "", secret: str = "", disposition: str = "neutral",
+                     mode: str = "fit") -> tuple:
+    """Queue a character the Co-GM designed. The NPC is NOT created yet: the profile
+    waits in the signal until the Narrator introduces the character by name
+    (_coop_apply_new_npcs). That keeps it out of every player-facing NPC list and
+    hides its origin - once it appears it is an ordinary NPC.
+    mode: "now" (impulse for the next scene) or "fit" (whenever the story allows).
+    Returns (signal, None) or (None, error) with error in name_missing |
+    desc_missing | name_taken | limit | invalid."""
+    c = coop_state(game)
+    name = _cap_npc_name(_coop_clean_text(name)) if name else ""
+    name = _sanitize_npc_name(name)[0] if name else ""
+    description = _coop_clean_text(description)
+    if mode not in ("now", "fit"):
+        return None, "invalid"
+    if len(name) < 2:
+        return None, "name_missing"
+    if not description:
+        return None, "desc_missing"
+    disposition = disposition if disposition in COGM_NPC_DISPOSITIONS else "neutral"
+    norm = _normalize_for_match(name)
+    player_parts = set(_normalize_for_match(game.player_name).split())
+    taken = (not norm or norm == _normalize_for_match(game.player_name)
+             or bool(set(norm.split()) & player_parts)
+             or any(_normalize_for_match(n.get("name", "")) == norm
+                    or norm in {_normalize_for_match(a) for a in n.get("aliases") or []}
+                    for n in game.npcs)
+             or _fuzzy_match_existing_npc(game, name)[0] is not None
+             or any(_normalize_for_match(s["profile"]["name"]) == norm
+                    for s in _coop_pending_new_npcs(c)))
+    if taken:
+        return None, "name_taken"
+    if len(_coop_pending_new_npcs(c)) >= COGM_MAX_NEW_NPCS or \
+            len(c["signals"]) >= COGM_MAX_SIGNALS:
+        return None, "limit"
+    if mode == "now":
+        # One impulse per scene: a new impulse replaces the pending one
+        c["signals"] = [s for s in c["signals"] if not s.get("impulse")]
+    sig = {"id": _coop_next_id(c, "c"), "type": "new_npc", "impulse": mode == "now",
+           "value": "", "text": description, "npc_id": "", "mode": mode,
+           "profile": {"name": name, "description": description,
+                       "agenda": _coop_clean_text(agenda), "instinct": _coop_clean_text(instinct),
+                       "secret": _coop_clean_text(secret), "disposition": disposition},
+           "scenes_left": None, "scene": game.scene_count, "offered": 0}
+    c["signals"].append(sig)
+    log(f"[CoGM] New character queued: {name} (mode={mode})")
+    return sig, None
+
+
+def _coop_new_npc_prompt(s: dict) -> str:
+    p = s.get("profile") or {}
+    parts = [f"{p.get('name', '')} - {p.get('description', '')}.",
+             f"Attitude toward the protagonist: {p.get('disposition', 'neutral')}."]
+    if p.get("agenda"):
+        parts.append(f"What they want (hidden drive - let it colour their behaviour, never state it): {p['agenda']}.")
+    if p.get("instinct"):
+        parts.append(f"Under pressure: {p['instinct']}.")
+    if p.get("secret"):
+        parts.append(f"Secret (never reveal it, at most hint): {p['secret']}.")
+    profile = " ".join(parts)
+    naming = ("Use exactly this name and let it be said or learned on the page. They are new "
+              "to the protagonist unless the description says otherwise.")
+    if s.get("impulse"):
+        return f"Introduce this NEW character in this scene through action or dialog: {profile} {naming}"
+    nudge = (" They have been waiting for several scenes - create a natural opening for them in this scene."
+             if int(s.get("offered") or 0) > COGM_NPC_NUDGE_SCENES else
+             " Bring them in only when the scene offers a natural opening (an arrival, an encounter, "
+             "someone the protagonist seeks out) - most scenes do not.")
+    return f"A NEW character is waiting to enter the story: {profile} {naming}{nudge}"
+
+
+def _coop_find_appeared_npc(game: GameState, name: str) -> Optional[dict]:
+    """The NPC the Extractor created for a Co-GM character (exact or fuzzy name)."""
+    norm = _normalize_for_match(name)
+    for n in game.npcs:
+        if _normalize_for_match(n.get("name", "")) == norm or \
+                norm in {_normalize_for_match(a) for a in n.get("aliases") or []}:
+            return n
+    hit = _fuzzy_match_existing_npc(game, name)[0]
+    return hit if hit and hit.get("status") != "deceased" else None
+
+
+def _coop_apply_new_npcs(game: GameState, narration: str) -> None:
+    """After a scene: a Co-GM character whose name appears in the narration becomes
+    a real NPC with the Co-GM's profile (the Extractor may already have created a
+    bare entry - the profile wins). One that did not appear waits on: a "now"
+    character falls back to "fit", and a ## correction or momentum burn that drops
+    the appearance puts the waiting signal back."""
+    inputs = (game.coop or {}).get("_turn") if isinstance(game.coop, dict) else None
+    if not inputs:
+        return
+    c = coop_state(game)
+    text = (narration or "").lower()
+    for s in inputs.get("signals") or []:
+        if s.get("type") != "new_npc":
+            continue
+        p = s.get("profile") or {}
+        name = p.get("name", "")
+        if name and _npc_named_in({"name": name, "aliases": []}, text):
+            npc = _coop_find_appeared_npc(game, name)
+            if npc is None:
+                npc_id, _ = _next_npc_id(game)
+                npc = {"id": npc_id, "name": name, "description": "", "agenda": "",
+                       "instinct": "", "secrets": [], "disposition": "neutral",
+                       "bond": 0, "bond_max": 4, "status": "active", "memory": [],
+                       "introduced": True, "aliases": [], "importance_accumulator": 0,
+                       "last_reflection_scene": 0, "last_memory_scene": 0,
+                       "last_location": game.current_location or ""}
+                _ensure_npc_memory_fields(npc)
+                game.npcs.append(npc)
+            npc["description"] = p.get("description") or npc.get("description", "")
+            if p.get("agenda"):
+                npc["agenda"] = p["agenda"]
+            if p.get("instinct"):
+                npc["instinct"] = p["instinct"]
+            if p.get("secret") and p["secret"] not in (npc.get("secrets") or []):
+                npc.setdefault("secrets", []).append(p["secret"])
+            npc["disposition"] = p.get("disposition", "neutral")
+            npc["introduced"] = True
+            if npc.get("status") in ("background", "lore"):
+                _reactivate_npc(npc, reason="Co-GM character appeared")
+            if not npc.get("memory"):
+                npc["memory"].append({
+                    "scene": game.scene_count, "event": p.get("description") or f"{name} appeared",
+                    "emotional_weight": "neutral", "importance": 3, "type": "observation",
+                    "_score_debug": "auto-seed: first appearance"})
+            c["signals"] = [x for x in c["signals"] if x.get("id") != s.get("id")]
+            log(f"[CoGM] Character appeared: {name} -> {npc['id']}")
+        elif not any(x.get("id") == s.get("id") for x in c["signals"]):
+            c["signals"].append(dict(s, impulse=False, mode="fit"))
+            log(f"[CoGM] Character {name} did not appear - waits in the background")
 
 
 def coop_remove_signal(game: GameState, item_id: str) -> bool:
@@ -7757,6 +7901,12 @@ def _coop_begin_turn(game: GameState) -> Optional[dict]:
     keep = []
     for s in c.get("signals", []):
         spec = COGM_SIGNALS.get(s.get("type"), {})
+        if s.get("type") == "new_npc":
+            s["offered"] = int(s.get("offered") or 0) + 1
+            inputs["signals"].append(dict(s))
+            if not s.get("impulse"):
+                keep.append(s)                        # waits until the character appears
+            continue
         if spec.get("needs") in ("npc", "npc_text") and not _find_npc(game, s.get("npc_id", "")):
             continue                                  # NPC gone (merged/removed)
         if spec.get("kind") in ("persistent", "single"):
@@ -7817,6 +7967,8 @@ def _coop_end_turn(game: GameState) -> None:
 
 
 def _coop_signal_prompt(game: GameState, s: dict) -> str:
+    if s.get("type") == "new_npc":
+        return _coop_new_npc_prompt(s)
     spec = COGM_SIGNALS.get(s.get("type"), {})
     tmpl = spec.get("prompt", "")
     if not s.get("text") and spec.get("prompt_empty"):
@@ -8014,7 +8166,8 @@ def coop_public_view(game: GameState) -> dict:
     c = coop_state(game)
     impulse, background = None, []
     for s in c["signals"]:
-        item = {**s, "npc_name": _coop_npc_name(game, s.get("npc_id", ""))}
+        item = {**s, "npc_name": (s.get("profile") or {}).get("name", "")
+                if s.get("type") == "new_npc" else _coop_npc_name(game, s.get("npc_id", ""))}
         if s.get("impulse"):
             impulse = item
         else:
@@ -10086,6 +10239,7 @@ def _process_turn_impl(client: anthropic.Anthropic, game: GameState,
         metadata = call_narrator_metadata(client, narration, game, config)
         _apply_narrator_metadata(game, metadata, scene_present_ids=_scene_present_ids,
                                   world_addition=brain.get("world_addition", "") or "")
+        _coop_apply_new_npcs(game, narration)
         # Mark first pending revelation as used only if the narrator actually wove it in.
         # Capture the result so the Director knows whether a real revelation occurred.
         revelation_confirmed = False
@@ -10196,6 +10350,7 @@ def _process_turn_impl(client: anthropic.Anthropic, game: GameState,
     metadata = call_narrator_metadata(client, narration, game, config)
     _apply_narrator_metadata(game, metadata, scene_present_ids=_scene_present_ids,
                               world_addition=brain.get("world_addition", "") or "")
+    _coop_apply_new_npcs(game, narration)
     # Update chaos factor based on result
     update_chaos_factor(game, roll.result)
     # Record pacing
@@ -10873,6 +11028,7 @@ def _process_correction_impl(client: anthropic.Anthropic, game: GameState,
     metadata = call_narrator_metadata(client, narration, game, _cfg)
     _apply_narrator_metadata(game, metadata, scene_present_ids=_scene_present_ids,
                               world_addition=brain.get("world_addition", "") or "")
+    _coop_apply_new_npcs(game, narration)
 
     # Step 5: Update session_log / narration_history
     intent = brain.get("player_intent", snap.get("player_input", ""))[:80]
@@ -11030,6 +11186,7 @@ def _process_momentum_burn_impl(client: anthropic.Anthropic, game: GameState,
     _scene_present_ids = {n["id"] for n in activated_npcs} | {n["id"] for n in mentioned_npcs}
     _apply_narrator_metadata(game, metadata, scene_present_ids=_scene_present_ids,
                               world_addition=brain_data.get("world_addition", "") or "")
+    _coop_apply_new_npcs(game, narration)
 
     # Update chaos after burn (new result counts)
     update_chaos_factor(game, new_result)
