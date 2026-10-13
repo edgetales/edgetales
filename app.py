@@ -130,7 +130,7 @@ from engine import (
     load_user_config, save_user_config,
     list_users, create_user, delete_user, is_valid_username,
     save_game, load_game, list_saves_with_info, delete_save, export_story_pdf,
-    copy_scenario_to_user,
+    copy_scenario_to_user, copy_game_to_user,
     save_chapter_archive, load_chapter_archive, list_chapter_archives, delete_chapter_archives,
     replace_chapter_archives,
     get_current_act, setup_file_logging, action_dice_text,
@@ -4091,6 +4091,19 @@ def _render_invite_form(s: dict, dlg) -> None:
         opts[name] = f"{dot} {name} ({state})"
     sel = ui.select(opts, value=partner if partner in others else others[0],
                     label=t("coop.invite_select", lang)).classes("w-full mt-2")
+    # My role: "player" (I keep playing, the invitee is Co-GM) or "cogm" (the invitee
+    # plays on in a copy of this game, I become the Co-GM)
+    ui.label(t("coop.my_role", lang)).classes("text-xs font-semibold mt-3")
+    role_tg = ui.toggle({"player": t("coop.myrole_player", lang), "cogm": t("coop.myrole_cogm", lang)},
+                        value="player").props(f'no-caps dense aria-label="{t("coop.my_role", lang)}"')
+    role_hint = ui.label("").classes("text-xs").style("color: var(--text-secondary)")
+
+    def _update_role_hint(_=None):
+        role_hint.text = t("coop.role_cogm_hint" if role_tg.value == "cogm" else "coop.role_player_hint",
+                           lang, name=sel.value or "")
+    role_tg.on_value_change(_update_role_hint)
+    sel.on_value_change(_update_role_hint)
+    _update_role_hint()
 
     def _send_invite():
         target = sel.value
@@ -4098,7 +4111,8 @@ def _render_invite_form(s: dict, dlg) -> None:
             ui.notify(t("coop.not_available", lang), type="warning", position="top")
             return
         _COOP_INVITES[target] = {"id": uuid.uuid4().hex, "host": me, "host_s": s,
-                                 "player": game.player_name, "at": _time.time()}
+                                 "player": game.player_name, "at": _time.time(),
+                                 "invitee_role": "player" if role_tg.value == "cogm" else "cogm"}
         key = "coop.invite_sent" if _coop_online(target) else "coop.invite_sent_offline"
         ui.notify(t(key, lang, name=target), type="positive", position="top")
         dlg.close()
@@ -4117,7 +4131,12 @@ def show_coop_invite(s: dict, inv: dict, on_accept) -> None:
         dlg.props(f'persistent aria-label="{t("coop.invite_title", lang)}"')
         ui.label(f"{E['people']} {t('coop.invite_title', lang)}").classes("text-lg font-bold")
         if host_ok:
-            ui.label(t("coop.invite_text", lang, host=host, player=inv.get("player", ""))).classes("text-sm")
+            _as_player = inv.get("invitee_role") == "player"
+            ui.label(t("coop.invite_text_player" if _as_player else "coop.invite_text", lang,
+                       host=host, player=inv.get("player", ""))).classes("text-sm")
+            if _as_player:
+                ui.label(t("coop.invite_player_hint", lang, host=host)).classes("text-xs mt-1").style(
+                    "color: var(--text-secondary)")
 
             async def _accept():
                 dlg.close()
@@ -4143,7 +4162,8 @@ def show_coop_invite(s: dict, inv: dict, on_accept) -> None:
                               type="warning", position="top")
                     return
                 _COOP_INVITES[host] = {"id": uuid.uuid4().hex, "host": me, "host_s": s,
-                                       "player": game.player_name, "at": _time.time()}
+                                       "player": game.player_name, "at": _time.time(),
+                                       "invitee_role": "cogm"}
                 ui.notify(t("coop.invite_sent_offline", lang, name=host), type="positive", position="top")
 
             def _close():
@@ -4153,6 +4173,50 @@ def show_coop_invite(s: dict, inv: dict, on_accept) -> None:
                 ui.button(t("coop.invite_back", lang, host=host), on_click=_invite_back, color="primary").props("no-caps")
                 ui.button(t("coop.close", lang), on_click=_close).props("flat no-caps")
     dlg.open()
+
+
+def _coop_accept_as_player(s: dict, inv: dict) -> Optional["CoopLive"]:
+    """The inviting user chose to be the Co-GM: copy their running game into a new
+    save of the invited user, load it into this tab and host the session here.
+    The inviter's own save stays as it is; their tab switches to the Co-GM view on
+    its next tick (flag _coop_join_cogm)."""
+    lang = L()
+    me = s.get("current_user", "")
+    inviter = inv["host"]
+    inviter_s = inv["host_s"]
+    src = inviter_s.get("game")
+    if src is None or src.game_over or inviter_s.get("processing"):
+        ui.notify(t("coop.not_available", lang), type="warning", position="top")
+        return None
+    game, chat, name = copy_game_to_user(src, inviter_s.get("messages", []), me,
+                                         src_user=inviter,
+                                         src_save=inviter_s.get("active_save", "autosave"))
+    if game is None:
+        ui.notify(t("coop.copy_failed", lang), type="negative", position="top")
+        _coop_notify(inviter, "coop.copy_failed_host", "warning", name=me)
+        return None
+    s["game"] = game; s["creation"] = None; s["pending_burn"] = None; s["messages"] = chat
+    s["active_save"] = name
+    s["processing"] = False
+    s["_turn_gen"] = s.get("_turn_gen", 0) + 1
+    s["viewing_chapter"] = None; s["chapter_view_messages"] = None; s["chapter_view_title"] = None
+    s["messages"].append({"role": "assistant", "content": f"*{E['checkmark']} "
+                          f"{t('coop.game_taken_over', lang, name=game.player_name, host=inviter)}*"})
+    try:
+        _ucfg = load_user_config(me); _ucfg["last_save"] = name; save_user_config(me, _ucfg)
+    except Exception as e:
+        log(f"[Coop] last_save not stored: {e}", level="warning")
+    sess = CoopLive(me, inviter, s, name)
+    _COOP_SESSIONS[me] = sess
+    _coop_withdraw_invites(me, inviter)
+    coop_start_session(game, inviter)
+    _coop_save(sess)
+    inviter_s["_coop_join_cogm"] = me          # the inviting tab switches to the Co-GM view
+    _coop_notify(inviter, "coop.joined_as_player", "positive", name=me)
+    log(f"[Coop] Session started (roles swapped): host={me} co-gm={inviter} save={name}")
+    if not coop_waiting_for_cogm(game):
+        _coop_spawn(_coop_generate_question(sess, _coop_last_narration(s)))
+    return sess
 
 
 async def coop_accept_invite(s: dict, inv: dict) -> Optional["CoopLive"]:
@@ -4173,6 +4237,8 @@ async def coop_accept_invite(s: dict, inv: dict) -> Optional["CoopLive"]:
     if _coop_session_of(me)[1]:
         ui.notify(t("coop.self_busy", lang), type="warning", position="top")
         return None
+    if inv.get("invitee_role") == "player":
+        return _coop_accept_as_player(s, inv)
     sess = CoopLive(host, me, host_s, host_s.get("active_save", "autosave"))
     _COOP_SESSIONS[host] = sess
     _coop_withdraw_invites(host, me)
@@ -5009,7 +5075,9 @@ async def main_page(client: Client):
 
     async def _accept_invite(inv):
         sess = await coop_accept_invite(s, inv)
-        if sess:
+        if sess and sess.host == s.get("current_user"):
+            await _show_main_phase()            # invited as player: play on in the copy
+        elif sess:
             s["coop_host"] = sess.host
             await _show_cogm_phase(sess)
 
@@ -5052,6 +5120,15 @@ async def main_page(client: Client):
             s["_coop_invite_shown"] = inv["id"]
             show_coop_invite(s, inv, _accept_invite)
         sess, role = _coop_session_of(me)
+        join_host = s.get("_coop_join_cogm")
+        if join_host:
+            if role != "cogm" or sess.host != join_host:
+                s.pop("_coop_join_cogm", None)  # session gone or another one - nothing to join
+            elif phase == "main" and not s.get("processing"):
+                s.pop("_coop_join_cogm", None)
+                s["coop_host"] = sess.host      # invited partner plays on - this tab joins as Co-GM
+                await _show_cogm_phase(sess)
+                return
         if phase == "cogm":
             if role != "cogm" or s.get("coop_host") != sess.host:
                 s["coop_host"] = None
