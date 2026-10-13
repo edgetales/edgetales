@@ -21,6 +21,8 @@ NOT_TURN_MUTABLE = {
     # live Co-GM state: edited while turns run; consumed inputs live in
     # last_turn_snapshot["coop_inputs"] instead of being restored
     "coop",
+    # scenario start: captured once at the opening, never changed by turns
+    "opening_state",
 }
 
 

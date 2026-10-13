@@ -69,6 +69,7 @@ EdgeTales doesn't invent its own rules from scratch. It draws on proven, beloved
 - HTTPS with auto-generated self-signed certificates
 - Kid-friendly mode (ages 8–12, see below)
 - Multiple save slots with full story export to PDF
+- Send a game's starting scenario to another player (without your inputs)
 - **Adjustable narrator font size** — scale the story text from 0.75× to 1.5× in the settings. Applies live without page reload; persists across sessions
 - **Visual Effects mode** — an optional narrator display mode that brings the story to life with subtle visual cues: NPC names are highlighted in the narration text with colours based on their current disposition (hostile NPCs in red, loyal ones in green, etc.), your character's name appears in accent gold. As the chaos factor rises, a faint ambient glow pulses around the chat area. When health drops low, a dark vignette creeps in at the edges of the screen. Dialogue lines are subtly highlighted to stand out from prose. All effects are purely cosmetic and can be switched off at any time in the narrator font settings.
 

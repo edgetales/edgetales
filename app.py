@@ -130,6 +130,7 @@ from engine import (
     load_user_config, save_user_config,
     list_users, create_user, delete_user, is_valid_username,
     save_game, load_game, list_saves_with_info, delete_save, export_story_pdf,
+    copy_scenario_to_user,
     save_chapter_archive, load_chapter_archive, list_chapter_archives, delete_chapter_archives,
     replace_chapter_archives,
     get_current_act, setup_file_logging, action_dice_text,
@@ -1354,6 +1355,8 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
 
         # --- Save list with metadata ---
         saves = list_saves_with_info(username)
+        # Recipients for "send scenario": every other user
+        share_targets = [u["name"] for u in list_users() if u["name"] != username]
         if saves:
             for info in saves:
                 sname = info["name"]
@@ -1383,7 +1386,39 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                         title_html = f"<b>{_dn_safe}</b>"
                         if is_active:
                             title_html += f" {E['check']}"
-                        ui.html(title_html).classes("text-sm")
+                        with ui.row().classes("w-full items-center no-wrap gap-1"):
+                            ui.html(title_html).classes("text-sm").style("flex: 1 1 auto; min-width: 0")
+                            # --- Send scenario start to another user (top-right mini button) ---
+                            if share_targets and info.get("has_opening"):
+                                def make_share(n=sname):
+                                    async def do_share(target):
+                                        try:
+                                            new_slot = await asyncio.to_thread(
+                                                copy_scenario_to_user, username, n, target)
+                                        except Exception as e:
+                                            log(f"[Share] Failed for {n} -> {target}: {e}", level="warning")
+                                            new_slot = None
+                                        if new_slot:
+                                            ui.notify(t("actions.share_done", lang, user=target, name=new_slot),
+                                                      type="positive", position="top")
+                                        else:
+                                            ui.notify(t("actions.share_failed", lang), type="negative", position="top")
+                                    return do_share
+                                _share_aria = t("aria.share_save", lang, name=display_name)
+                                _do_share = make_share(sname)
+                                with ui.button(icon="send").props(
+                                    f'flat round dense size=sm aria-label="{_share_aria}" aria-haspopup="menu"'
+                                ).style("margin: -6px -4px -6px 0; flex: 0 0 auto"):
+                                    with ui.menu().props("anchor='bottom right' self='top right'"):
+                                        ui.label(t("actions.share_title", lang)).classes(
+                                            "text-xs font-semibold px-3 pt-2")
+                                        ui.label(t("actions.share_hint", lang)).classes(
+                                            "text-xs px-3 pb-1").style(
+                                            "color: var(--text-secondary); max-width: 240px")
+                                        for _target in share_targets:
+                                            ui.menu_item(
+                                                _target,
+                                                on_click=lambda _e=None, tg=_target: _do_share(tg))
                         meta = f"{pname} {E['dot']} {t('actions.save_scene', lang, n=scene)}"
                         if chapter > 1:
                             meta += f" {E['dot']} {t('actions.save_chapter', lang, n=chapter)}"

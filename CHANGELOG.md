@@ -7,6 +7,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **Send a scenario to another player:** save cards now have a small send button in the top-right corner. It lists the other players; picking one copies the game's starting point - character, setting, story and opening scene - into a new save of that player, without any of your inputs or later scenes. The recipient finds it in their save list (named after the character, never overwriting an existing save) and can pass it on in turn. Works for games started from this version on, and for older saves that are still at their opening scene.
+
 ### Changed
 - **Story sidebar shows only act numbers:** the current act is now labelled just "Act 1" instead of "Act 1 - Ki" / "Act 1 - Setup". The phase names gave away the story structure and confused more than they helped.
 
