@@ -301,7 +301,8 @@ def test_generate_question_marks_surfaced_seeds(game, ai, monkeypatch):
         return {"question": "Was verbirgt der Leuchtturm?", "npc_id": "npc_1",
                 "seeds_surfaced": [now_seed["id"], "s_unknown"]}
     monkeypatch.setattr(E, "call_cogm_question", fake_call)
-    q = E.generate_cogm_question(None, game, "narration", CFG)
+    # The narration must actually contain the answer's new detail (evidence guard)
+    q = E.generate_cogm_question(None, game, "Im Auto sitzt Marcy, die Sekretärin.", CFG)
     assert now_seed["id"] in seen["check"]
     assert now_seed["used"] and now_seed["used_scene"] == game.scene_count
     assert q["text"] == "Was verbirgt der Leuchtturm?" and q["npc_id"] == "npc_1"
@@ -387,7 +388,7 @@ def test_reveal_shows_only_what_happened(game, ai, monkeypatch):
     trail = next(s for s in game.coop["seeds"] if s["kind"] == "false_trail")
     monkeypatch.setattr(E, "call_cogm_question", lambda *a, **k: {
         "question": "Q?", "npc_id": "", "seeds_surfaced": [trail["id"]]})
-    E.generate_cogm_question(None, game, "n", CFG)
+    E.generate_cogm_question(None, game, "Neben der Tür liegt ein roter Schuh.", CFG)
     r = E.coop_reveal(game)
     kinds = [(i["kind"], i["chapter"], i["scene"]) for i in r["items"]]
     assert ("now", 2, 4) in kinds and ("false_trail", 2, 4) in kinds

@@ -579,7 +579,7 @@ COGM_QUESTION_SCHEMA = {
         "seeds_surfaced": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "IDs from <check_seeds> whose content clearly appears in the narration.",
+            "description": "IDs from <check_seeds> whose specific new detail clearly appears in the narration (shared setting words are not enough).",
         },
     },
     "required": ["question", "npc_id", "seeds_surfaced"],
@@ -8020,7 +8020,11 @@ def _coop_block(game: GameState) -> str:
             "established world truth for this scene and weave it in naturally. Never "
             "mention the co-game-master or that anything was suggested. Co-game-master input "
             "shapes the world, other characters and events - never the protagonist's own "
-            "actions, words, thoughts or decisions; those stay entirely the player's. If the "
+            "actions, words, thoughts or decisions; those stay entirely the player's. The same "
+            "holds for the protagonist's past: if an input invents history, relationships or "
+            "former names for the protagonist that are not in <backstory>, use only the part "
+            "about the world or other characters (e.g. what an NPC claims or believes), never "
+            "establish it as the protagonist's true past. If the "
             "protagonist's action makes a <co_gm_input> answer impossible to use now, do not force it. "
             "Content boundaries and kid-friendly rules always override co-game-master input.")
     return f'\n<co_gm rule="{_xa(rule)}">\n' + "\n".join(parts) + "\n</co_gm>"
@@ -8065,8 +8069,12 @@ def call_cogm_question(client: anthropic.Anthropic, game: GameState, narration: 
         "- Never ask about mechanics, numbers, stats or dice.\n"
         "- Do not repeat or closely paraphrase a question from <recent_questions>.\n"
         "- npc_id: the ID of the NPC the question is about (from <npcs>), else \"\".\n"
-        "- seeds_surfaced: IDs from <check_seeds> whose content clearly appears in the "
-        "narration (not just a vague overlap). Empty list if none.\n"
+        "- seeds_surfaced: IDs from <check_seeds> whose CORE clearly appears in the "
+        "narration - the specific new detail the seed adds (a named person, object, fact or "
+        "claim), shown or unmistakably hinted at. Sharing the place, an object already in the "
+        "scene or the general mood is NOT enough. When in doubt, leave it out. Empty list if none.\n"
+        "- Ask about the world and the other characters, never about the protagonist's own "
+        "past, memories, feelings or relationships - those belong to the player.\n"
         f"- Write the question in {lang}."
     )
     npcs = [n for n in game.npcs if n.get("status") in ("active", "background")][:12]
@@ -8096,6 +8104,49 @@ def call_cogm_question(client: anthropic.Anthropic, game: GameState, narration: 
     return json.loads(_response_text(response))
 
 
+SEED_STEM_LEN = 7                  # Word stem length for the seed evidence check
+# Filler words the stop-word lists miss; they prove nothing about a seed
+_SEED_FILLER = frozenset({
+    "jemand", "jemanden", "jemandem", "niemand", "niemanden", "etwas", "nichts", "schon",
+    "immer", "wieder", "genau", "gerade", "einfach", "eigentlich", "wirklich", "plötzlich",
+    "einzige", "einzigen", "erste", "ersten", "zweite", "zweiten", "lässt", "sagt", "sieht",
+    "someone", "something", "nothing", "always", "again", "just", "really", "suddenly",
+})
+
+
+def _seed_stems(text: str) -> set:
+    """Content-word stems of a text (>= 4 letters, no stop or filler words, first
+    SEED_STEM_LEN letters so German inflections match)."""
+    return {w[:SEED_STEM_LEN] for w in re.findall(r"[^\W\d_]{4,}", (text or "").lower())
+            if w not in _STOPWORDS and w not in _SEED_FILLER}
+
+
+def _seed_has_evidence(game: GameState, seed: dict, narration: str) -> bool:
+    """Guard against over-eager seeds_surfaced claims: a seed only surfaced when
+    the narration contains some of the details it brought NEW into the story -
+    words the story did not already use when the seed was planted (one is enough,
+    e.g. a new name). Shared scene vocabulary (the room, an object already on the
+    table) proves nothing.
+    Seeds without any new detail are left to the model's judgement."""
+    seed_stems = _seed_stems(seed.get("text", ""))
+    same_chapter = int(seed.get("chapter") or 1) >= game.chapter_number
+    # A NOW answer's scene is the scene it was written FOR (its words may first appear
+    # there); other seeds store the last scene the Co-GM had seen when planting.
+    cutoff = int(seed.get("scene") or 0) - (1 if seed.get("kind") == "now" else 0)
+    known = set()
+    for e in game.narration_history:
+        text = e.get("narration", "")
+        if text == narration:
+            continue
+        if same_chapter and int(e.get("scene") or 0) > cutoff:
+            continue                                  # written after the seed was planted
+        known |= _seed_stems(text)
+    novel = seed_stems - known
+    if not novel:
+        return True
+    return bool(novel & _seed_stems(narration))
+
+
 def generate_cogm_question(client: anthropic.Anthropic, game: GameState, narration: str,
                            config: Optional[EngineConfig] = None) -> Optional[dict]:
     """After a narration in an active co-op session: mark surfaced seeds and set
@@ -8117,8 +8168,14 @@ def generate_cogm_question(client: anthropic.Anthropic, game: GameState, narrati
         c["question"] = None
         return None
     check_ids = {s["id"] for s in check}
+    claimed = set(result.get("seeds_surfaced") or [])
     for s in c["seeds"]:
-        if s["id"] in check_ids and s["id"] in (result.get("seeds_surfaced") or []):
+        if s["id"] in check_ids and s["id"] in claimed and not _seed_has_evidence(game, s, narration):
+            log(f"[CoGM] Seed {s['id']} claimed as surfaced, but none of its new details "
+                f"appear in the narration - kept for later", level="warning")
+            claimed.discard(s["id"])
+    for s in c["seeds"]:
+        if s["id"] in check_ids and s["id"] in claimed:
             s["used"] = True
             s["used_scene"] = game.scene_count
             log(f"[CoGM] Seed {s['id']} surfaced in scene {game.scene_count}")
