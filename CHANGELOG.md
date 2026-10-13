@@ -5,6 +5,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **Co-GM content no longer gets lost unseen:** a planted secret, rumour or answer was sometimes marked as "appeared in the story" although only a word of the setting matched (e.g. the room or an object already on the table). It was then never offered again and showed up in "Behind the scenes" as if it had happened. Now it only counts once the scene actually contains something the co-GM added new - a name, an object, a fact. Found in an Elvira co-op test run, where about half of the seeds marked as appeared had not actually appeared.
+- **Co-GM answers no longer rewrite the protagonist's past:** questions to the co-GM are about the world and the other characters, not about the protagonist's own memories or relationships, and the narrator never turns a co-GM answer into the protagonist's true backstory - that stays with the player.
+
 ## [1.3.0] - 2026-10-13
 
 ### Added
