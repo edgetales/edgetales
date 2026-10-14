@@ -9267,35 +9267,6 @@ def copy_game_start_to_user(game: GameState, chat_messages: list, dest_user: str
     return loaded, chat, name
 
 
-def copy_game_to_user(game: GameState, chat_messages: list, dest_user: str,
-                      src_user: str = "", src_save: str = ""
-                      ) -> tuple[Optional[GameState], list, Optional[str]]:
-    """Copy a running game (full state: history, chapters so far, Co-GM content,
-    last turn) into a new slot of dest_user - used when the inviting user becomes
-    the Co-GM and the invited user plays on. The source game is not touched.
-    Never overwrites an existing slot. Returns (game copy, chat copy, slot name)
-    as stored on disk, or (None, [], None) if the copy was not possible."""
-    if game is None or not is_valid_username(dest_user) or not _get_user_dir(dest_user).is_dir():
-        log(f"[Coop] Game copy to {dest_user!r} not possible", level="warning")
-        return None, [], None
-    name = _unique_save_name(dest_user, _safe_save_name(game.player_name))
-    save_game(copy.deepcopy(game), dest_user, copy.deepcopy(chat_messages or []), name)
-    # Archived earlier chapters travel along, so the new player can read them back
-    if src_user and src_save and is_valid_username(src_user):
-        src_dir = _get_save_dir(src_user) / "chapters" / src_save
-        if src_dir.is_dir():
-            try:
-                shutil.copytree(src_dir, _get_save_dir(dest_user) / "chapters" / name,
-                                dirs_exist_ok=True)
-            except OSError as e:
-                log(f"[Coop] Chapter archives not copied: {e}", level="warning")
-    loaded, chat = load_game(dest_user, name)
-    if loaded is None:
-        return None, [], None
-    log(f"[Coop] Game copied to {dest_user}/{name} (scene {loaded.scene_count})")
-    return loaded, chat, name
-
-
 # ===============================================================
 # CHAPTER ARCHIVES (separate files per chapter for read-only replay)
 # ===============================================================
