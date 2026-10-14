@@ -130,7 +130,7 @@ from engine import (
     load_user_config, save_user_config,
     list_users, create_user, delete_user, is_valid_username,
     save_game, load_game, list_saves_with_info, delete_save, export_story_pdf,
-    copy_scenario_to_user, copy_game_to_user,
+    copy_scenario_to_user, copy_game_start_to_user, game_has_start,
     save_chapter_archive, load_chapter_archive, list_chapter_archives, delete_chapter_archives,
     replace_chapter_archives,
     get_current_act, setup_file_logging, action_dice_text,
@@ -4099,13 +4099,18 @@ def _render_invite_form(s: dict, dlg) -> None:
     # My role: "player" (I keep playing, the invitee is Co-GM) or "cogm" (the invitee
     # plays on in a copy of this game, I become the Co-GM)
     ui.label(t("coop.my_role", lang)).classes("text-xs font-semibold mt-3")
+    _can_swap = game_has_start(game)        # the invitee plays from the scenario start
     role_tg = ui.toggle({"player": t("coop.myrole_player", lang), "cogm": t("coop.myrole_cogm", lang)},
                         value="player").props(f'no-caps dense aria-label="{t("coop.my_role", lang)}"')
+    if not _can_swap:
+        role_tg.disable()
     role_hint = ui.label("").classes("text-xs").style("color: var(--text-secondary)")
 
     def _update_role_hint(_=None):
         role_hint.text = t("coop.role_cogm_hint" if role_tg.value == "cogm" else "coop.role_player_hint",
                            lang, name=sel.value or "")
+        if not _can_swap:
+            role_hint.text += " " + t("coop.role_cogm_unavailable", lang)
     role_tg.on_value_change(_update_role_hint)
     sel.on_value_change(_update_role_hint)
     _update_role_hint()
@@ -4191,21 +4196,23 @@ def show_coop_invite(s: dict, inv: dict, on_accept) -> None:
 
 
 def _coop_accept_as_player(s: dict, inv: dict) -> Optional["CoopLive"]:
-    """The inviting user chose to be the Co-GM: copy their running game into a new
-    save of the invited user, load it into this tab and host the session here.
-    The inviter's own save stays as it is; their tab switches to the Co-GM view on
-    its next tick (flag _coop_join_cogm)."""
+    """The inviting user chose to be the Co-GM: copy the scenario start of their
+    game into a new save of the invited user (who plays the story from its
+    beginning), load it into this tab and host the session here. The inviter's own
+    save stays as it is; their tab switches to the Co-GM view on its next tick
+    (flag _coop_join_cogm)."""
     lang = L()
     me = s.get("current_user", "")
     inviter = inv["host"]
     inviter_s = inv["host_s"]
     src = inviter_s.get("game")
-    if src is None or src.game_over or inviter_s.get("processing"):
+    # A stored opening_state is never touched by turns; without one the start is
+    # captured from the live game, which must not be mid-turn
+    if (src is None or src.game_over or not game_has_start(src)
+            or (inviter_s.get("processing") and not src.opening_state)):
         ui.notify(t("coop.not_available", lang), type="warning", position="top")
         return None
-    game, chat, name = copy_game_to_user(src, inviter_s.get("messages", []), me,
-                                         src_user=inviter,
-                                         src_save=inviter_s.get("active_save", "autosave"))
+    game, chat, name = copy_game_start_to_user(src, inviter_s.get("messages", []), me)
     if game is None:
         ui.notify(t("coop.copy_failed", lang), type="negative", position="top")
         _coop_notify(inviter, "coop.copy_failed_host", "warning", name=me)

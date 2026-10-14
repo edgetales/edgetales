@@ -125,3 +125,45 @@ def test_safe_save_name():
     assert E._safe_save_name("") == "scenario"
     assert E._safe_save_name("autosave") == "scenario"
     assert len(E._safe_save_name("x" * 200)) <= E.SAVE_NAME_MAX_CHARS
+
+
+# --- Co-op invite as player: the invitee plays the running game from its start ---
+
+def _played_game(game, ai):
+    """Lars' running game: opening captured, one turn played, Co-GM content."""
+    _users("lars", "jana")
+    E.save_game(_opening(game), "lars", list(OPENING_CHAT), "autosave")
+    E.process_turn(None, game, "Ich klettere", CFG)
+    game.coop = {"partner": "jana", "seeds": [{"text": "x"}]}
+    return OPENING_CHAT + [{"role": "user", "content": "Ich klettere"},
+                           {"role": "assistant", "content": "Weiter."}]
+
+
+def test_game_start_copy_begins_at_opening(game, ai):
+    chat = _played_game(game, ai)
+    assert E.game_has_start(game)
+    g, chat2, name = E.copy_game_start_to_user(game, chat, "jana")
+    assert name == "Elin" and name in E.list_saves("jana")
+    assert g.scene_count == 1 and g.session_log[0]["result"] == "opening"
+    assert g.last_turn_snapshot is None and g.coop == {}
+    assert chat2 == OPENING_CHAT
+    assert g.opening_state                       # can be passed on again
+    # the host's live game is untouched
+    assert game.scene_count == 2 and game.coop["seeds"]
+
+
+def test_game_start_copy_of_old_game_at_opening(game):
+    _users("jana")
+    _opening(game)
+    assert game.opening_state is None and E.game_has_start(game)
+    g, chat2, _ = E.copy_game_start_to_user(game, list(OPENING_CHAT), "jana")
+    assert g.scene_count == 1 and chat2 == OPENING_CHAT
+    assert game.opening_state is None            # never mutates the source
+
+
+def test_game_start_copy_impossible_without_start(game):
+    _users("jana")                               # fixture: scene 3, no opening_state
+    assert not E.game_has_start(game)
+    assert not E.game_has_start(None)
+    assert E.copy_game_start_to_user(game, [], "jana") == (None, [], None)
+    assert E.copy_game_start_to_user(game, [], "../evil") == (None, [], None)

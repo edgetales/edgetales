@@ -1,5 +1,7 @@
-"""Co-op role choice: when the inviting user becomes the Co-GM, their running game
-is copied into a new save of the invited user (copy_game_to_user)."""
+"""Full copy of a running game into a new save of another user (copy_game_to_user).
+The app's "I am the Co-GM" invite copies only the scenario start
+(copy_game_start_to_user, see test_scenario_share.py); the full copy is kept for
+Elvira's role-swap runs."""
 import engine as E
 
 

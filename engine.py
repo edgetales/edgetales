@@ -9211,6 +9211,17 @@ def copy_scenario_to_user(src_user: str, save_name: str, dest_user: str) -> str 
         log(f"[Share] {src_user}/{save_name} has no scenario start", level="warning")
         return None
 
+    game, chat = _game_from_opening(opening)
+    name = _unique_save_name(dest_user, _safe_save_name(game.player_name))
+    save_game(game, dest_user, chat, name)
+    log(f"[Share] Scenario {src_user}/{save_name} -> {dest_user}/{name}")
+    return name
+
+
+def _game_from_opening(opening: dict) -> tuple[GameState, list]:
+    """Fresh GameState + chat rebuilt from an opening_state (scenario start).
+    No turn snapshot, no Co-GM state; the opening_state travels along so the
+    copy can be passed on again."""
     game = GameState()
     for k, v in copy.deepcopy(opening.get("fields") or {}).items():
         if k in SAVE_FIELDS and k not in _OPENING_EXCLUDED_FIELDS:
@@ -9218,12 +9229,42 @@ def copy_scenario_to_user(src_user: str, save_name: str, dest_user: str) -> str 
     game.last_turn_snapshot = None
     game.coop = {}
     game.opening_state = copy.deepcopy(opening)
-    chat = copy.deepcopy(opening.get("chat_messages") or [])
+    return game, copy.deepcopy(opening.get("chat_messages") or [])
 
-    name = _unique_save_name(dest_user, _safe_save_name(game.player_name))
-    save_game(game, dest_user, chat, name)
-    log(f"[Share] Scenario {src_user}/{save_name} -> {dest_user}/{name}")
-    return name
+
+def game_has_start(game: Optional[GameState]) -> bool:
+    """True if a running game can provide its scenario start (stored opening_state,
+    or still at its opening scene) - required to invite someone to play it."""
+    return game is not None and bool(game.opening_state or _is_at_opening(game))
+
+
+def copy_game_start_to_user(game: GameState, chat_messages: list, dest_user: str
+                            ) -> tuple[Optional[GameState], list, Optional[str]]:
+    """Copy the scenario start of a running game into a new slot of dest_user -
+    used when the inviting user becomes the Co-GM and the invited user plays the
+    story from its beginning. Only the start travels (character, setting, story
+    blueprint, opening NPCs and narration); the source game is not touched.
+    Never overwrites an existing slot. Returns (game, chat, slot name) as stored
+    on disk, or (None, [], None) if the copy was not possible."""
+    if game is None or not is_valid_username(dest_user) or not _get_user_dir(dest_user).is_dir():
+        log(f"[Coop] Start copy to {dest_user!r} not possible", level="warning")
+        return None, [], None
+    opening = game.opening_state
+    if not opening:
+        probe = copy.deepcopy(game)          # never mutate the host's live game
+        capture_opening_state(probe, chat_messages)
+        opening = probe.opening_state
+    if not opening:
+        log(f"[Coop] {game.player_name!r} has no scenario start", level="warning")
+        return None, [], None
+    new_game, chat = _game_from_opening(opening)
+    name = _unique_save_name(dest_user, _safe_save_name(new_game.player_name))
+    save_game(new_game, dest_user, chat, name)
+    loaded, chat = load_game(dest_user, name)
+    if loaded is None:
+        return None, [], None
+    log(f"[Coop] Game start copied to {dest_user}/{name}")
+    return loaded, chat, name
 
 
 def copy_game_to_user(game: GameState, chat_messages: list, dest_user: str,
