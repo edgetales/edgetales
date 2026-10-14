@@ -130,7 +130,7 @@ from engine import (
     load_user_config, save_user_config,
     list_users, create_user, delete_user, is_valid_username,
     save_game, load_game, list_saves_with_info, delete_save, export_story_pdf,
-    copy_scenario_to_user, copy_game_to_user,
+    copy_scenario_to_user, copy_game_start_to_user, game_has_start,
     save_chapter_archive, load_chapter_archive, list_chapter_archives, delete_chapter_archives,
     replace_chapter_archives,
     get_current_act, setup_file_logging, action_dice_text,
@@ -1200,6 +1200,35 @@ def _render_sidebar_story_npcs(game: GameState, lang: str) -> None:
                     ui.label(f"\u2620\ufe0f {n['name']}").classes("text-xs").style("opacity: 0.4; text-decoration: line-through; padding: 0.15rem 0.5rem")
 
 
+_SAVE_INFO_FIELDS = (
+    ("setting_genre", "save_info.genre", get_genre_label),
+    ("setting_tone", "save_info.tone", get_tone_label),
+    ("setting_archetype", "save_info.archetype", get_archetype_label),
+    ("character_concept", "save_info.concept", None),
+    ("backstory", "save_info.backstory", None),
+    ("player_wishes", "save_info.wishes", None),
+    ("content_lines", "save_info.boundaries", None),
+)
+
+
+def save_info_lines(info, lang: str) -> list:
+    """Setup info of a game as escaped HTML lines ('<b>Label:</b> value').
+
+    `info` is a save-info dict (list_saves_with_info) or a GameState \u2014 both use the
+    same field names. Codes (genre/tone/archetype) are translated; free-text values
+    (custom genre etc. contain spaces) are shown as stored. Empty fields are skipped."""
+    lines = []
+    for field, key, label_fn in _SAVE_INFO_FIELDS:
+        val = info.get(field, "") if isinstance(info, dict) else getattr(info, field, "")
+        val = str(val or "").strip()
+        if not val:
+            continue
+        if label_fn and " " not in val:
+            val = label_fn(val, lang)
+        lines.append(f'<b>{t(key, lang)}:</b> {html_mod.escape(val)}')
+    return lines
+
+
 def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=False, on_chapter_view_change=None) -> None:
     s = S()
     lang = L()
@@ -1462,37 +1491,13 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                             ui.button(icon="play_arrow", on_click=make_load(sname, display_name, is_active)).props(f'flat round dense size=sm aria-label="{_load_aria}"').tooltip(t("actions.load", lang)).style("justify-self: start")
 
                             # --- Setup info tooltip (slot always rendered for stable layout) ---
-                            _si_genre = info.get("setting_genre", "")
-                            _si_tone = info.get("setting_tone", "")
-                            _si_arch = info.get("setting_archetype", "")
-                            _si_concept = info.get("character_concept", "")
-                            _si_back = info.get("backstory", "")
-                            _si_wishes = info.get("player_wishes", "")
-                            _si_bounds = info.get("content_lines", "")
-                            _has_info = any([_si_genre, _si_tone, _si_arch, _si_concept, _si_back, _si_wishes, _si_bounds])
+                            _lines = save_info_lines(info, lang)
+                            _has_info = bool(_lines)
                             _info_visibility = "" if _has_info else "visibility: hidden; pointer-events: none"
                             with ui.button(icon="info_outline").props(
                                 f'flat round dense size=sm aria-label="{t("aria.save_info", lang)}"'
                             ).classes("text-gray-400").style(f"min-width: 36px; min-height: 36px; justify-self: center; {_info_visibility}"):
                                 if _has_info:
-                                    _lines = []
-                                    if _si_genre:
-                                        _gl = get_genre_label(_si_genre, lang) if " " not in _si_genre else _si_genre
-                                        _lines.append(f'<b>{t("save_info.genre", lang)}:</b> {html_mod.escape(_gl)}')
-                                    if _si_tone:
-                                        _tl = get_tone_label(_si_tone, lang) if " " not in _si_tone else _si_tone
-                                        _lines.append(f'<b>{t("save_info.tone", lang)}:</b> {html_mod.escape(_tl)}')
-                                    if _si_arch:
-                                        _al = get_archetype_label(_si_arch, lang) if " " not in _si_arch else _si_arch
-                                        _lines.append(f'<b>{t("save_info.archetype", lang)}:</b> {html_mod.escape(_al)}')
-                                    if _si_concept:
-                                        _lines.append(f'<b>{t("save_info.concept", lang)}:</b> {html_mod.escape(_si_concept)}')
-                                    if _si_back:
-                                        _lines.append(f'<b>{t("save_info.backstory", lang)}:</b> {html_mod.escape(_si_back)}')
-                                    if _si_wishes:
-                                        _lines.append(f'<b>{t("save_info.wishes", lang)}:</b> {html_mod.escape(_si_wishes)}')
-                                    if _si_bounds:
-                                        _lines.append(f'<b>{t("save_info.boundaries", lang)}:</b> {html_mod.escape(_si_bounds)}')
                                     with ui.menu().props("anchor='top middle' self='bottom middle' :offset='[0,6]'"):
                                         ui.html('<br>'.join(_lines)).style(
                                             "max-width:280px;max-height:320px;overflow-y:auto;"
@@ -4094,13 +4099,18 @@ def _render_invite_form(s: dict, dlg) -> None:
     # My role: "player" (I keep playing, the invitee is Co-GM) or "cogm" (the invitee
     # plays on in a copy of this game, I become the Co-GM)
     ui.label(t("coop.my_role", lang)).classes("text-xs font-semibold mt-3")
+    _can_swap = game_has_start(game)        # the invitee plays from the scenario start
     role_tg = ui.toggle({"player": t("coop.myrole_player", lang), "cogm": t("coop.myrole_cogm", lang)},
                         value="player").props(f'no-caps dense aria-label="{t("coop.my_role", lang)}"')
+    if not _can_swap:
+        role_tg.disable()
     role_hint = ui.label("").classes("text-xs").style("color: var(--text-secondary)")
 
     def _update_role_hint(_=None):
         role_hint.text = t("coop.role_cogm_hint" if role_tg.value == "cogm" else "coop.role_player_hint",
                            lang, name=sel.value or "")
+        if not _can_swap:
+            role_hint.text += " " + t("coop.role_cogm_unavailable", lang)
     role_tg.on_value_change(_update_role_hint)
     sel.on_value_change(_update_role_hint)
     _update_role_hint()
@@ -4137,6 +4147,16 @@ def show_coop_invite(s: dict, inv: dict, on_accept) -> None:
             if _as_player:
                 ui.label(t("coop.invite_player_hint", lang, host=host)).classes("text-xs mt-1").style(
                     "color: var(--text-secondary)")
+            # Setup info of the invited game (same content as the save list's info tooltip)
+            _info_lines = save_info_lines(host_s.get("game"), lang)
+            if _info_lines:
+                ui.label(t("coop.invite_game_info", lang)).classes("text-xs font-semibold mt-3")
+                ui.html('<br>'.join(_info_lines)).props(
+                    f'role="region" aria-label="{t("aria.coop_invite_game_info", lang)}"'
+                ).classes("w-full").style(
+                    "max-height:40vh;overflow-y:auto;padding:8px 12px;font-size:0.82rem;"
+                    "line-height:1.45;border:1px solid var(--border);"
+                    "border-radius:8px")
 
             async def _accept():
                 dlg.close()
@@ -4176,21 +4196,23 @@ def show_coop_invite(s: dict, inv: dict, on_accept) -> None:
 
 
 def _coop_accept_as_player(s: dict, inv: dict) -> Optional["CoopLive"]:
-    """The inviting user chose to be the Co-GM: copy their running game into a new
-    save of the invited user, load it into this tab and host the session here.
-    The inviter's own save stays as it is; their tab switches to the Co-GM view on
-    its next tick (flag _coop_join_cogm)."""
+    """The inviting user chose to be the Co-GM: copy the scenario start of their
+    game into a new save of the invited user (who plays the story from its
+    beginning), load it into this tab and host the session here. The inviter's own
+    save stays as it is; their tab switches to the Co-GM view on its next tick
+    (flag _coop_join_cogm)."""
     lang = L()
     me = s.get("current_user", "")
     inviter = inv["host"]
     inviter_s = inv["host_s"]
     src = inviter_s.get("game")
-    if src is None or src.game_over or inviter_s.get("processing"):
+    # A stored opening_state is never touched by turns; without one the start is
+    # captured from the live game, which must not be mid-turn
+    if (src is None or src.game_over or not game_has_start(src)
+            or (inviter_s.get("processing") and not src.opening_state)):
         ui.notify(t("coop.not_available", lang), type="warning", position="top")
         return None
-    game, chat, name = copy_game_to_user(src, inviter_s.get("messages", []), me,
-                                         src_user=inviter,
-                                         src_save=inviter_s.get("active_save", "autosave"))
+    game, chat, name = copy_game_start_to_user(src, inviter_s.get("messages", []), me)
     if game is None:
         ui.notify(t("coop.copy_failed", lang), type="negative", position="top")
         _coop_notify(inviter, "coop.copy_failed_host", "warning", name=me)
