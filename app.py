@@ -1200,6 +1200,35 @@ def _render_sidebar_story_npcs(game: GameState, lang: str) -> None:
                     ui.label(f"\u2620\ufe0f {n['name']}").classes("text-xs").style("opacity: 0.4; text-decoration: line-through; padding: 0.15rem 0.5rem")
 
 
+_SAVE_INFO_FIELDS = (
+    ("setting_genre", "save_info.genre", get_genre_label),
+    ("setting_tone", "save_info.tone", get_tone_label),
+    ("setting_archetype", "save_info.archetype", get_archetype_label),
+    ("character_concept", "save_info.concept", None),
+    ("backstory", "save_info.backstory", None),
+    ("player_wishes", "save_info.wishes", None),
+    ("content_lines", "save_info.boundaries", None),
+)
+
+
+def save_info_lines(info, lang: str) -> list:
+    """Setup info of a game as escaped HTML lines ('<b>Label:</b> value').
+
+    `info` is a save-info dict (list_saves_with_info) or a GameState \u2014 both use the
+    same field names. Codes (genre/tone/archetype) are translated; free-text values
+    (custom genre etc. contain spaces) are shown as stored. Empty fields are skipped."""
+    lines = []
+    for field, key, label_fn in _SAVE_INFO_FIELDS:
+        val = info.get(field, "") if isinstance(info, dict) else getattr(info, field, "")
+        val = str(val or "").strip()
+        if not val:
+            continue
+        if label_fn and " " not in val:
+            val = label_fn(val, lang)
+        lines.append(f'<b>{t(key, lang)}:</b> {html_mod.escape(val)}')
+    return lines
+
+
 def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=False, on_chapter_view_change=None) -> None:
     s = S()
     lang = L()
@@ -1462,37 +1491,13 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                             ui.button(icon="play_arrow", on_click=make_load(sname, display_name, is_active)).props(f'flat round dense size=sm aria-label="{_load_aria}"').tooltip(t("actions.load", lang)).style("justify-self: start")
 
                             # --- Setup info tooltip (slot always rendered for stable layout) ---
-                            _si_genre = info.get("setting_genre", "")
-                            _si_tone = info.get("setting_tone", "")
-                            _si_arch = info.get("setting_archetype", "")
-                            _si_concept = info.get("character_concept", "")
-                            _si_back = info.get("backstory", "")
-                            _si_wishes = info.get("player_wishes", "")
-                            _si_bounds = info.get("content_lines", "")
-                            _has_info = any([_si_genre, _si_tone, _si_arch, _si_concept, _si_back, _si_wishes, _si_bounds])
+                            _lines = save_info_lines(info, lang)
+                            _has_info = bool(_lines)
                             _info_visibility = "" if _has_info else "visibility: hidden; pointer-events: none"
                             with ui.button(icon="info_outline").props(
                                 f'flat round dense size=sm aria-label="{t("aria.save_info", lang)}"'
                             ).classes("text-gray-400").style(f"min-width: 36px; min-height: 36px; justify-self: center; {_info_visibility}"):
                                 if _has_info:
-                                    _lines = []
-                                    if _si_genre:
-                                        _gl = get_genre_label(_si_genre, lang) if " " not in _si_genre else _si_genre
-                                        _lines.append(f'<b>{t("save_info.genre", lang)}:</b> {html_mod.escape(_gl)}')
-                                    if _si_tone:
-                                        _tl = get_tone_label(_si_tone, lang) if " " not in _si_tone else _si_tone
-                                        _lines.append(f'<b>{t("save_info.tone", lang)}:</b> {html_mod.escape(_tl)}')
-                                    if _si_arch:
-                                        _al = get_archetype_label(_si_arch, lang) if " " not in _si_arch else _si_arch
-                                        _lines.append(f'<b>{t("save_info.archetype", lang)}:</b> {html_mod.escape(_al)}')
-                                    if _si_concept:
-                                        _lines.append(f'<b>{t("save_info.concept", lang)}:</b> {html_mod.escape(_si_concept)}')
-                                    if _si_back:
-                                        _lines.append(f'<b>{t("save_info.backstory", lang)}:</b> {html_mod.escape(_si_back)}')
-                                    if _si_wishes:
-                                        _lines.append(f'<b>{t("save_info.wishes", lang)}:</b> {html_mod.escape(_si_wishes)}')
-                                    if _si_bounds:
-                                        _lines.append(f'<b>{t("save_info.boundaries", lang)}:</b> {html_mod.escape(_si_bounds)}')
                                     with ui.menu().props("anchor='top middle' self='bottom middle' :offset='[0,6]'"):
                                         ui.html('<br>'.join(_lines)).style(
                                             "max-width:280px;max-height:320px;overflow-y:auto;"
@@ -4137,6 +4142,16 @@ def show_coop_invite(s: dict, inv: dict, on_accept) -> None:
             if _as_player:
                 ui.label(t("coop.invite_player_hint", lang, host=host)).classes("text-xs mt-1").style(
                     "color: var(--text-secondary)")
+            # Setup info of the invited game (same content as the save list's info tooltip)
+            _info_lines = save_info_lines(host_s.get("game"), lang)
+            if _info_lines:
+                ui.label(t("coop.invite_game_info", lang)).classes("text-xs font-semibold mt-3")
+                ui.html('<br>'.join(_info_lines)).props(
+                    f'role="region" aria-label="{t("aria.coop_invite_game_info", lang)}"'
+                ).classes("w-full").style(
+                    "max-height:40vh;overflow-y:auto;padding:8px 12px;font-size:0.82rem;"
+                    "line-height:1.45;border:1px solid var(--border);"
+                    "border-radius:8px")
 
             async def _accept():
                 dlg.close()
