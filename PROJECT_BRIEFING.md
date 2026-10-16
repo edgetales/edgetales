@@ -226,7 +226,7 @@ When `story_complete=True` + `epilogue_dismissed=True`: `get_current_act()` retu
 
 #### Seven Narrator Information Layers
 
-1. **Conversation history**: Last 3 narrations as user/assistant pairs. Last narration untruncated; older at `MAX_NARRATION_CHARS` (1500).
+1. **Conversation history**: Last 3 narrations as user/assistant pairs. Last narration untruncated; older ones via `_history_narration()`: whole up to `MAX_NARRATION_CHARS` (2500), longer ones cut at the last sentence end (`_trim_to_sentence`). At 1500 chars ~80% of scenes (avg ~1,580 chars) lost their closing hook mid-sentence. Player messages are limited to `PLAYER_INPUT_MAX_CHARS` (500) in the UI: `maxlength` on the input plus a guard in `process_player_input()` for dictated (STT) text (`game.input_too_long` notice; typed text stays in the field).
 2. **Factual timeline** (`_recent_events_block()`): Last 7 `session_log` entries as `<recent_events>` — ESTABLISHED FACTS Narrator must not contradict.
 3. **Scene context** (`current_scene_context`): Single sentence from Extractor — situation + dominant mood/tension.
 4. **Narrative state context** (`_status_context_block()`): Maps H/Sp/Su to 6 atmospheric stages each. Narrator reflects state through body language/sensation, never mentions numbers. Lives in user-prompt builders (not system prompt) to preserve caching.

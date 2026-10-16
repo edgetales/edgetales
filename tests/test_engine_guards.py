@@ -461,3 +461,22 @@ def test_finish_description_adds_period_only_when_missing():
     assert E._finish_description("Müder Wirt") == "Müder Wirt."
     assert E._finish_description("Müder Wirt.") == "Müder Wirt."
     assert E._finish_description("Er fragt: »Wer?«") == "Er fragt: »Wer?«"
+
+
+# --- Narrator context: older narrations ----------------------------------------
+
+def test_history_narration_keeps_typical_scenes_whole():
+    scene = ("Der Nebel steht über dem Hafen. " * 55).strip()   # ~1,700 chars
+    assert 1500 < len(scene) <= E.MAX_NARRATION_CHARS
+    assert E._history_narration(scene) == scene
+
+
+def test_history_narration_cuts_long_scenes_at_a_sentence_end():
+    scene = ("Ein langer Satz über das Watt und die Flut. " * 80).strip()
+    out = E._history_narration(scene)
+    assert len(out) <= E.MAX_NARRATION_CHARS
+    assert out.endswith(".")
+
+
+def test_player_input_limit_is_defined():
+    assert E.PLAYER_INPUT_MAX_CHARS == 500

@@ -149,7 +149,9 @@ MAX_NPC_MEMORY_ENTRIES = 25        # Per NPC (total: observations + reflections)
 MAX_NPC_OBSERVATIONS = 15          # Max observation memories per NPC
 MAX_NPC_REFLECTIONS = 8            # Max reflection memories per NPC
 MAX_NARRATION_HISTORY = 7          # Recent narrations kept for prompt context
-MAX_NARRATION_CHARS = 1500         # Truncation per narration entry
+MAX_NARRATION_CHARS = 2500         # Older narrations in the Narrator context, cut at a sentence end
+                                   # (1500 cut ~80% of scenes mid-sentence — losing their closing hook)
+PLAYER_INPUT_MAX_CHARS = 500       # Longest player message the game accepts (UI limit)
 MAX_SESSION_LOG = 50               # Scene log entries kept
 REFLECTION_THRESHOLD = 30          # Importance accumulator threshold for reflection
 MAX_ACTIVATED_NPCS = 4             # Max NPCs with full context in narrator prompt
@@ -2028,6 +2030,13 @@ _DESC_DANGLING_WORDS = {
     "eine", "einen", "einem", "einer", "von", "zu", "im", "in", "an", "auf", "für",
     "and", "or", "but", "with", "the", "a", "an", "of", "to", "in", "on", "for",
 }
+
+
+def _history_narration(text: str) -> str:
+    """Older narration for the Narrator context: complete when it fits
+    MAX_NARRATION_CHARS, otherwise cut at the last sentence end (never mid-word)."""
+    text = text or ""
+    return text if len(text) <= MAX_NARRATION_CHARS else _trim_to_sentence(text, MAX_NARRATION_CHARS)
 
 
 def _is_complete_description(desc: str) -> bool:
@@ -5625,7 +5634,8 @@ def call_narrator(client: anthropic.Anthropic, prompt: str,
         history_slice = game.narration_history[-3:]
         for i, entry in enumerate(history_slice):
             is_most_recent = (i == len(history_slice) - 1)
-            narr_text = entry["narration"] if is_most_recent else entry["narration"][:MAX_NARRATION_CHARS]
+            narr_text = (entry["narration"] if is_most_recent
+                         else _history_narration(entry["narration"]))
             messages.append({"role": "user", "content": entry.get("prompt_summary",
                              "Continue the story.")})
             messages.append({"role": "assistant", "content": narr_text})

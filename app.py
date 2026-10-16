@@ -122,7 +122,7 @@ from nicegui import app, ui, Client, context
 # Engine & Voice imports
 # ---------------------------------------------------------------------------
 from engine import (
-    E, log, VERSION,
+    E, log, VERSION, PLAYER_INPUT_MAX_CHARS,
     GameState, RollResult, EngineConfig,
     LANGUAGES, CHATTERBOX_DEVICE_OPTIONS,
     VOICE_DIR,
@@ -2573,6 +2573,11 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
                                sidebar_refresh=None, is_retry: bool = False) -> None:
     s=S();game=s.get("game")
     if not game or not text.strip(): return
+    # Length guard: typing is capped by maxlength, but dictation (STT) is not
+    if len(text.strip()) > PLAYER_INPUT_MAX_CHARS and not is_retry:
+        ui.notify(t("game.input_too_long", L(), max=PLAYER_INPUT_MAX_CHARS),
+                  type="warning", position="top")
+        return
     # Double-send guard: prevent concurrent processing
     if s.get("processing", False):
         ui.notify(t("game.still_processing", L()), type="warning", position="top")
@@ -4876,13 +4881,20 @@ async def main_page(client: Client):
                 _coop_status.set_visibility(False)
                 _ui_refs["coop_status"] = _coop_status
                 with ui.row().classes("w-full items-center gap-2 rpg-input-bar").style("padding: 0.5rem 1rem"):
-                    inp = ui.input(placeholder=t("game.input_placeholder", L())).classes("flex-grow").props(f'outlined dense dark aria-label="{t("game.input_placeholder", L())}"')
+                    inp = ui.input(placeholder=t("game.input_placeholder", L())).classes("flex-grow").props(
+                        f'outlined dense dark maxlength={PLAYER_INPUT_MAX_CHARS} '
+                        f'aria-label="{t("game.input_placeholder", L())}" '
+                        f'aria-description="{t("aria.input_limit", L(), max=PLAYER_INPUT_MAX_CHARS)}"')
                     inp.on_value_change(lambda _e: _coop_mark_typing(s))
                     _cc = chat_container  # capture reference for closure
                     _sr = _refresh_sidebar  # capture sidebar refresh callback
                     async def send():
                         txt=inp.value
                         if txt and txt.strip():
+                            if len(txt.strip()) > PLAYER_INPUT_MAX_CHARS:
+                                ui.notify(t("game.input_too_long", L(), max=PLAYER_INPUT_MAX_CHARS),
+                                          type="warning", position="top")
+                                return   # keep the text so the player can shorten it
                             inp.value=""
                             await process_player_input(txt.strip(), _cc, sidebar_refresh=_sr)
                     inp.on("keydown.enter", send)
