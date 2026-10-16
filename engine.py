@@ -4500,6 +4500,7 @@ THINKING_MODES = ("disabled", "adaptive", "between_tools")
 
 _MODEL_SETTINGS: Optional[dict] = None   # lazily loaded from config.json
 _REJECTED_OPTIONS: set = set()           # {(role, "effort"|"thinking")} the API refused
+_THINKING_SUBSTITUTES: dict = {}         # {role: mode} the API asked for instead of "disabled"
 
 
 def configure_models(cfg: Optional[dict] = None) -> dict:
@@ -4527,6 +4528,7 @@ def configure_models(cfg: Optional[dict] = None) -> dict:
         settings[role] = {"model": model, "effort": effort, "thinking": thinking}
     _MODEL_SETTINGS = settings
     _REJECTED_OPTIONS.clear()
+    _THINKING_SUBSTITUTES.clear()
     log("[Models] " + " | ".join(
         f"{r}={s['model']} effort={s['effort'] or 'default'} thinking={s['thinking'] or 'default'}"
         for r, s in settings.items()))
@@ -4559,8 +4561,22 @@ def _apply_model_settings(kwargs: dict) -> tuple[dict, Optional[str]]:
         oc["effort"] = s["effort"]
         kw["output_config"] = oc
     if s["thinking"] and (role, "thinking") not in _REJECTED_OPTIONS:
-        kw["thinking"] = {"type": s["thinking"]}
+        kw["thinking"] = {"type": _THINKING_SUBSTITUTES.get(role, s["thinking"])}
     return kw, role
+
+
+def _thinking_off_substitute(e: Exception, kw: dict) -> Optional[str]:
+    """Mode the API names as the way to turn thinking off, when it rejects
+    {"type": "disabled"} (Sonnet 5.5: "send {"type": "between_tools"} instead").
+    Dropping the option instead would leave the model's default (adaptive)
+    thinking on, which eats max_tokens of short calls and cuts their answers."""
+    if (kw.get("thinking") or {}).get("type") != "disabled":
+        return None
+    msg = str(e)
+    for mode in THINKING_MODES:
+        if mode != "disabled" and f'"{mode}"' in msg:
+            return mode
+    return None
 
 
 def _rejected_option(e: Exception, kw: dict) -> Optional[str]:
@@ -4606,6 +4622,15 @@ def _api_create_with_retry(client: anthropic.Anthropic, max_retries: int = 2, **
             opt = _rejected_option(e, kwargs) if role else None
             if opt is None:
                 raise
+            sub = _thinking_off_substitute(e, kwargs) if opt == "thinking" else None
+            if sub and _THINKING_SUBSTITUTES.get(role) != sub:
+                # The model turns thinking off another way - keep it off, retry at once.
+                _THINKING_SUBSTITUTES[role] = sub
+                kwargs = {**kwargs, "thinking": {"type": sub}}
+                log(f"[Models] {kwargs.get('model')} turns thinking off with '{sub}' "
+                    f"instead of 'disabled' — using it for {role}", level="warning")
+                attempt -= 1
+                continue
             # Model does not support the configured option — drop it for this role
             # and retry immediately (does not count as a transient retry).
             _REJECTED_OPTIONS.add((role, opt))

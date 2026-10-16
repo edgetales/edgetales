@@ -87,6 +87,29 @@ def test_rejected_effort_is_dropped_and_remembered():
     assert "output_config" not in c.calls[2]
 
 
+def test_rejected_thinking_disabled_uses_the_named_off_mode():
+    # Sonnet 5.5 refuses "disabled"; dropping the option left adaptive thinking on,
+    # which ate max_tokens of short calls (truncated or empty answers).
+    _write_cfg(brain_model="claude-sonnet-5-5", brain_effort="high")
+    c = _Client([_bad_request('To turn thinking off on this model, send "thinking": '
+                              '{"type": "between_tools"} instead of {"type": "disabled"}.')])
+    E._api_create_with_retry(c, max_retries=0, model=E.BRAIN_MODEL, max_tokens=10)
+    assert c.calls[0]["thinking"] == {"type": "disabled"}
+    assert c.calls[1]["thinking"] == {"type": "between_tools"}
+    assert ("brain", "thinking") not in E._REJECTED_OPTIONS
+    E._api_create_with_retry(c, max_retries=0, model=E.BRAIN_MODEL, max_tokens=10)
+    assert c.calls[2]["thinking"] == {"type": "between_tools"}   # remembered, no new 400
+    assert len(c.calls) == 3
+
+
+def test_rejected_thinking_without_named_mode_is_dropped():
+    _write_cfg(brain_thinking="adaptive")
+    c = _Client([_bad_request("thinking is not supported for this model")])
+    E._api_create_with_retry(c, max_retries=0, model=E.BRAIN_MODEL, max_tokens=10)
+    assert "thinking" not in c.calls[1]
+    assert ("brain", "thinking") in E._REJECTED_OPTIONS
+
+
 def test_rejected_effort_keeps_structured_output_format():
     _write_cfg(brain_effort="max")
     fmt = {"format": {"type": "json_schema", "schema": {"type": "object"}}}
