@@ -250,13 +250,72 @@ def test_act_due_director_fires_once_per_act(game):
     assert reason == "act_due:act_0"
     E._mark_director_reason(game, reason)
     assert "due:act_0" in game.story_blueprint["triggered_director_phases"]
-    assert E._should_call_director(game) is None
+    # act_due never fires again; scene 5 is a delivery scene, so the check follows
+    assert E._should_call_director(game) == "act_check:act_0"
+
+
+# --- act trigger delivery --------------------------------------------------------
+
+def test_act_trigger_stage_escalates_to_deliver(game):
+    end = 6                                                    # act 0 range end
+    game.scene_count = end - E.ACT_TRIGGER_DUE_SCENES - 1
+    assert E._act_trigger_stage(game) is None
+    game.scene_count = end - E.ACT_TRIGGER_DUE_SCENES
+    assert E._act_trigger_stage(game) == "steer"
+    for scene in range(end - E.ACT_TRIGGER_DELIVER_SCENES, end + 1):
+        game.scene_count = scene
+        assert E._act_trigger_stage(game) == "deliver"
+    game.story_blueprint["triggered_transitions"] = ["act_0"]
+    assert E._act_trigger_stage(game) is None
+
+
+def test_narrator_gets_deliver_block_in_last_scenes(game):
+    game.story_blueprint["acts"][0]["transition_trigger"] = "Die Schwester bringt die Pläne."
+    game.scene_count = 6 - E.ACT_TRIGGER_DUE_SCENES
+    steer = E._story_context_block(game)
+    assert "<act_turning_point>" in steer and 'stage="deliver"' not in steer
+    game.scene_count = 6
+    deliver = E._story_context_block(game)
+    assert '<act_turning_point stage="deliver">' in deliver
+    assert "HAPPENS IN THIS SCENE" in deliver and "Die Schwester bringt die Pläne." in deliver
+
+
+def test_deliver_stage_marked_in_director_prompt(game):
+    game.scene_count = 6
+    assert '<transition_trigger act="1" due="true" stage="deliver">' in \
+        E.build_director_prompt(game, "Text")
+
+
+def test_director_checks_every_delivery_scene_once(game):
+    game.story_blueprint["triggered_director_phases"] = ["due:act_0"]
+    game.scene_count = 5                                       # odd → no interval run
+    reason = E._should_call_director(game)
+    assert reason == "act_check:act_0"
+    E._mark_director_reason(game, reason)
+    assert "check:act_0:5" in game.story_blueprint["triggered_director_phases"]
+    assert E._should_call_director(game) is None              # once per scene
+    game.scene_count = 7 - 1                                   # next delivery scene (6)
+    assert E._should_call_director(game) == "act_check:act_0"   # before the interval run
+    game.story_blueprint["triggered_transitions"] = ["act_0"]
+    game.scene_count = 5
+    assert E._should_call_director(game) is None              # delivered → no more checks
+
+
+# --- remote contacts and object NPCs ----------------------------------------------
+
+def test_lore_figure_listed_in_new_npcs_becomes_active(game):
+    game.npcs.append(make_npc("npc_2", "Sam Okafor", status="lore"))
+    E._process_new_npcs(game, '[{"name": "Sam Okafor", "description": "Kollege am Funk",'
+                              ' "disposition": "friendly"}]')
+    sam = E._find_npc(game, "Sam Okafor")
+    assert sam["status"] == "active"
+    assert sum(1 for n in game.npcs if n["name"] == "Sam Okafor") == 1
 
 
 def test_due_trigger_marked_in_director_prompt(game):
     game.scene_count = 2
     assert '<transition_trigger act="1">' in E.build_director_prompt(game, "Text")
-    game.scene_count = 5
+    game.scene_count = 6 - E.ACT_TRIGGER_DUE_SCENES            # steer stage
     assert '<transition_trigger act="1" due="true">' in E.build_director_prompt(game, "Text")
 
 
@@ -271,7 +330,7 @@ def test_due_trigger_reaches_narrator_story_block(game):
     game.story_blueprint["acts"][0]["transition_trigger"] = "Elin findet den Schlüssel."
     game.scene_count = 2
     assert "<act_turning_point>" not in E._story_context_block(game)
-    game.scene_count = 5
+    game.scene_count = 6 - E.ACT_TRIGGER_DUE_SCENES            # steer stage
     block = E._story_context_block(game)
     assert "<act_turning_point>" in block and "Elin findet den Schlüssel." in block
 
@@ -370,3 +429,12 @@ def test_architect_falls_back_after_two_bad_answers(game, monkeypatch):
     bp = E.call_story_architect(None, game, structure_type="3act")
     assert len(calls) == E.ARCHITECT_ATTEMPTS
     assert len(bp["acts"]) >= 3                    # generic fallback blueprint
+
+
+def test_prompts_require_deliverable_triggers_and_live_contacts():
+    import inspect
+    architect = inspect.getsource(E.call_story_architect)
+    assert architect.count("DELIVERABLE BY THE WORLD") == 2        # 3-act and Kishōtenketsu
+    extractor = inspect.getsource(E.call_narrator_metadata)
+    assert "REMOTE PARTICIPATION" in extractor and "NEVER objects, traces" in extractor
+    assert "LORE FIGURES TAKING PART" in extractor

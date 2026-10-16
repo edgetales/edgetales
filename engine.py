@@ -137,6 +137,7 @@ NPC_NAME_MAX_CHARS = 60            # Longer "names" are descriptions; cut at a w
 ARCHITECT_ATTEMPTS = 2             # Story Architect tries before the generic fallback blueprint (too few acts / unparseable)
 ACT_MIN_SCENES = 2                 # Director act_transition is ignored earlier than this many scenes into an act's range
 ACT_TRIGGER_DUE_SCENES = 2         # Within this many scenes of an act's range end, the trigger is "due": the Director runs once and steers toward it
+ACT_TRIGGER_DELIVER_SCENES = 1     # Within this many scenes of the range end, a due trigger is "delivered": the world brings the core event on the page
 NPC_STALE_SCENES = 8               # Scenes without any memory update before retirement-eligible
 MAX_NPC_MEMORY_ENTRIES = 25        # Per NPC (total: observations + reflections)
 MAX_NPC_OBSERVATIONS = 15          # Max observation memories per NPC
@@ -4297,7 +4298,21 @@ def _story_context_block(game: GameState) -> str:
     # guidance alone was crowded out by other rules (time, location), so the
     # act's core event never reached the page and acts only advanced via scene_range.
     trigger_block = ""
-    if _act_trigger_due(game):
+    stage = _act_trigger_stage(game)
+    if stage == "deliver":
+        trigger_block = (
+            f'\n<act_turning_point stage="deliver">This act ends now and its turning point'
+            f' has still not happened: {html.escape(act.get("transition_trigger", ""))}'
+            f' It HAPPENS IN THIS SCENE, fully on the page. The world brings it to the'
+            f' character where they are: a character acts, arrives, confesses or hands it'
+            f' over, or the thing is found or revealed right here. Do not tease or delay it,'
+            f' and do not let a character hesitate it away again. If the player\'s action'
+            f' fails, the turning point still happens, at a cost. If the turning point is a'
+            f' decision, force it now (a demand with a deadline) as the final beat, and the'
+            f' player answers next turn. Never make the player\'s choices for them.'
+            f'</act_turning_point>'
+        )
+    elif stage == "steer":
         trigger_block = (
             f'\n<act_turning_point>This act is about to end and its turning point has not'
             f' happened yet: {html.escape(act.get("transition_trigger", ""))} Move this scene'
@@ -4485,6 +4500,7 @@ THINKING_MODES = ("disabled", "adaptive", "between_tools")
 
 _MODEL_SETTINGS: Optional[dict] = None   # lazily loaded from config.json
 _REJECTED_OPTIONS: set = set()           # {(role, "effort"|"thinking")} the API refused
+_THINKING_SUBSTITUTES: dict = {}         # {role: mode} the API asked for instead of "disabled"
 
 
 def configure_models(cfg: Optional[dict] = None) -> dict:
@@ -4512,6 +4528,7 @@ def configure_models(cfg: Optional[dict] = None) -> dict:
         settings[role] = {"model": model, "effort": effort, "thinking": thinking}
     _MODEL_SETTINGS = settings
     _REJECTED_OPTIONS.clear()
+    _THINKING_SUBSTITUTES.clear()
     log("[Models] " + " | ".join(
         f"{r}={s['model']} effort={s['effort'] or 'default'} thinking={s['thinking'] or 'default'}"
         for r, s in settings.items()))
@@ -4544,8 +4561,22 @@ def _apply_model_settings(kwargs: dict) -> tuple[dict, Optional[str]]:
         oc["effort"] = s["effort"]
         kw["output_config"] = oc
     if s["thinking"] and (role, "thinking") not in _REJECTED_OPTIONS:
-        kw["thinking"] = {"type": s["thinking"]}
+        kw["thinking"] = {"type": _THINKING_SUBSTITUTES.get(role, s["thinking"])}
     return kw, role
+
+
+def _thinking_off_substitute(e: Exception, kw: dict) -> Optional[str]:
+    """Mode the API names as the way to turn thinking off, when it rejects
+    {"type": "disabled"} (Sonnet 5.5: "send {"type": "between_tools"} instead").
+    Dropping the option instead would leave the model's default (adaptive)
+    thinking on, which eats max_tokens of short calls and cuts their answers."""
+    if (kw.get("thinking") or {}).get("type") != "disabled":
+        return None
+    msg = str(e)
+    for mode in THINKING_MODES:
+        if mode != "disabled" and f'"{mode}"' in msg:
+            return mode
+    return None
 
 
 def _rejected_option(e: Exception, kw: dict) -> Optional[str]:
@@ -4591,6 +4622,15 @@ def _api_create_with_retry(client: anthropic.Anthropic, max_retries: int = 2, **
             opt = _rejected_option(e, kwargs) if role else None
             if opt is None:
                 raise
+            sub = _thinking_off_substitute(e, kwargs) if opt == "thinking" else None
+            if sub and _THINKING_SUBSTITUTES.get(role) != sub:
+                # The model turns thinking off another way - keep it off, retry at once.
+                _THINKING_SUBSTITUTES[role] = sub
+                kwargs = {**kwargs, "thinking": {"type": sub}}
+                log(f"[Models] {kwargs.get('model')} turns thinking off with '{sub}' "
+                    f"instead of 'disabled' — using it for {role}", level="warning")
+                attempt -= 1
+                continue
             # Model does not support the configured option — drop it for this role
             # and retry immediately (does not count as a transient retry).
             _REJECTED_OPTIONS.add((role, opt))
@@ -4955,7 +4995,7 @@ def call_story_architect(client: anthropic.Anthropic, game: GameState,
 - Ten (Twist): A surprising PERSPECTIVE SHIFT {E['dash']} not conflict escalation, but something seemingly unrelated that recontextualizes everything. This is the heart of Kishōtenketsu.
 - Ketsu (Resolution): Reconcile the new understanding with what came before
 - Each act has a GOAL the player should work toward, not a script
-- Each act has a TRANSITION_TRIGGER: a narrative condition that signals this act is complete and the next should begin. This is a PLAYER ACTION or STORY EVENT, not a scene number. Example: "The player discovers the truth about the shrine" or "The protagonist's daily routine is disrupted by an outsider". The scene_range is a fallback estimate; the trigger is the real boundary. The trigger must be OBSERVABLE ON THE PAGE: something that visibly happens, is found, said or decided in a scene {E['dash']} never a purely inner realization, feeling or understanding, because nobody can tell when a thought has "happened". BAD: "The protagonist realizes the attack was a test". GOOD: "The protagonist finds the log entry proving the attack was a test". It must be ONE single event {E['dash']} not a chain of several required steps joined by "and" (BAD: "finds the file, deletes it, and sees the alarm go off").
+- Each act has a TRANSITION_TRIGGER: a narrative condition that signals this act is complete and the next should begin. This is a PLAYER ACTION or STORY EVENT, not a scene number. Example: "The player discovers the truth about the shrine" or "The protagonist's daily routine is disrupted by an outsider". The scene_range is a fallback estimate; the trigger is the real boundary. The trigger must be OBSERVABLE ON THE PAGE: something that visibly happens, is found, said or decided in a scene {E['dash']} never a purely inner realization, feeling or understanding, because nobody can tell when a thought has "happened". BAD: "The protagonist realizes the attack was a test". GOOD: "The protagonist finds the log entry proving the attack was a test". It must be ONE single event {E['dash']} not a chain of several required steps joined by "and" (BAD: "finds the file, deletes it, and sees the alarm go off"). It must be DELIVERABLE BY THE WORLD: the event can reach the protagonist wherever the story currently is {E['dash']} a character brings, says or does it, or it surfaces where the protagonist already is {E['dash']} and must not depend on the protagonist visiting one specific place or on a choice only the player can make. If the turning point is a decision, phrase it as the moment the decision is forced on the protagonist (a demand with a deadline), not as the choice itself. BAD: "The protagonist searches the victim's flat and finds the plans" / "The protagonist decides the spirit's fate". GOOD: "The victim's sister hands the protagonist the plans" / "The spirit demands an answer before the next tide".
 - Include a THEMATIC_THREAD: the emotional/philosophical question that runs through the entire chapter as a vertical narrative layer. This connects to character_growth from previous chapters if available.
 - Include 2-3 key revelations that can be woven in at appropriate moments
 - Define 2-3 possible endings (harmony, bittersweet, melancholy)
@@ -4974,7 +5014,7 @@ def call_story_architect(client: anthropic.Anthropic, game: GameState,
   Confrontation: Deepen and complicate. Plant evidence that challenges the initial frame, even if the player cannot yet see the full picture.
   Climax: Force a REFRAMING {E['dash']} the resolution must answer a different question than Act 1 appeared to pose. Not just "does the protagonist win?" but "what does winning actually mean now?"
 - Each act has a GOAL the player should work toward, not a script
-- Each act has a TRANSITION_TRIGGER: a narrative condition that signals this act is complete and the next should begin. This is a PLAYER ACTION or STORY EVENT, not a scene number. Example: "Mike decides to cooperate with the authorities" or "The first repair attempt fails spectacularly". The scene_range is a fallback estimate; the trigger is the real boundary. The trigger must be OBSERVABLE ON THE PAGE: something that visibly happens, is found, said or decided in a scene {E['dash']} never a purely inner realization, feeling or understanding, because nobody can tell when a thought has "happened". BAD: "The protagonist realizes the attack was a test". GOOD: "The protagonist finds the log entry proving the attack was a test". It must be ONE single event {E['dash']} not a chain of several required steps joined by "and" (BAD: "finds the file, deletes it, and sees the alarm go off").
+- Each act has a TRANSITION_TRIGGER: a narrative condition that signals this act is complete and the next should begin. This is a PLAYER ACTION or STORY EVENT, not a scene number. Example: "The authorities offer Mike a deal he must answer by morning" or "The first repair attempt fails spectacularly". The scene_range is a fallback estimate; the trigger is the real boundary. The trigger must be OBSERVABLE ON THE PAGE: something that visibly happens, is found, said or decided in a scene {E['dash']} never a purely inner realization, feeling or understanding, because nobody can tell when a thought has "happened". BAD: "The protagonist realizes the attack was a test". GOOD: "The protagonist finds the log entry proving the attack was a test". It must be ONE single event {E['dash']} not a chain of several required steps joined by "and" (BAD: "finds the file, deletes it, and sees the alarm go off"). It must be DELIVERABLE BY THE WORLD: the event can reach the protagonist wherever the story currently is {E['dash']} a character brings, says or does it, or it surfaces where the protagonist already is {E['dash']} and must not depend on the protagonist visiting one specific place or on a choice only the player can make. If the turning point is a decision, phrase it as the moment the decision is forced on the protagonist (a demand with a deadline), not as the choice itself. BAD: "The protagonist searches the victim's flat and finds the plans" / "The protagonist decides the spirit's fate". GOOD: "The victim's sister hands the protagonist the plans" / "The spirit demands an answer before the next tide".
 - The confrontation{E['arrow_r']}climax TRANSITION_TRIGGER must be a REFRAMING EVENT {E['dash']} not merely an escalation of existing tension, but a concrete discovery, confession or act that changes what the conflict is fundamentally about.
 - central_conflict must have a SURFACE LAYER (what the conflict appears to be at the start) and a HIDDEN LAYER (what it turns out to actually be about). The hidden layer should emerge through Act 2 revelations and reframe the climax.
 - THEMATIC_THREAD: A genuine open philosophical question {E['dash']} not a label ("loyalty") but an unresolved question ("Can loyalty survive when the person you are loyal to may not exist?"). It must surface implicitly in Act 1, be challenged in Act 2, and be CONFRONTED {E['dash']} not necessarily resolved {E['dash']} in Act 3.
@@ -5457,7 +5497,7 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
 - SCENE CONTINUITY: Begin in motion, not in setup. The player is still in the same body, the same emotional state as the last scene ended. Do NOT open with a fresh establishing paragraph. SAME LOCATION: Open with at most one sentence that holds the atmosphere or emotional residue of the previous scene's end — a sensation still in the air, a silence not yet broken, a weight not yet lifted — before moving into the player's action. This is not recap; it is continuity of experience. It should work as a bridge even if the player's action is very brief or sparse. NEW LOCATION (player has moved — compare <location> with <prev_locations>): Open with one brief sensory impression of the new space (a sound, smell, texture, or quality of light) that grounds the reader without summarizing what came before. The new place simply exists, indifferent to what preceded it; the character carries the previous moment in their body. Example: a character arriving somewhere unfamiliar after a tense moment elsewhere — the ambient sounds and physical details of the new space are registered first, through senses still sharpened by what just happened.
 - EMOTIONAL CARRY-THROUGH: If the previous scene ended with a significant emotional beat (betrayal, loss, triumph, relief, intimacy, shock), open this scene with that weight still present in the character's body language, perception, and attention. Emotional states do not reset between scenes. Show it through sensation and behavior, not through narration — the character did not process it yet.
 - SCENE ENDING: Close each narration on an open moment — not a plot cliffhanger, not a resolved beat, but a suspension that makes the NEXT scene feel anchored rather than arbitrary. The character should be mid-breath, not concluded. No option lists, no suggested actions. VARY the kind of ending from scene to scene: (a) the character's unresolved inner state, (b) a concrete image or sound left hanging, (c) an NPC's unanswered line or gesture, (d) a small physical action still in progress. CROSS-RESPONSE: do not repeat the kind of ending used in the previous narration, and use (a) at most every other scene. Keep the final sentence short — one clause, ideally under 20 words; avoid long trailing constructions that weigh two possibilities ("...and you don't know whether X or Y").
-- LENGTH & FOCUS: Stay within the word budget given in <task>. A short player input gets a short scene {E['dash']} the length follows what actually happens, not the number of inputs. Build each scene around ONE central beat (the player's action and its immediate result) plus at most one or two supporting beats. PRIORITY when inputs compete for space: (1) the player's action, words and the roll result, (2) a <clock_fired> event or chaos interrupt, (3) co-game-master input, (4) <director_guidance>, (5) <npc_note> and <npc_agency>, (6) atmosphere and periphery. Lower-priority items that do not fit naturally are DEFERRED to a later scene {E['dash']} never squeezed in as an extra sentence, a passing cameo or an NPC monologue. Bring an absent NPC on stage only if <director_guidance> calls for it or the action requires it. Reveal facts through what happens or what a character does, not through one character explaining several facts at once. Every sentence must earn its place: no filler, no restating what the player already knows.
+- LENGTH & FOCUS: Stay within the word budget given in <task>. A short player input gets a short scene {E['dash']} the length follows what actually happens, not the number of inputs. Build each scene around ONE central beat (the player's action and its immediate result) plus at most one or two supporting beats. PRIORITY when inputs compete for space: (1) the player's action, words and the roll result, (2) a <clock_fired> event, a chaos interrupt or an <act_turning_point stage="deliver">, (3) co-game-master input, (4) <director_guidance>, (5) <npc_note> and <npc_agency>, (6) atmosphere and periphery. Lower-priority items that do not fit naturally are DEFERRED to a later scene {E['dash']} never squeezed in as an extra sentence, a passing cameo or an NPC monologue. Bring an absent NPC on stage only if <director_guidance> calls for it or the action requires it. Reveal facts through what happens or what a character does, not through one character explaining several facts at once. Every sentence must earn its place: no filler, no restating what the player already knows.
 - TEMPORAL CONSISTENCY: If <time> is provided, maintain that time period. Time only moves FORWARD (never backward). If you mention specific times, they must be later than any previously mentioned time. Do NOT invent specific clock times unless narratively important {E['dash']} prefer atmospheric time cues (moonlight, sunset glow, morning mist). CRITICAL: Each scene transition represents minutes to hours of in-world time, NOT days or years. Events from recent scenes just happened {E['dash']} signs don't weather, wounds are fresh, sent NPCs are still en route or just arrived. Never describe recent events or objects as aged, decayed, or long-past unless the player explicitly time-skips. TEMPORAL TEXTURE: Even in a static location where nothing moves (a besieged trench, a locked room, a stakeout), time still passes through the world. Every 2–3 scenes, anchor one detail to the shifting day: a quality of light changing (afternoon glare giving way to a cooler, flatter grey), a temperature shift (the ground cooling under your hands), a change in ambient sound (fewer birds, different distant guns, the quality of silence shifting). These do not need to be prominent — a single phrase suffices. They exist so the story does not feel frozen. Never repeat a time or weather cue from the previous narration (e.g. the same fog at the same window, the same cold at the ankles) {E['dash']} use a different one or none. A recurring sound that the story has tied to a threat (a bell, a clock, a siren) must not be used as background texture: each time it sounds it has to mean something.
 - SPATIAL CONSISTENCY: The <location> tag shows where the player currently IS. If <prev_locations> is provided, the player has LEFT those places. NEVER place the player back at a previous location unless they explicitly travel there. If an NPC has a last_seen attribute showing a DIFFERENT location than the player's current <location>, that NPC is NOT physically present {E['dash']} they cannot be heard through walls, seen, or interact directly. They can only appear if they plausibly traveled to the player's location (and the narration should describe their arrival). NPCs without last_seen or with last_seen matching <location> ARE present and can interact normally.
 - If <story_arc> is present, steer scenes toward the act goal and mood. If <story_arc> contains a thematic_thread, let it surface periodically through NPC dialog, character reactions, or incidental observations {E['dash']} not as lecture or internal monologue, but as a question the world keeps quietly asking. Not every scene, but it should feel like a recurring undercurrent.
@@ -5643,7 +5683,7 @@ time_update must be ONE of: early_morning, morning, midday, afternoon, evening, 
 location_update: new location name if the character MOVED to a different place, null if they stayed. IMPORTANT: if no movement occurred, always return null — do NOT add city names, qualifiers, or extra words to the existing location. If a move did occur, use the exact place name as it appears in the narration (short and specific, e.g. "The Cathedral", not "The Cathedral in Lyon").
 npc_renames: for identity REVEALS — when an NPC's true or personal name is established for the first time. Covers: spy unmasked, alias discovered, AND descriptor-named NPCs who receive a real name (e.g. "The Woman in the Wool Hat" → "Hanna", "The Unknown Man" → "Klaus", "The Engineer" → "Sara Novak"). Use the npc_id of the descriptor NPC from the known list and set new_name to the revealed personal name. NOT for surname additions to an already-named NPC (use npc_details for that).
 npc_details: for newly established facts about ALREADY KNOWN NPCs only (surname addition, role change). full_name if name extended, description if role/situation changed. NEVER use npc_details to introduce a character who is new to the story — even if they share role similarities with an existing NPC. Characters new to the story always go into new_npcs with a full description.
-new_npcs: ONLY for characters who are PHYSICALLY PRESENT in the scene AND actively interacting (speaking, acting, reacting). They must NOT already be in the known NPC list. NEVER include the player character. NEVER include:
+new_npcs: ONLY for characters who are PHYSICALLY PRESENT in the scene AND actively interacting (speaking, acting, reacting). They must NOT already be in the known NPC list. NEVER include the player character. REMOTE PARTICIPATION: a character who speaks with the protagonist LIVE in this scene over a phone, radio, video call or similar counts as interacting {E['dash']} include them in new_npcs (description names who they are, not the device). LORE FIGURES TAKING PART: when a character marked [LORE] in the known list takes part in this scene {E['dash']} in person or live over a device {E['dash']} include them in new_npcs with their exact known name so they are tracked as an active character (exception to the known-list rule above). ONLY persons or beings that can act or speak qualify {E['dash']} NEVER objects, traces, marks, sounds, body parts, places or phenomena (BAD: "Wet handprints on the wall", "Knocking in the pipes"); a voice counts only when someone or something speaks words through it. NEVER include:
 - Characters who are only MENTIONED in conversation, stories, or memories
 - Deceased persons (people discussed as dead, seen only in photos/flashbacks)
 - Historical or absent figures (people talked about but not physically there)
@@ -5657,7 +5697,7 @@ about_npc (in memory_updates): If the memory is primarily ABOUT ANOTHER NPC (not
 IMPORTANT: If the player directly tells an NPC something about another NPC (gossip, warning, lie, compliment, romantic suggestion), this MUST be captured as its own memory_update with about_npc set — even if other events also happened to that NPC in the same scene. An NPC can have multiple memories per scene if distinctly different events occurred.
 deceased_npcs: list NPCs (by npc_id) whose death is DEPICTED BY THE NARRATOR as it happens. This includes BOTH explicit deaths AND deaths described through physical sensation or literary language. Qualifying descriptions include: they collapse / are killed / stop breathing / go limp / their movement stops and does not resume / resistance ceases permanently / consumed by fire / destroyed / pulled under with no return described / body goes still / the struggle ended. LITERARY deaths count: e.g. "the legs kicked twice and then were still" or "the resistance left them" or "they ceased" — if the prose makes clear that a living character has become permanently non-living, mark them deceased. The death does not need to use the words "dead" or "died" — physical cessation described as final qualifies.
 CRITICAL: Do NOT mark an NPC as deceased if their death is only CLAIMED, REPORTED, or ALLEGED by another character in dialog (e.g. someone says "Leo is dead"). Dialog claims about death are unreliable — characters lie, bluff, or may be wrong. Only narrator-confirmed deaths count — the player character need not have directly witnessed the death; it suffices that the narrator depicts or unambiguously confirms the outcome (e.g. an NPC goes permanently silent after a lethal event at their location, the narrator describes the absence of a presence that was there before). Never include NPCs already marked [DECEASED].
-lore_npcs: ONLY for named persons established in this scene as historically or narratively significant, but who have NEVER been and are NOT NOW physically present. Use this for dead mentors whose legacy drives the story, missing persons whose fate is central, historical figures whose past actions echo into the present. Rules: (1) They must be NAMED and clearly significant — not just mentioned in passing. (2) Do NOT use for corpses or physically present characters — use new_npcs for those, even if dead. (3) Do NOT include NPCs already marked [LORE] or any other marker in the known_npcs list — they are already tracked. (4) Only add when the narration establishes them as relevant to the ongoing story. NPCs marked [LORE] in known_npcs can receive memory_updates using their npc_id.
+lore_npcs: ONLY for named persons established in this scene as historically or narratively significant, but who have NEVER been and are NOT NOW physically present, and who do not talk with the protagonist live (a live phone or radio contact belongs in new_npcs). Use this for dead mentors whose legacy drives the story, missing persons whose fate is central, historical figures whose past actions echo into the present. Rules: (1) They must be NAMED and clearly significant — not just mentioned in passing. (2) Do NOT use for corpses or physically present characters — use new_npcs for those, even if dead. (3) Do NOT include NPCs already marked [LORE] or any other marker in the known_npcs list — they are already tracked. (4) Only add when the narration establishes them as relevant to the ongoing story. NPCs marked [LORE] in known_npcs can receive memory_updates using their npc_id.
 exited_npc_ids: list the npc_id of each NPC whose PHYSICAL DEPARTURE from the scene was explicitly described in this narration — they walked out, left through a door, were escorted away, said goodbye and left. Use their npc_id from the known_npcs list. Do NOT include: NPCs who are merely mentioned or talked about; NPCs who were never present; NPCs who only paused at a door but the narration ends with them still present. Empty list if no explicit departures occurred.
 CROSS-FIELD CONSISTENCY — check before submitting: If your scene_context describes an NPC as dying or dead (e.g. "while X dies", "X's last breath", "X stirbt", "während X stirbt", "X ist tot", "X's breathing stops", "X ceased", "X's struggle ended"), that NPC MUST appear in deceased_npcs. Your own scene_context is authoritative evidence — if you wrote that someone is in the act of dying there, they belong in deceased_npcs. This catches slow or literary deaths that span multiple scenes: even if the character was only "dying" last turn, once the final cessation is depicted (breathing stops, body stills, the transition completes), mark them deceased now."""
 
@@ -6250,9 +6290,22 @@ def _act_trigger_due(game: GameState) -> Optional[str]:
     return None
 
 
+def _act_trigger_stage(game: GameState) -> Optional[str]:
+    """Escalation stage of a due act trigger: None, "steer" or "deliver".
+    "deliver" = within ACT_TRIGGER_DELIVER_SCENES scenes of the act's range end.
+    Steering alone let the narration circle the core event (an NPC reaching for a
+    latch for eight scenes) until the act ended via the scene-range fallback, so in
+    the last scenes the world itself brings the event to the character."""
+    if not _act_trigger_due(game):
+        return None
+    sr = _safe_sr(get_current_act(game), fallback_start=1)
+    return "deliver" if sr[1] - game.scene_count <= ACT_TRIGGER_DELIVER_SCENES else "steer"
+
+
 def _mark_director_reason(game: GameState, reason: Optional[str]) -> None:
     """Record once-only Director reasons so _should_call_director() does not re-fire
-    them: "phase:<phase>" → "<phase>", "act_due:<act_id>" → "due:<act_id>" in
+    them: "phase:<phase>" → "<phase>", "act_due:<act_id>" → "due:<act_id>",
+    "act_check:<act_id>" → "check:<act_id>:<scene>" (once per delivery scene) in
     story_blueprint["triggered_director_phases"] (restored by turn snapshots)."""
     if not reason or game.story_blueprint is None:
         return
@@ -6260,6 +6313,8 @@ def _mark_director_reason(game: GameState, reason: Optional[str]) -> None:
         key = reason[len("phase:"):]
     elif reason.startswith("act_due:"):
         key = "due:" + reason[len("act_due:"):]
+    elif reason.startswith("act_check:"):
+        key = f"check:{reason[len('act_check:'):]}:{game.scene_count}"
     else:
         return
     game.story_blueprint.setdefault("triggered_director_phases", []).append(key)
@@ -6308,8 +6363,15 @@ def _should_call_director(game: GameState, roll_result: str = "",
         # Act trigger due → run once per act so the Director can steer toward it.
         # _mark_director_reason() records "due:<act_id>" in triggered_director_phases.
         due = _act_trigger_due(game)
-        if due and f"due:{due}" not in (game.story_blueprint.get("triggered_director_phases") or []):
+        fired = game.story_blueprint.get("triggered_director_phases") or []
+        if due and f"due:{due}" not in fired:
             return f"act_due:{due}"
+        # Delivery scene → the Director must judge it, otherwise a turning point that
+        # did reach the page is never recorded and the act still ends via scene_range.
+        # Once per delivery scene ("check:<act_id>:<scene>").
+        if due and _act_trigger_stage(game) == "deliver" \
+                and f"check:{due}:{game.scene_count}" not in fired:
+            return f"act_check:{due}"
 
     # 4. Regular interval
     if game.scene_count > 0 and game.scene_count % DIRECTOR_INTERVAL == 0:
@@ -6419,7 +6481,9 @@ def build_director_prompt(game: GameState, latest_narration: str,
             story_info += f' thematic_thread="{_xa(thematic)}"'
         story_info += '/>'
         if transition_trigger:
-            _due_attr = ' due="true"' if _act_trigger_due(game) else ""
+            _stage = _act_trigger_stage(game)
+            _due_attr = (' due="true"' + (' stage="deliver"' if _stage == "deliver" else "")
+                         if _stage else "")
             story_info += (
                 f'\n<transition_trigger act="{act["act_number"]}"{_due_attr}>'
                 f'{html.escape(transition_trigger)}</transition_trigger>'
@@ -6504,7 +6568,7 @@ TONE RULE: narrator_guidance and npc_guidance MUST honor the story's tone ("{_xa
 
 Field instructions:
 - scene_summary: 2-3 sentence summary of what happened and WHY it matters (in {lang})
-- narrator_guidance: Specific direction for the next 1-2 scenes (in {lang}), at most 3 sentences. FOCUS RULE: name at most ONE concrete new event or development (an arrival, a discovery, a find, a demand); everything else is mood, undertone or an NPC's attitude. Never chain several events, objects or appearances into one guidance - the Narrator has to fit it into a short scene next to the player's own action. When the TIME, LOCATION or TRIGGER rules below apply, fold them into that single event instead of adding more. When relevant, anchor the guidance to the thematic_thread from <story_arc> — surface the aspect of it most alive in the current moment. TIME RULE: If <current_time stale_scenes> is present in context, time of day has not visibly advanced for that many scenes — your narrator_guidance MUST include a directive to anchor the next scene with at least one concrete atmospheric time cue (a shift in light quality, temperature, or ambient sound). LOCATION RULE: If <current_location stale_scenes> is present, the story has stayed at one place for that many scenes — your narrator_guidance MUST name a concrete reason or opportunity to move to a different place (a lead, a summons, a threat, a need), unless the current confrontation must resolve there first. The player decides whether to go. TRIGGER RULE: If <transition_trigger due="true"> is present and act_transition is false, the act is about to end without its core event — your narrator_guidance MUST steer the next scene toward that core event as a concrete on-page moment (a discovery, a confrontation, a confession, an arrival or a decision put to the player), in the established tone and without making the player's choice for them. FINAL ACT RULE: When phase is "ketsu_resolution" or "resolution", the insight and revelation phase is over. narrator_guidance MUST push toward a concrete, irreversible action or choice — not toward further reflection on what has already been established. Each scene in the final act should change something permanently: a decision made, a door closed, a relationship transformed. If the player has been circling the same existential question for two or more scenes, name that directly in your guidance and force a new variable into the scene.
+- narrator_guidance: Specific direction for the next 1-2 scenes (in {lang}), at most 3 sentences. FOCUS RULE: name at most ONE concrete new event or development (an arrival, a discovery, a find, a demand); everything else is mood, undertone or an NPC's attitude. Never chain several events, objects or appearances into one guidance - the Narrator has to fit it into a short scene next to the player's own action. When the TIME, LOCATION or TRIGGER rules below apply, fold them into that single event instead of adding more. When relevant, anchor the guidance to the thematic_thread from <story_arc> — surface the aspect of it most alive in the current moment. TIME RULE: If <current_time stale_scenes> is present in context, time of day has not visibly advanced for that many scenes — your narrator_guidance MUST include a directive to anchor the next scene with at least one concrete atmospheric time cue (a shift in light quality, temperature, or ambient sound). LOCATION RULE: If <current_location stale_scenes> is present, the story has stayed at one place for that many scenes — your narrator_guidance MUST name a concrete reason or opportunity to move to a different place (a lead, a summons, a threat, a need), unless the current confrontation must resolve there first. The player decides whether to go. TRIGGER RULE: If <transition_trigger due="true"> is present and act_transition is false, the act is about to end without its core event — your narrator_guidance MUST steer the next scene toward that core event as a concrete on-page moment (a discovery, a confrontation, a confession, an arrival or a decision put to the player), in the established tone and without making the player's choice for them. If it also carries stage="deliver", setting it up is no longer enough: the guidance MUST make the core event itself happen in the next scene, brought by the world (a character acts, arrives or hands it over, the thing surfaces where the protagonist already is) - never another scene of hesitation or approach. FINAL ACT RULE: When phase is "ketsu_resolution" or "resolution", the insight and revelation phase is over. narrator_guidance MUST push toward a concrete, irreversible action or choice — not toward further reflection on what has already been established. Each scene in the final act should change something permanently: a decision made, a door closed, a relationship transformed. If the player has been circling the same existential question for two or more scenes, name that directly in your guidance and force a new variable into the scene.
 - npc_guidance: Array of {{"npc_id": "npc_1", "guidance": "what this NPC should do/feel next"}} — guidance text in {lang}. Only for NPCs who are present in <latest_scene> or whose appearance narrator_guidance plans - leave absent NPCs out (an entry makes the Narrator bring them on stage). One short sentence each.
 - pacing: one of tension_rising, building, climax, breather, resolution
 - npc_reflections: Only for NPCs listed in <reflect> tags. NPCs with status=lore or status=deceased appear in the overview for context only — NEVER include them in npc_reflections. Each object has:
