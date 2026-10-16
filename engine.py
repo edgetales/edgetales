@@ -178,7 +178,9 @@ OPENING_MAX_TOKENS          = _MAX_TOKENS_HAIKU    # call_opening_metadata (new)
 REVELATION_CHECK_MAX_TOKENS = _MAX_TOKENS_HAIKU    # call_revelation_check (new)
 COGM_QUESTION_MAX_TOKENS    = _MAX_TOKENS_HAIKU    # call_cogm_question (co-op mode)
 NARRATOR_MAX_TOKENS   = _MAX_TOKENS_SONNET   # call_narrator (was 3500)
-STORY_ARCH_MAX_TOKENS  = _MAX_TOKENS_SONNET   # call_story_architect (was 4000)
+# Story Architect: blueprint JSON plus the model's thinking. Opus 5.5 at effort
+# high used all of 8,192 tokens and the JSON broke off mid-string (twice in a row).
+STORY_ARCH_MAX_TOKENS  = 16384                # call_story_architect (was 8192)
 
 # --- Creativity seed (output diversity for character/scene generation) ---
 _SEED_FALLBACK = [
@@ -5110,6 +5112,9 @@ npcs:{npc_text}{campaign_ctx}{backstory_text}"""
                 messages=[{"role": "user", "content": attempt_msg}],
                 output_config={"format": {"type": "json_schema", "schema": STORY_ARCHITECT_OUTPUT_SCHEMA}},
             )
+            if getattr(response, "stop_reason", None) == "max_tokens":
+                log(f"[Story] Architect hit max_tokens ({STORY_ARCH_MAX_TOKENS}) "
+                    f"on attempt {attempt}/{ARCHITECT_ATTEMPTS}", level="warning")
             blueprint = json.loads(_response_text(response))
             blueprint["revealed"] = []  # Track which revelations have fired
             blueprint["structure_type"] = structure_type

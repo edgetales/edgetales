@@ -239,3 +239,8 @@ def test_api_log_names_the_role(monkeypatch):
     usage = SimpleNamespace(input_tokens=1, output_tokens=2)
     E._log_usage({"model": "claude-sonnet-5-5"}, SimpleNamespace(usage=usage), "director")
     assert lines and "[director]" in lines[0]
+
+
+def test_story_architect_budget_leaves_room_for_thinking():
+    # Opus 5.5 at effort high used all 8,192 tokens and cut the blueprint JSON.
+    assert E.STORY_ARCH_MAX_TOKENS >= 16384
