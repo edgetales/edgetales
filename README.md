@@ -397,6 +397,8 @@ EdgeTales is configured via a single `config.json` file in the project root.
 | `narrator_model` / `brain_model` | No | `""` | Claude model for the Narrator/Architect role (Sonnet) and for Brain/Director/Extractors (Haiku). Empty = built-in default (see below) |
 | `narrator_effort` / `brain_effort` | No | `""` | Effort level per role: `low`, `medium`, `high`, `xhigh`, `max`. Empty = role default (`high` for the narrator, model default for the brain) |
 | `narrator_thinking` / `brain_thinking` | No | `""` | Thinking mode per role: `disabled`, `adaptive`, `between_tools`. Empty = model default |
+| `director_model` / `director_effort` / `director_thinking` | No | `""` | Optional own model for the Director and `##` corrections. Empty `director_model` = these calls use the brain settings |
+| `architect_model` / `architect_effort` / `architect_thinking` | No | `""` | Optional own model for the once-per-chapter planning calls (Story Architect, character/world setup, opening metadata, chapter summary). Empty `architect_model` = each call keeps its previous role (Story Architect → narrator, the others → brain) |
 
 > 🔒 On Unix systems, `config.json` is automatically set to `chmod 600` (owner-only) to protect your API key.
 
@@ -415,10 +417,11 @@ By default EdgeTales uses `claude-sonnet-5-5` at effort `high` for narration and
 }
 ```
 
+- Two optional roles let you spend a stronger model only where it matters: `director_model` (story direction, every 2 scenes) and `architect_model` (planning, once per chapter). Their effort/thinking defaults are thinking `disabled` for the director and effort `high` for the architect. Until `<role>_model` is set they change nothing.
 - Model IDs are pinned snapshots — there is no "always latest" alias. Switch deliberately and compare a few sessions before keeping a new model.
 - Higher effort and thinking improve depth but add latency and output tokens per turn. For narration, `between_tools` turns off up-front thinking and keeps turns fast.
 - If a model rejects a configured effort or thinking value, EdgeTales logs a warning and continues without that option.
-- The active settings are logged on first use (`[Models] narrator=… effort=… thinking=…`), and every API call logs the model it used.
+- The active settings are logged on first use (`[Models] narrator=… effort=… thinking=…`), and every API call logs the model and role it used (`[API] claude-sonnet-5-5 [director]: …`).
 
 ### Environment Variable Overrides
 

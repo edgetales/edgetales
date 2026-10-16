@@ -12,5 +12,11 @@
   "narrator_thinking": "",
   "brain_model": "claude-haiku-5-5",
   "brain_effort": "",
-  "brain_thinking": "disabled"
+  "brain_thinking": "disabled",
+  "director_model": "",
+  "director_effort": "",
+  "director_thinking": "",
+  "architect_model": "",
+  "architect_effort": "",
+  "architect_thinking": ""
 }

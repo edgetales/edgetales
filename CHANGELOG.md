@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- **Own models for story direction and planning (optional):** two new model roles in `config.json`. `director_model` (with `director_effort` / `director_thinking`) runs the Director and `##` corrections; `architect_model` (with `architect_effort` / `architect_thinking`) runs the once-per-chapter planning calls - Story Architect, character/world setup, opening characters and the chapter summary. A stronger model can now be used exactly where it shapes the story without slowing every turn. Without these settings nothing changes: each call keeps the model it used before. API log lines now name the role (`[API] <model> [director]: …`).
 - **Co-op invites show what the game is about:** the invite dialog now lists the game's setup - genre, tone, archetype, concept, backstory, wishes and boundaries - the same details as the info button in the save list, so the invited player knows what they are agreeing to before accepting.
 
 ### Changed
