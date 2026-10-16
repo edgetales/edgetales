@@ -437,3 +437,4 @@ def test_prompts_require_deliverable_triggers_and_live_contacts():
     assert architect.count("DELIVERABLE BY THE WORLD") == 2        # 3-act and Kishōtenketsu
     extractor = inspect.getsource(E.call_narrator_metadata)
     assert "REMOTE PARTICIPATION" in extractor and "NEVER objects, traces" in extractor
+    assert "LORE FIGURES TAKING PART" in extractor
