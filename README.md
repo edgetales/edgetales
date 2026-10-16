@@ -4,14 +4,14 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)](https://python.org)
 [![NiceGUI](https://img.shields.io/badge/UI-NiceGUI-4CAF50?logo=vuedotjs&logoColor=white)](https://nicegui.io)
-[![Claude AI](https://img.shields.io/badge/AI-Claude%20Haiku%20%2B%20Sonnet-orange?logo=anthropic&logoColor=white)](https://anthropic.com)
+[![Claude AI](https://img.shields.io/badge/AI-Claude%20Haiku%20%2B%20Sonnet%20%2B%20Opus-orange?logo=anthropic&logoColor=white)](https://anthropic.com)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-lightgrey)](LICENSE)
 [![Version](https://img.shields.io/badge/Version-1.3.0-blueviolet)]()
 [![Mobile Ready](https://img.shields.io/badge/Mobile-PWA%20Ready-success?logo=pwa&logoColor=white)]()
 
 ---
 
-EdgeTales is a self-hosted, AI-driven solo tabletop RPG engine. Type what your character does - the engine parses your intent, rolls the dice, and an AI narrator responds with atmospheric prose. Use voice input and text-to-speech, and run it on your home server, Raspberry Pi, or laptop.
+EdgeTales is a self-hosted, AI-driven solo tabletop RPG engine. Type what your character does - the engine parses your intent, rolls the dice, and an AI narrator responds with atmospheric prose. Play alone or invite a friend as **Co-GM** who secretly shapes your story. Use voice input and text-to-speech, and run it on your home server, Raspberry Pi, or laptop.
 
 ---
 
@@ -23,6 +23,8 @@ EdgeTales is a self-hosted, AI-driven solo tabletop RPG engine. Type what your c
 
 **You have accessibility needs that make traditional tabletop difficult.** Reading long text or typing for extended periods can be exhausting. EdgeTales supports full voice input and output: speak your actions aloud, and have the narrator read every scene back to you. The entire UI is screen reader accessible with comprehensive ARIA support — blind users can navigate the sidebar, settings, and save system with VoiceOver, NVDA, or any other assistive technology. A dedicated "Screen reader in chat" toggle lets you disable screen reader announcements for the game log when using TTS for narration, preventing double-reading and giving you the best of both worlds: the screen reader for menus and navigation, TTS for the story itself.
 
+**You want to play together, but nobody wants to prepare a campaign.** Invite a friend as Co-GM: they play no character and need no rules knowledge. After each scene they answer one question from the narrator and can nudge the story through the Director's Cockpit - you only notice their ideas when they turn up in the story. Ideal for partners, parents and kids, or a friend on the sofa next to you.
+
 **You want a real game, not just a chatbot.** Unlike asking an AI to "run a D&D campaign," EdgeTales has an actual rules engine running underneath. Hidden dice mechanics, momentum, chaos, NPC relationship tracking, and narrative arc management all happen in the background - structuring the story without you ever needing to think about them. The AI doesn't freestyle; it operates within a framework that ensures tension, consequences, and satisfying story beats.
 
 ---
@@ -31,7 +33,7 @@ EdgeTales is a self-hosted, AI-driven solo tabletop RPG engine. Type what your c
 
 **Narrative**
 - Free-form player input - type anything, the AI understands your intent
-- Multi-agent AI architecture: fast *Brain* (Haiku) parses mechanics, creative *Narrator* (Sonnet) writes the scene, *Metadata Extractor* (Haiku) extracts state changes from the prose, strategic *Director* (Haiku) steers story pacing and NPC development behind the scenes. The Narrator receives active threat clock pressure, inter-NPC relationship dynamics, and the Director's arc synthesis directly — so every scene reflects the full state of the world, not just the immediate action.
+- Multi-agent AI architecture with a model matched to each job: fast *Brain* (Haiku) parses mechanics, creative *Narrator* (Sonnet) writes the scene, *Metadata Extractor* (Haiku) extracts state changes from the prose, strategic *Director* (Sonnet) steers story pacing and NPC development behind the scenes, and the *Story Architect* (Opus) plans each chapter and its characters. The Narrator receives active threat clock pressure, inter-NPC relationship dynamics, and the Director's arc synthesis directly — so every scene reflects the full state of the world, not just the immediate action.
 - Player Authorship guarantee - your exact words are never rewritten or reinterpreted by the AI
 - **`##` Correction system** — prefix any input with `##` to correct the last scene. The engine distinguishes between a *misread input* (Brain misunderstood what you did — full state rollback, re-roll if needed, narrator rewrites) and a *state error* (wrong NPC identity, location, relationship — world patched in-place, narrator rewrites with corrections applied). No scene is ever permanently broken by an AI misunderstanding
 - Dynamic NPC system with persistent memory, evolving dispositions, bonds, agendas, NPC-to-NPC relationships, and mid-game discovery
@@ -39,6 +41,7 @@ EdgeTales is a self-hosted, AI-driven solo tabletop RPG engine. Type what your c
 - AI-generated epilogues that wrap up your story with a satisfying conclusion
 - Story arc intelligence: each chapter gets a blueprint with act goals, transition triggers (narrative conditions, not scene numbers), a thematic thread, and possible endings - the Director steers act transitions based on what actually happens in the story
 - Campaign mode - continue into a new chapter with the same character, NPCs, and world. NPC evolution projections and thematic continuity carry across chapters
+- **Co-op mode** - a second player joins as Co-GM: answers the narrator's questions, sets impulses through the Director's Cockpit and plants secrets, rumours and new characters (see below)
 
 **Mechanics** - *borrowed from the best tabletop RPGs*
 
@@ -93,6 +96,18 @@ The engine analyses your correction and automatically chooses the right repair s
 - **State error** — the world facts are wrong (wrong NPC name, wrong location, confused relationships). The engine patches the specific errors in-place without rolling back, and the narrator rewrites the scene with corrections applied. Your dice results and consequences stay the same.
 
 Corrected messages are marked with a subtle "✎ Corrected" badge. The original correction input fades out and is never saved — your story stays clean.
+
+**Co-op Mode — Play with a Co-GM**
+
+A second player on the same server joins your game as **Co-GM** (co game master). The Co-GM plays no character and needs no rules knowledge - they get the best part of being a game master: surprising the player.
+
+- **One question per scene.** After each scene the narrator asks the Co-GM one question - *"What is hidden in the locked drawer?"*, *"Who is sitting in the car?"*. A **now** answer shapes the very next scene. A question **for later** plants a seed that surfaces when the story is ready for it. The Co-GM can always pass.
+- **The Director's Cockpit.** Each scene the Co-GM may set **one impulse**: a free direction, a character's appearance, a line a character says, a disruption, a planted detail, time pressure, an earned rest or a cliffhanger. **In the background** they can add as much as they like: a character's secret intention, rumours, secrets, false trails - and **new characters** with their own agenda, who enter the story when it fits.
+- **Hidden from the player.** You see the story, not the machinery: the narrator weaves the Co-GM's ideas in as if they had always been part of the world. The Co-GM sees the story, the characters and your stats - not your inputs, the clocks or the chaos factor.
+- **Waiting is optional.** Your next scene waits for the Co-GM's answer (and while they have the cockpit open), so their idea lands in time. A status line shows whether the Co-GM is thinking, in the cockpit or done - and you can always continue without waiting. An answer the scene cannot use is kept and surfaces later.
+- **Behind the scenes.** Afterwards, both of you can look at what the Co-GM contributed, scene by scene. Seeds that have not surfaced yet stay secret.
+- **Swap roles.** Invite with *"I am the Co-GM"* and your friend plays your scenario from its opening scene, while you become the Co-GM.
+- Pause, continue solo or end the session at any time. The save stays with the player; everything the Co-GM planted stays in the world.
 
 **Dice Display - choose your level of crunch**
 
@@ -182,11 +197,33 @@ The narrative tone reference: *Studio Ghibli, Avatar: The Last Airbender, Harry 
 
 <img src="docs/correction1.png" width="420" alt="Correction mode">
 
+**Co-op mode** — invite a friend as Co-GM; they see what the game is about and accept:
+
+<table border="0" cellpadding="4" cellspacing="0"><tr>
+  <td align="center" valign="top"><img src="docs/coop_invite.png" width="280" alt="Co-op invite dialog of the player"></td>
+  <td align="center" valign="top"><img src="docs/coop_accept.png" width="280" alt="Co-op invite received by the Co-GM"></td>
+</tr></table>
+
+**The Co-GM's view** — answer the narrator's question, then set an impulse in the Director's Cockpit:
+
+<table border="0" cellpadding="4" cellspacing="0"><tr>
+  <td align="center" valign="top"><img src="docs/coop_question.png" width="200" alt="Co-GM answering the narrator's question"></td>
+  <td align="center" valign="top"><img src="docs/coop_cockpit.png" width="200" alt="Director's Cockpit"></td>
+  <td align="center" valign="top"><img src="docs/coop_impulse.png" width="200" alt="Setting a character line as impulse"></td>
+</tr></table>
+
+**The player's view** — a status line shows what the Co-GM is doing; *Behind the scenes* reveals their contributions once they surfaced:
+
+<table border="0" cellpadding="4" cellspacing="0"><tr>
+  <td align="center" valign="top"><img src="docs/coop_player.png" width="280" alt="Player view with Co-GM status line"></td>
+  <td align="center" valign="top"><img src="docs/coop_reveal.png" width="280" alt="Behind the scenes"></td>
+</tr></table>
+
 ---
 
 ## 🏗️ Architecture
 
-EdgeTales uses a clean 5-file modular architecture:
+EdgeTales uses a compact modular architecture:
 
 ```
 edgetales/
@@ -194,6 +231,7 @@ edgetales/
 ├── engine.py           # Game logic, AI calls, mechanics, save/load (framework-independent)
 ├── voice.py            # TTS/STT backends: EdgeTTS, Chatterbox, Whisper (framework-independent)
 ├── i18n.py             # All UI strings, labels, translations (DE + EN)
+├── icons.py            # Inline SVG icon set used by the UI
 ├── custom_head.html    # CSS, meta tags, PWA manifest injected at startup
 ├── tests/              # Offline pytest suite (fake AI, no API key needed)
 │
@@ -244,19 +282,22 @@ Player types action
          │          new characters, deaths
          ▼
   ┌──────────────┐
-  │   Director   │  Claude Haiku — runs in background
+  │   Director   │  Claude Sonnet — after the narration is shown
   │              │  Strategic: pacing guidance, NPC reflections,
   └──────────────┘  clock awareness, act transitions, scene summaries
                     Runs every 2 scenes + on significant events
+
+  Once per chapter: Story Architect (Claude Opus) plans the acts,
+  triggers, revelations and the opening characters
 ```
 
 **The Brain** receives the player's raw input along with the full game state and decides *what happens mechanically*: which move to roll, which stat to use, what position and effect apply, whether the player is moving to a new location or time is progressing, and what the player's dramatic question is for the scene. It returns structured JSON — no prose, no creativity.
 
 **The Narrator** receives the Brain's analysis, the relevant NPC context, and the dice result, then writes the scene. It produces pure atmospheric prose in the player's chosen narration language — no metadata, no JSON, no technical markup. The narrator never decides outcomes — it dramatises what the dice already determined.
 
-**The Metadata Extractor** is a separate Haiku call that runs immediately after the Narrator. It reads the finished prose and extracts all game state changes as structured JSON: NPC memory events, new character introductions, scene context, location and time updates, deaths. This two-step design means the Narrator can focus entirely on storytelling quality, while the Extractor handles the bookkeeping with guaranteed valid JSON (Structured Outputs).
+**The Metadata Extractor** is a separate fast call (Haiku) that runs immediately after the Narrator. It reads the finished prose and extracts all game state changes as structured JSON: NPC memory events, new character introductions, scene context, location and time updates, deaths. This two-step design means the Narrator can focus entirely on storytelling quality, while the Extractor handles the bookkeeping with guaranteed valid JSON (Structured Outputs).
 
-**The Director** runs as a background task after the narration is already displayed and saved — it never adds latency to gameplay. Think of it as the showrunner watching from behind the scenes. It analyses recent scenes, the current story arc, clock fill levels, and NPC states to provide strategic guidance: where should the story go next? Which NPCs have untapped potential? Is the pacing right? The Director runs every two scenes and on significant events (misses, new NPCs, chaos interrupts, phase changes) — frequent enough that its guidance stays current, rare enough to avoid redundant calls.
+**The Director** (Sonnet) runs after the narration is already displayed and saved — while you read or listen, not before. Your next input is processed once it has finished. Think of it as the showrunner watching from behind the scenes. It analyses recent scenes, the current story arc, clock fill levels, and NPC states to provide strategic guidance: where should the story go next? Which NPCs have untapped potential? Is the pacing right? The Director runs every two scenes and on significant events (misses, new NPCs, chaos interrupts, phase changes) — frequent enough that its guidance stays current, rare enough to avoid redundant calls.
 
 When enough has happened to a particular NPC (tracked via an importance accumulator), the Director writes a *reflection* — a higher-level insight about how that character views the player. Each reflection updates the NPC's `arc` field (their narrative trajectory: where the story has taken them emotionally) while leaving their `instinct` untouched (their fundamental wiring, set once and never changed). The `arc` surfaces in every subsequent narrator prompt, giving NPCs the sense of evolving opinions and growing relationships without losing their core personality.
 
@@ -264,7 +305,7 @@ The Director's output flows directly into the Narrator's context three ways: `na
 
 The Director also generates enriched scene summaries that replace the Brain's bare-bones log entries, giving the narrator richer context about *why* things matter, not just *what* happened. And it evaluates act transition triggers, signalling when the story should advance to the next act based on what actually happened — not a fixed scene count.
 
-A fifth agent — the **Story Architect** — runs once at game start and once per chapter start, using Sonnet to generate a story blueprint (3-act or Kishōtenketsu structure) with act goals, transition triggers, revelations, a thematic thread, and possible endings. The thematic thread carries the story's emotional core question across every scene, connecting individual moments to a larger narrative arc. Revelations are story secrets planted in the blueprint — hidden truths about NPCs, the world, or the situation that the narrator weaves in naturally when the scene is ready for them. A dedicated confirmation step (a fast Haiku check after each scene) verifies whether the narrator actually delivered the revelation before marking it as used, so twists are never silently skipped.
+A fifth agent — the **Story Architect** — runs once at game start and once per chapter start, using Opus (the strongest model, as it runs so rarely) to generate a story blueprint (3-act or Kishōtenketsu structure) with act goals, transition triggers, revelations, a thematic thread, and possible endings. The thematic thread carries the story's emotional core question across every scene, connecting individual moments to a larger narrative arc. Revelations are story secrets planted in the blueprint — hidden truths about NPCs, the world, or the situation that the narrator weaves in naturally when the scene is ready for them. A dedicated confirmation step (a fast Haiku check after each scene) verifies whether the narrator actually delivered the revelation before marking it as used, so twists are never silently skipped.
 
 ### Core Design Principle: AI Narrates, It Does Not Decide
 
@@ -287,7 +328,7 @@ NPC descriptions in the sidebar update dynamically when a character undergoes me
 ### Prerequisites
 
 - **Python 3.11** - required if you want to use Chatterbox (offline AI TTS). Python 3.12+ is fine if you skip Chatterbox and use EdgeTTS instead.
-- **A Claude API key** from [Anthropic](https://console.anthropic.com/) - EdgeTales uses the Claude API exclusively. The prompts are optimised specifically for Claude (Haiku and Sonnet). Other AI providers are not supported. API usage is charged per token by Anthropic; a typical play session costs a few cents.
+- **A Claude API key** from [Anthropic](https://console.anthropic.com/) - EdgeTales uses the Claude API exclusively. The prompts are optimised specifically for Claude (Haiku, Sonnet and Opus). Other AI providers are not supported. API usage is charged per token by Anthropic (see [API Cost](#-api-cost)).
 
 ### Linux / macOS / Windows
 
@@ -394,7 +435,7 @@ EdgeTales is configured via a single `config.json` file in the project root.
 | `storage_secret` | No | `""` | Secret for signing session cookies. Auto-generated if not set |
 | `port` | No | `8080` | Server port |
 | `default_ui_lang` | No | `""` | Default UI language for new users. `"de"` = German, `"en"` = English. Empty = German |
-| `narrator_model` / `brain_model` | No | `""` | Claude model for the Narrator/Architect role (Sonnet) and for Brain/Director/Extractors (Haiku). Empty = built-in default (see below) |
+| `narrator_model` / `brain_model` | No | `""` | Claude model for narration and for the fast per-turn calls (Brain, Metadata Extractor, checks). Empty = built-in default (see below) |
 | `narrator_effort` / `brain_effort` | No | `""` | Effort level per role: `low`, `medium`, `high`, `xhigh`, `max`. Empty = role default (`high` for the narrator, model default for the brain) |
 | `narrator_thinking` / `brain_thinking` | No | `""` | Thinking mode per role: `disabled`, `adaptive`, `between_tools`. Empty = model default |
 | `director_model` / `director_effort` / `director_thinking` | No | `""` | Model for the Director and `##` corrections. Empty = `claude-sonnet-5-5`, thinking disabled |
@@ -499,14 +540,18 @@ The invite system includes rate limiting: after 5 failed attempts from the same 
 
 ## 🏃 API Cost
 
-EdgeTales is designed to be cost-efficient. A typical play session uses:
+API usage is billed per token by Anthropic (see [Anthropic pricing](https://www.anthropic.com/pricing)). With the default models, a test session of ~35 turns over two chapters split roughly like this:
 
-- **Brain (Haiku):** ~$0.001 per turn — fast classification, minimal tokens
-- **Narrator (Sonnet):** ~$0.01–0.02 per turn — the main cost, produces 2-4 paragraphs of prose. The Narrator system prompt is cached server-side (Anthropic prompt caching), reducing input token costs by ~20% at typical play pace
-- **Director (Haiku):** ~$0.004–0.005 per session — runs every 2 scenes plus on significant events (misses, new NPCs, phase changes). Slightly more frequent than earlier versions, but still well under $0.01/session at Haiku pricing
-- **Metadata Extractor (Haiku):** ~$0.001 per turn — runs after every scene to extract state changes
+| Role | Model | Share of cost | Why |
+|---|---|---|---|
+| Narrator | Sonnet | ~ 45–50 % | Writes every scene; its system prompt is prompt-cached |
+| Director | Sonnet | ~ 25–30 % | Runs every 2 scenes plus on significant events |
+| Story Architect | Opus | ~ 15 % | Strongest model, but only a few calls per chapter |
+| Brain, Metadata Extractor, checks | Haiku | ~ 10 % | Many small, fast calls every turn |
 
-A one-hour session with ~20 turns typically costs **$0.15–0.30**, depending on scene complexity and narration length.
+- Every API call is logged with model, role and tokens (`[API] claude-sonnet-5-5 [director]: in=… out=… cache_read=…`), so you can see exactly where your budget goes.
+- To spend less, set `director_model` to `claude-haiku-5-5` and `architect_model` to `claude-sonnet-5-5` in `config.json` - the routing used before version 1.4.0.
+- An optional invite code (see above) keeps unknown visitors away from your API key.
 
 ---
 
@@ -547,7 +592,7 @@ Environment=ANTHROPIC_API_KEY=sk-ant-YOUR-KEY-HERE
 
 1. **Create a profile** - pick a username
 2. **Create a character** - name, stats (distributed across Heart, Iron, Wits, Shadow, Edge), choose genre/tone/archetype
-3. **Play** - type what you do. Examples:
+3. **Play** - type what you do (up to 500 characters per message). Examples:
    - `I draw my sword and challenge the guard to single combat`
    - `"We mean no harm," I say, stepping forward with hands raised`
    - `I search the abandoned library for clues about the missing scholar`
@@ -557,12 +602,12 @@ Environment=ANTHROPIC_API_KEY=sk-ant-YOUR-KEY-HERE
 
 ### Co-op: play with a Co-GM
 
-A second player on the same server can join as **Co-GM** (co game master). The Co-GM plays no character. After each scene they answer one question from the narrator - "Who is sitting in the car?" - and the answer shapes the next scene, so the player is surprised by it. Some questions are asked "for later": the answer is stored quietly and surfaces when the story is ready. Through the **Director's Cockpit** the Co-GM sets **one impulse per scene** - a free direction, a character's appearance or line, a disruption, a detail, time pressure, a moment of rest or a cliffhanger - and can add as much **background** as they like: a character's secret intention, rumours, secrets and false trails. Weather or mood go into a free direction.
+1. Both players open EdgeTales on their own device and pick their own profile.
+2. The player opens the co-op menu (people icon, top right), picks the other player and sends the invite. Offline players see the invite at their next login.
+3. The Co-GM accepts. From now on they see the story live, answer the narrator's question after each scene and can open the **Director's Cockpit**.
+4. The header shows who you are playing with; the co-op menu offers *Behind the scenes*, *Pause session*, *Continue solo* and *Remove Co-GM*. The Co-GM can leave at any time.
 
-- Open the co-op menu (people icon, top right) and invite another player. Offline players see the invite at their next login.
-- The Co-GM sees the story, the characters and your stats - not your inputs, the clocks or the chaos factor.
-- Your next scene waits for the Co-GM's answer - and while the Co-GM has the Director's Cockpit open - so their input lands in time; you can always continue without waiting. An answer the scene cannot use is not forced: it is kept and surfaces later.
-- Pause, continue solo or end the session at any time. The save stays yours; everything the Co-GM planted stays in the world.
+What the Co-GM can do is described under *Co-op Mode* in the [Key Features](#-key-features); the screenshots show both views.
 
 ---
 
@@ -584,7 +629,7 @@ pip install pytest jsonschema
 python -m pytest tests -q
 ```
 
-Covered: dice and consequences, the turn pipeline (including rollback when an API call fails mid-turn), momentum burn, `##` corrections, chapter transitions, save/load compatibility, user-name validation, structured-output schemas (NPC-ID enums and API limits) and DE/EN translation completeness.
+Covered: dice and consequences, model roles, the turn pipeline (including rollback when an API call fails mid-turn), momentum burn, `##` corrections, chapter transitions, save/load compatibility, user-name validation, structured-output schemas (NPC-ID enums and API limits), co-op (questions, cockpit signals, new characters, invites and role swap) and DE/EN translation completeness.
 
 ---
 

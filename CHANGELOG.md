@@ -12,6 +12,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **Co-op invites show what the game is about:** the invite dialog now lists the game's setup - genre, tone, archetype, concept, backstory, wishes and boundaries - the same details as the info button in the save list, so the invited player knows what they are agreeing to before accepting.
 
 ### Changed
+- **README brought up to date:** describes the co-op mode in detail (questions, Director's Cockpit, behind the scenes, role swap) with seven new screenshots of both views, the per-job model setup and a cost breakdown by role.
 - **Player messages are limited to 500 characters:** the input field stops at 500 characters, and a longer dictated message shows a notice instead of being sent. Normal play is unaffected; it keeps very long inputs from turning the narrator into a re-teller.
 - **Invited as player, you start the story from the beginning:** when the inviting player chooses to be the co-GM, the invited player no longer takes over the game where it currently stands. They get the game's starting point - character, setting, story and opening scene - as a new save and play it from the start, with the inviting player as co-GM. The invite reads "play" instead of "play on" and says so. Games without a stored starting point (started before 1.3.0 and already past their opening scene) can only be shared with the inviter as player; the role choice is disabled there with a short note.
 
