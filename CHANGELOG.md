@@ -5,7 +5,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## [Unreleased]
+## [1.4.0] - 2026-10-16
 
 ### Added
 - **Each AI job now gets a model that fits it:** two new model roles in `config.json`. The story director (and `##` corrections) now runs on Claude Sonnet 5.5 and gives the narrator concrete stage directions instead of mood notes; the once-per-chapter planning - story plan, character and world setup, opening characters, chapter summary - runs on Claude Opus 5.5, with richer plots and fuller characters. Fast per-turn steps stay on Haiku 5.5, narration on Sonnet 5.5. Configure with `director_model` / `director_effort` / `director_thinking` and `architect_model` / `architect_effort` / `architect_thinking`; set `director_model` to `claude-haiku-5-5` and `architect_model` to `claude-sonnet-5-5` for the previous, cheaper routing. API log lines now name the role (`[API] <model> [director]: …`).
