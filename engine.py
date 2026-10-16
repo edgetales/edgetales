@@ -66,7 +66,7 @@ except ImportError:
 # CONFIGURATION
 # ===============================================================
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 BRAIN_MODEL = "claude-haiku-5-5"
 NARRATOR_MODEL = "claude-sonnet-5-5"
 # Role tokens for the director and architect roles (see MODEL SETTINGS). Their
