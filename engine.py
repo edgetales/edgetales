@@ -2017,12 +2017,38 @@ def _trim_to_sentence(text: str, limit: int) -> str:
     return (head[:space] if space > 0 else head[:limit - 1]).rstrip(" ,;:—–-") + "…"
 
 
+# Endings that mean a description was cut off mid-thought. Descriptions come from
+# Structured Outputs, so a string cannot be cut mid-JSON; what remains are phrases
+# that stop on a connector. Models often write complete noun phrases WITHOUT a
+# final period ("Junger Wachtmeister mit zu tief sitzender Mütze") - requiring
+# end punctuation discarded 8-20 Director updates per session.
+_DESC_DANGLING_CHARS = (",", ";", ":", "(", "-", "–", "—", "/", "&")
+_DESC_DANGLING_WORDS = {
+    "und", "oder", "aber", "mit", "der", "die", "das", "den", "dem", "des", "ein",
+    "eine", "einen", "einem", "einer", "von", "zu", "im", "in", "an", "auf", "für",
+    "and", "or", "but", "with", "the", "a", "an", "of", "to", "in", "on", "for",
+}
+
+
 def _is_complete_description(desc: str) -> bool:
-    """Check if a description looks complete (not truncated mid-sentence).
-    Incomplete descriptions are discarded in favor of the existing one."""
-    if not desc or len(desc) < 10:
+    """Check if a description looks complete (not cut off mid-thought).
+    Incomplete descriptions are discarded in favor of the existing one.
+    End punctuation is NOT required - only dangling endings are rejected."""
+    desc = (desc or "").strip()
+    if len(desc) < 10:
         return False
-    return desc.rstrip().endswith(('.', '!', '?', '"', '»', '«', '…', ')', '–', '—'))
+    if desc.endswith(_DESC_DANGLING_CHARS):
+        return False
+    last = re.sub(r"[^\w]", "", desc.split()[-1].lower())
+    return last not in _DESC_DANGLING_WORDS
+
+
+def _finish_description(desc: str) -> str:
+    """Accepted description with a closing period when it has no end punctuation."""
+    desc = (desc or "").strip()
+    if desc and not desc.endswith(('.', '!', '?', '"', '»', '«', '“', '…', ')')):
+        desc += "."
+    return desc
 
 
 def _absorb_duplicate_npc(game, original: dict, merged_name: str):
@@ -2311,7 +2337,7 @@ def _process_npc_details(game, json_text: str, world_addition: str = ""):
             if new_desc:
                 old_desc = npc.get("description", "")
                 if _is_complete_description(new_desc) or not old_desc:
-                    npc["description"] = new_desc
+                    npc["description"] = _finish_description(new_desc)
                     log(f"[NPC] Description updated for {npc['name']}: "
                         f"'{old_desc[:50]}' → '{new_desc[:50]}'")
                 else:
@@ -6912,7 +6938,7 @@ def _apply_director_guidance(game: GameState, guidance: dict):
                     f"'{new_desc[:60]}' — keeping existing")
             else:
                 old_desc = npc.get("description", "")
-                npc["description"] = new_desc
+                npc["description"] = _finish_description(new_desc)
                 log(f"[Director] Description updated for {npc['name']}: "
                     f"'{old_desc[:60]}' → '{new_desc[:60]}'")
 
