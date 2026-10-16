@@ -13,10 +13,10 @@
   "brain_model": "claude-haiku-5-5",
   "brain_effort": "",
   "brain_thinking": "disabled",
-  "director_model": "",
+  "director_model": "claude-sonnet-5-5",
   "director_effort": "",
-  "director_thinking": "",
-  "architect_model": "",
-  "architect_effort": "",
+  "director_thinking": "disabled",
+  "architect_model": "claude-opus-5-5",
+  "architect_effort": "high",
   "architect_thinking": ""
 }

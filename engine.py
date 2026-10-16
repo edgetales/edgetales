@@ -69,12 +69,12 @@ except ImportError:
 VERSION = "1.3.0"
 BRAIN_MODEL = "claude-haiku-5-5"
 NARRATOR_MODEL = "claude-sonnet-5-5"
-# Optional roles (see MODEL SETTINGS): role tokens of the form
-# "role:<role>:<fallback role>". Until config.json sets <role>_model, every call
-# keeps running with its fallback role's settings (unchanged behaviour).
-DIRECTOR_MODEL = "role:director:brain"         # Director, ## corrections
-ARCHITECT_MODEL = "role:architect:narrator"    # Story Architect
-ARCHITECT_BRAIN_MODEL = "role:architect:brain"  # setup brain, opening metadata, chapter summary
+# Role tokens for the director and architect roles (see MODEL SETTINGS). Their
+# default models share IDs with the constants above, so they need own tokens.
+DIRECTOR_MODEL = "role:director"     # Director, ## corrections
+ARCHITECT_MODEL = "role:architect"   # Story Architect, setup brain, opening metadata, chapter summary
+_DIRECTOR_DEFAULT_MODEL = "claude-sonnet-5-5"
+_ARCHITECT_DEFAULT_MODEL = "claude-opus-5-5"
 _SCRIPT_DIR = Path(__file__).resolve().parent
 USERS_DIR = _SCRIPT_DIR / "users"
 USERS_DIR.mkdir(exist_ok=True)
@@ -4518,10 +4518,10 @@ def _log_usage(kwargs: dict, response, role: Optional[str] = None) -> None:
 # ---------------------------------------------------------------
 # MODEL SETTINGS — per-role model, effort and thinking (config.json)
 # ---------------------------------------------------------------
-# Call sites keep passing NARRATOR_MODEL / BRAIN_MODEL; these constants act as
-# role tokens. _api_create_with_retry() swaps in the configured model and adds
-# output_config.effort / thinking for that role. Empty or missing config values
-# keep the API defaults, i.e. the previous behaviour.
+# Call sites pass a role token (NARRATOR_MODEL, BRAIN_MODEL, DIRECTOR_MODEL,
+# ARCHITECT_MODEL). _api_create_with_retry() swaps in the configured model and
+# adds output_config.effort / thinking for that role. Empty or missing config
+# values use the role defaults below.
 #
 #   config.json:  "narrator_model": "claude-sonnet-5-5",
 #                 "narrator_effort": "high",          # low|medium|high|xhigh|max
@@ -4531,16 +4531,18 @@ def _log_usage(kwargs: dict, response, role: Optional[str] = None) -> None:
 #                 "architect_model" / "architect_*"  (Story Architect, setup brain,
 #                                                     opening metadata, chapter summary)
 #
-# director and architect are OPTIONAL roles: they only take effect once
-# <role>_model is set. Until then each call runs with its fallback role from the
-# token ("role:director:brain" → brain), exactly as before the split.
+# Defaults (chosen from Elvira A/B runs, Oct 2026): narrator Sonnet 5.5 (effort
+# high), brain Haiku 5.5 (fast per-turn calls), director Sonnet 5.5 (concrete
+# guidance instead of mood), architect Opus 5.5 (once per chapter: richer plans
+# and NPC profiles). Set director_model to claude-haiku-5-5 for the old routing.
 #
 # Model IDs are pinned snapshots — there is no "latest" alias. Switch models
 # deliberately and compare with an Elvira run first.
 MODEL_ROLES = ("narrator", "brain", "director", "architect")
-OPTIONAL_MODEL_ROLES = ("director", "architect")
-_MODEL_ROLE_BY_DEFAULT = {NARRATOR_MODEL: "narrator", BRAIN_MODEL: "brain"}
-_ROLE_DEFAULT_MODEL = {"narrator": NARRATOR_MODEL, "brain": BRAIN_MODEL}
+_MODEL_ROLE_BY_DEFAULT = {NARRATOR_MODEL: "narrator", BRAIN_MODEL: "brain",
+                          DIRECTOR_MODEL: "director", ARCHITECT_MODEL: "architect"}
+_ROLE_DEFAULT_MODEL = {"narrator": NARRATOR_MODEL, "brain": BRAIN_MODEL,
+                       "director": _DIRECTOR_DEFAULT_MODEL, "architect": _ARCHITECT_DEFAULT_MODEL}
 # Role defaults applied when config.json leaves the option empty. The brain and
 # director roles run short structured calls — thinking only adds latency there.
 _ROLE_DEFAULT_THINKING = {"brain": "disabled", "director": "disabled"}
@@ -4562,9 +4564,7 @@ def configure_models(cfg: Optional[dict] = None) -> dict:
         cfg = load_global_config()
     settings = {}
     for role in MODEL_ROLES:
-        model = str(cfg.get(f"{role}_model") or "").strip() or _ROLE_DEFAULT_MODEL.get(role)
-        if role in OPTIONAL_MODEL_ROLES and not model:
-            continue   # not configured → calls use their fallback role
+        model = str(cfg.get(f"{role}_model") or "").strip() or _ROLE_DEFAULT_MODEL[role]
         effort = str(cfg.get(f"{role}_effort") or "").strip().lower() or None
         thinking = str(cfg.get(f"{role}_thinking") or "").strip().lower() or None
         if effort and effort not in EFFORT_LEVELS:
@@ -4584,30 +4584,8 @@ def configure_models(cfg: Optional[dict] = None) -> dict:
     _THINKING_SUBSTITUTES.clear()
     log("[Models] " + " | ".join(
         f"{r}={s['model']} effort={s['effort'] or 'default'} thinking={s['thinking'] or 'default'}"
-        for r, s in settings.items())
-        + "".join(f" | {r}=→{_OPTIONAL_ROLE_FALLBACK_LABEL[r]}"
-                  for r in OPTIONAL_MODEL_ROLES if r not in settings))
+        for r, s in settings.items()))
     return settings
-
-
-_OPTIONAL_ROLE_FALLBACK_LABEL = {"director": "brain", "architect": "narrator/brain"}
-
-
-def _resolve_role(model) -> Optional[str]:
-    """Effective role for a model kwarg: a default model ID is its role token;
-    "role:<role>:<fallback>" resolves to <role> when configured, else <fallback>.
-    Anything else (explicit model IDs) → None."""
-    role = _MODEL_ROLE_BY_DEFAULT.get(model)
-    if role or not isinstance(model, str) or not model.startswith("role:"):
-        return role
-    parts = model.split(":")
-    if len(parts) != 3:
-        return None
-    _, wanted, fallback = parts
-    settings = get_model_settings()
-    if wanted in settings:
-        return wanted
-    return fallback if fallback in settings else None
 
 
 def get_model_settings() -> dict:
@@ -4618,18 +4596,14 @@ def get_model_settings() -> dict:
 
 
 def model_for(role: str) -> str:
-    """Configured model ID for a role. An unconfigured optional role reports the
-    model of its fallback (director → brain, architect → narrator)."""
-    settings = get_model_settings()
-    if role not in settings and role in OPTIONAL_MODEL_ROLES:
-        role = {"director": "brain", "architect": "narrator"}[role]
-    return settings[role]["model"]
+    """Configured model ID for a role ("narrator", "brain", "director", "architect")."""
+    return get_model_settings()[role]["model"]
 
 
 def _apply_model_settings(kwargs: dict) -> tuple[dict, Optional[str]]:
     """Map a role-token model to the configured model and add effort/thinking.
     Returns (new_kwargs, role). Unknown models (e.g. explicit IDs) pass through."""
-    role = _resolve_role(kwargs.get("model"))
+    role = _MODEL_ROLE_BY_DEFAULT.get(kwargs.get("model"))
     if role is None:
         return kwargs, None
     s = get_model_settings()[role]
@@ -4931,7 +4905,7 @@ creativity_seed: {seed} (Use as loose inspiration for names, locations, and deta
     try:
         response = _api_create_with_retry(
             client, max_retries=2,
-            model=ARCHITECT_BRAIN_MODEL, max_tokens=SETUP_BRAIN_MAX_TOKENS, system=system,
+            model=ARCHITECT_MODEL, max_tokens=SETUP_BRAIN_MAX_TOKENS, system=system,
             messages=[{"role": "user", "content": user_msg}],
             output_config={"format": {"type": "json_schema", "schema": SETUP_BRAIN_OUTPUT_SCHEMA}},
         )
@@ -5131,8 +5105,7 @@ location:{game.current_location}
 situation:{game.current_scene_context}
 npcs:{npc_text}{campaign_ctx}{backstory_text}"""
 
-    # Story Architect uses the architect role (falls back to the narrator role,
-    # Sonnet, until architect_model is configured) — called once per game/chapter,
+    # Story Architect uses the architect role (Opus 5.5 by default) — called once per game/chapter,
     # cost is negligible (~$0.01), but quality of the blueprint shapes the entire story.
     # An unusable answer (too few acts, unparseable) gets ONE more attempt with an
     # explicit correction before the generic fallback blueprint is used — the model
@@ -5958,7 +5931,7 @@ Extract all NPCs, clocks, location, scene context, and time of day from the open
     try:
         response = _api_create_with_retry(
             client, max_retries=2,
-            model=ARCHITECT_BRAIN_MODEL, max_tokens=OPENING_MAX_TOKENS,
+            model=ARCHITECT_MODEL, max_tokens=OPENING_MAX_TOKENS,
             system=system,
             messages=[{"role": "user", "content": prompt}],
             output_config={"format": {
@@ -9889,7 +9862,7 @@ def call_chapter_summary(client: anthropic.Anthropic, game: GameState,
     try:
         response = _api_create_with_retry(
             client, max_retries=1,
-            model=ARCHITECT_BRAIN_MODEL, max_tokens=CHAPTER_SUM_MAX_TOKENS,
+            model=ARCHITECT_MODEL, max_tokens=CHAPTER_SUM_MAX_TOKENS,
             system=f"""Summarize an RPG chapter for campaign continuity.
 - Write in {lang}
 - "title": A short evocative title for this chapter (3-6 words)

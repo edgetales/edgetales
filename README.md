@@ -397,14 +397,23 @@ EdgeTales is configured via a single `config.json` file in the project root.
 | `narrator_model` / `brain_model` | No | `""` | Claude model for the Narrator/Architect role (Sonnet) and for Brain/Director/Extractors (Haiku). Empty = built-in default (see below) |
 | `narrator_effort` / `brain_effort` | No | `""` | Effort level per role: `low`, `medium`, `high`, `xhigh`, `max`. Empty = role default (`high` for the narrator, model default for the brain) |
 | `narrator_thinking` / `brain_thinking` | No | `""` | Thinking mode per role: `disabled`, `adaptive`, `between_tools`. Empty = model default |
-| `director_model` / `director_effort` / `director_thinking` | No | `""` | Optional own model for the Director and `##` corrections. Empty `director_model` = these calls use the brain settings |
-| `architect_model` / `architect_effort` / `architect_thinking` | No | `""` | Optional own model for the once-per-chapter planning calls (Story Architect, character/world setup, opening metadata, chapter summary). Empty `architect_model` = each call keeps its previous role (Story Architect → narrator, the others → brain) |
+| `director_model` / `director_effort` / `director_thinking` | No | `""` | Model for the Director and `##` corrections. Empty = `claude-sonnet-5-5`, thinking disabled |
+| `architect_model` / `architect_effort` / `architect_thinking` | No | `""` | Model for the once-per-chapter planning calls (Story Architect, character/world setup, opening characters, chapter summary). Empty = `claude-opus-5-5`, effort `high` |
 
 > 🔒 On Unix systems, `config.json` is automatically set to `chmod 600` (owner-only) to protect your API key.
 
 ### Choosing Models and Effort
 
-By default EdgeTales uses `claude-sonnet-5-5` at effort `high` for narration and `claude-haiku-5-5` (thinking disabled) for the fast structured calls. Both roles can be switched in `config.json` without touching code:
+By default EdgeTales uses four roles, each matched to its job:
+
+| Role | Calls | Default |
+|---|---|---|
+| `narrator` | Narration | `claude-sonnet-5-5`, effort `high` |
+| `brain` | Player intent, scene extraction, quick checks, recap (every turn, latency matters) | `claude-haiku-5-5`, thinking disabled |
+| `director` | Story direction every 2 scenes, `##` corrections | `claude-sonnet-5-5`, thinking disabled |
+| `architect` | Story plan, character and world setup, opening characters, chapter summary (once per chapter) | `claude-opus-5-5`, effort `high` |
+
+Every role can be switched in `config.json` without touching code:
 
 ```json
 {
@@ -417,7 +426,7 @@ By default EdgeTales uses `claude-sonnet-5-5` at effort `high` for narration and
 }
 ```
 
-- Two optional roles let you spend a stronger model only where it matters: `director_model` (story direction, every 2 scenes) and `architect_model` (planning, once per chapter). Their effort/thinking defaults are thinking `disabled` for the director and effort `high` for the architect. Until `<role>_model` is set they change nothing.
+- To save cost, set `director_model` to `claude-haiku-5-5` and `architect_model` to `claude-sonnet-5-5` (the routing before 1.4.0).
 - Model IDs are pinned snapshots — there is no "always latest" alias. Switch deliberately and compare a few sessions before keeping a new model.
 - Higher effort and thinking improve depth but add latency and output tokens per turn. For narration, `between_tools` turns off up-front thinking and keeps turns fast.
 - If a model rejects a configured effort or thinking value, EdgeTales logs a warning and continues without that option.

@@ -152,56 +152,45 @@ def test_brain_thinking_can_be_overridden():
     assert E.get_model_settings()["brain"]["thinking"] == "adaptive"
 
 
-# --- Optional roles: director / architect ------------------------------------
+# --- Director / architect roles ------------------------------------------------
 
-def test_optional_roles_fall_back_without_config():
-    # Unconfigured director/architect keep the calls on their previous role.
+def test_director_and_architect_defaults():
     _write_cfg()
-    assert "director" not in E.get_model_settings()
-    assert "architect" not in E.get_model_settings()
+    st = E.get_model_settings()
+    assert st["director"] == {"model": "claude-sonnet-5-5", "effort": None, "thinking": "disabled"}
+    assert st["architect"] == {"model": "claude-opus-5-5", "effort": "high", "thinking": None}
     kw, role = E._apply_model_settings({"model": E.DIRECTOR_MODEL})
-    assert role == "brain" and kw["model"] == E.BRAIN_MODEL
-    assert kw["thinking"] == {"type": "disabled"}
-    kw, role = E._apply_model_settings({"model": E.ARCHITECT_MODEL})
-    assert role == "narrator" and kw["model"] == E.NARRATOR_MODEL
-    assert kw["output_config"] == {"effort": "high"}
-    kw, role = E._apply_model_settings({"model": E.ARCHITECT_BRAIN_MODEL})
-    assert role == "brain" and kw["model"] == E.BRAIN_MODEL
-    assert E.model_for("director") == E.BRAIN_MODEL
-    assert E.model_for("architect") == E.NARRATOR_MODEL
-
-
-def test_fallback_follows_configured_base_role():
-    _write_cfg(brain_model="claude-sonnet-5-5")
-    kw, role = E._apply_model_settings({"model": E.DIRECTOR_MODEL})
-    assert role == "brain" and kw["model"] == "claude-sonnet-5-5"
-
-
-def test_configured_director_role_with_defaults():
-    _write_cfg(director_model="claude-sonnet-5-5")
-    assert E.get_model_settings()["director"] == {
-        "model": "claude-sonnet-5-5", "effort": None, "thinking": "disabled"}
-    kw, role = E._apply_model_settings({"model": E.DIRECTOR_MODEL, "max_tokens": 5})
     assert role == "director" and kw["model"] == "claude-sonnet-5-5"
     assert kw["thinking"] == {"type": "disabled"}
-    # Brain calls are untouched
+    kw, role = E._apply_model_settings({"model": E.ARCHITECT_MODEL})
+    assert role == "architect" and kw["model"] == "claude-opus-5-5"
+    assert kw["output_config"] == {"effort": "high"} and "thinking" not in kw
+    assert E.model_for("director") == "claude-sonnet-5-5"
+    assert E.model_for("architect") == "claude-opus-5-5"
+
+
+def test_director_can_be_set_back_to_haiku():
+    _write_cfg(director_model="claude-haiku-5-5")
+    kw, role = E._apply_model_settings({"model": E.DIRECTOR_MODEL})
+    assert role == "director" and kw["model"] == "claude-haiku-5-5"
+    # Brain calls are untouched by director settings
     kw, role = E._apply_model_settings({"model": E.BRAIN_MODEL})
     assert role == "brain" and kw["model"] == E.BRAIN_MODEL
 
 
-def test_configured_architect_role_covers_both_tokens():
-    _write_cfg(architect_model="claude-opus-5-5", architect_thinking="adaptive")
-    for token in (E.ARCHITECT_MODEL, E.ARCHITECT_BRAIN_MODEL):
-        kw, role = E._apply_model_settings({"model": token})
-        assert role == "architect" and kw["model"] == "claude-opus-5-5"
-        assert kw["output_config"] == {"effort": "high"}
-        assert kw["thinking"] == {"type": "adaptive"}
+def test_architect_role_overrides():
+    _write_cfg(architect_model="claude-sonnet-5-5", architect_thinking="adaptive",
+               architect_effort="medium")
+    kw, role = E._apply_model_settings({"model": E.ARCHITECT_MODEL})
+    assert role == "architect" and kw["model"] == "claude-sonnet-5-5"
+    assert kw["output_config"] == {"effort": "medium"}
+    assert kw["thinking"] == {"type": "adaptive"}
     kw, role = E._apply_model_settings({"model": E.NARRATOR_MODEL})
     assert role == "narrator" and kw["model"] == E.NARRATOR_MODEL
 
 
-def test_optional_role_thinking_substitute_is_per_role():
-    _write_cfg(director_model="claude-sonnet-5-5")
+def test_director_thinking_substitute_is_per_role():
+    _write_cfg()
     c = _Client([_bad_request('send "thinking": {"type": "between_tools"} instead')])
     E._api_create_with_retry(c, max_retries=0, model=E.DIRECTOR_MODEL, max_tokens=10)
     assert c.calls[1]["thinking"] == {"type": "between_tools"}
@@ -213,7 +202,7 @@ def test_optional_role_thinking_substitute_is_per_role():
 def test_role_tokens_never_reach_the_api():
     _write_cfg()
     c = _Client([])
-    for token in (E.DIRECTOR_MODEL, E.ARCHITECT_MODEL, E.ARCHITECT_BRAIN_MODEL):
+    for token in (E.DIRECTOR_MODEL, E.ARCHITECT_MODEL):
         E._api_create_with_retry(c, max_retries=0, model=token, max_tokens=10)
     assert all(not k["model"].startswith("role:") for k in c.calls)
 
@@ -223,9 +212,9 @@ def test_call_sites_use_their_roles():
     expect = {
         E.call_director: "DIRECTOR_MODEL", E.call_correction_brain: "DIRECTOR_MODEL",
         E.call_story_architect: "ARCHITECT_MODEL",
-        E.call_setup_brain: "ARCHITECT_BRAIN_MODEL",
-        E.call_opening_metadata: "ARCHITECT_BRAIN_MODEL",
-        E.call_chapter_summary: "ARCHITECT_BRAIN_MODEL",
+        E.call_setup_brain: "ARCHITECT_MODEL",
+        E.call_opening_metadata: "ARCHITECT_MODEL",
+        E.call_chapter_summary: "ARCHITECT_MODEL",
         E.call_narrator: "NARRATOR_MODEL", E.call_brain: "BRAIN_MODEL",
         E.call_narrator_metadata: "BRAIN_MODEL",
     }
