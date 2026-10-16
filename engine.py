@@ -69,6 +69,12 @@ except ImportError:
 VERSION = "1.3.0"
 BRAIN_MODEL = "claude-haiku-5-5"
 NARRATOR_MODEL = "claude-sonnet-5-5"
+# Role tokens for the director and architect roles (see MODEL SETTINGS). Their
+# default models share IDs with the constants above, so they need own tokens.
+DIRECTOR_MODEL = "role:director"     # Director, ## corrections
+ARCHITECT_MODEL = "role:architect"   # Story Architect, setup brain, opening metadata, chapter summary
+_DIRECTOR_DEFAULT_MODEL = "claude-sonnet-5-5"
+_ARCHITECT_DEFAULT_MODEL = "claude-opus-5-5"
 _SCRIPT_DIR = Path(__file__).resolve().parent
 USERS_DIR = _SCRIPT_DIR / "users"
 USERS_DIR.mkdir(exist_ok=True)
@@ -143,7 +149,9 @@ MAX_NPC_MEMORY_ENTRIES = 25        # Per NPC (total: observations + reflections)
 MAX_NPC_OBSERVATIONS = 15          # Max observation memories per NPC
 MAX_NPC_REFLECTIONS = 8            # Max reflection memories per NPC
 MAX_NARRATION_HISTORY = 7          # Recent narrations kept for prompt context
-MAX_NARRATION_CHARS = 1500         # Truncation per narration entry
+MAX_NARRATION_CHARS = 2500         # Older narrations in the Narrator context, cut at a sentence end
+                                   # (1500 cut ~80% of scenes mid-sentence — losing their closing hook)
+PLAYER_INPUT_MAX_CHARS = 500       # Longest player message the game accepts (UI limit)
 MAX_SESSION_LOG = 50               # Scene log entries kept
 REFLECTION_THRESHOLD = 30          # Importance accumulator threshold for reflection
 MAX_ACTIVATED_NPCS = 4             # Max NPCs with full context in narrator prompt
@@ -153,7 +161,6 @@ DIRECTOR_INTERVAL = 2              # Call director every N scenes (when no trigg
 MEMORY_RECENCY_DECAY = 0.92        # Exponential decay factor for memory recency
 AUTONOMOUS_CLOCK_TICK_CHANCE = 0.20  # Per-scene chance each threat clock ticks autonomously
 WEAK_HIT_CLOCK_TICK_CHANCE  = 0.50  # Chance a threat clock ticks on WEAK_HIT + risky position
-DIRECTOR_MODEL = BRAIN_MODEL       # Director uses same model as Brain (Haiku)
 
 # --- Max output tokens per call ---
 # These are upper bounds, NOT cost drivers — you only pay for tokens actually generated.
@@ -173,7 +180,9 @@ OPENING_MAX_TOKENS          = _MAX_TOKENS_HAIKU    # call_opening_metadata (new)
 REVELATION_CHECK_MAX_TOKENS = _MAX_TOKENS_HAIKU    # call_revelation_check (new)
 COGM_QUESTION_MAX_TOKENS    = _MAX_TOKENS_HAIKU    # call_cogm_question (co-op mode)
 NARRATOR_MAX_TOKENS   = _MAX_TOKENS_SONNET   # call_narrator (was 3500)
-STORY_ARCH_MAX_TOKENS  = _MAX_TOKENS_SONNET   # call_story_architect (was 4000)
+# Story Architect: blueprint JSON plus the model's thinking. Opus 5.5 at effort
+# high used all of 8,192 tokens and the JSON broke off mid-string (twice in a row).
+STORY_ARCH_MAX_TOKENS  = 16384                # call_story_architect (was 8192)
 
 # --- Creativity seed (output diversity for character/scene generation) ---
 _SEED_FALLBACK = [
@@ -2010,12 +2019,45 @@ def _trim_to_sentence(text: str, limit: int) -> str:
     return (head[:space] if space > 0 else head[:limit - 1]).rstrip(" ,;:—–-") + "…"
 
 
+# Endings that mean a description was cut off mid-thought. Descriptions come from
+# Structured Outputs, so a string cannot be cut mid-JSON; what remains are phrases
+# that stop on a connector. Models often write complete noun phrases WITHOUT a
+# final period ("Junger Wachtmeister mit zu tief sitzender Mütze") - requiring
+# end punctuation discarded 8-20 Director updates per session.
+_DESC_DANGLING_CHARS = (",", ";", ":", "(", "-", "–", "—", "/", "&")
+_DESC_DANGLING_WORDS = {
+    "und", "oder", "aber", "mit", "der", "die", "das", "den", "dem", "des", "ein",
+    "eine", "einen", "einem", "einer", "von", "zu", "im", "in", "an", "auf", "für",
+    "and", "or", "but", "with", "the", "a", "an", "of", "to", "in", "on", "for",
+}
+
+
+def _history_narration(text: str) -> str:
+    """Older narration for the Narrator context: complete when it fits
+    MAX_NARRATION_CHARS, otherwise cut at the last sentence end (never mid-word)."""
+    text = text or ""
+    return text if len(text) <= MAX_NARRATION_CHARS else _trim_to_sentence(text, MAX_NARRATION_CHARS)
+
+
 def _is_complete_description(desc: str) -> bool:
-    """Check if a description looks complete (not truncated mid-sentence).
-    Incomplete descriptions are discarded in favor of the existing one."""
-    if not desc or len(desc) < 10:
+    """Check if a description looks complete (not cut off mid-thought).
+    Incomplete descriptions are discarded in favor of the existing one.
+    End punctuation is NOT required - only dangling endings are rejected."""
+    desc = (desc or "").strip()
+    if len(desc) < 10:
         return False
-    return desc.rstrip().endswith(('.', '!', '?', '"', '»', '«', '…', ')', '–', '—'))
+    if desc.endswith(_DESC_DANGLING_CHARS):
+        return False
+    last = re.sub(r"[^\w]", "", desc.split()[-1].lower())
+    return last not in _DESC_DANGLING_WORDS
+
+
+def _finish_description(desc: str) -> str:
+    """Accepted description with a closing period when it has no end punctuation."""
+    desc = (desc or "").strip()
+    if desc and not desc.endswith(('.', '!', '?', '"', '»', '«', '“', '…', ')')):
+        desc += "."
+    return desc
 
 
 def _absorb_duplicate_npc(game, original: dict, merged_name: str):
@@ -2304,7 +2346,7 @@ def _process_npc_details(game, json_text: str, world_addition: str = ""):
             if new_desc:
                 old_desc = npc.get("description", "")
                 if _is_complete_description(new_desc) or not old_desc:
-                    npc["description"] = new_desc
+                    npc["description"] = _finish_description(new_desc)
                     log(f"[NPC] Description updated for {npc['name']}: "
                         f"'{old_desc[:50]}' → '{new_desc[:50]}'")
                 else:
@@ -4456,7 +4498,7 @@ def _cached_system(text: str) -> list:
     return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
 
 
-def _log_usage(kwargs: dict, response) -> None:
+def _log_usage(kwargs: dict, response, role: Optional[str] = None) -> None:
     """One log line per API call with token usage incl. prompt-cache reads/writes.
     Makes caching verifiable in the log (cache_read > 0 = hit)."""
     usage = getattr(response, "usage", None)
@@ -4467,7 +4509,8 @@ def _log_usage(kwargs: dict, response) -> None:
     effort = f" effort={oc['effort']}" if oc.get("effort") else ""
     c_read = getattr(usage, "cache_read_input_tokens", 0) or 0
     c_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
-    log(f"[API] {model}{effort}: in={getattr(usage, 'input_tokens', 0)} "
+    tag = f" [{role}]" if role else ""
+    log(f"[API] {model}{effort}{tag}: in={getattr(usage, 'input_tokens', 0)} "
         f"out={getattr(usage, 'output_tokens', 0)} "
         f"cache_read={c_read} cache_write={c_write}")
 
@@ -4475,26 +4518,36 @@ def _log_usage(kwargs: dict, response) -> None:
 # ---------------------------------------------------------------
 # MODEL SETTINGS — per-role model, effort and thinking (config.json)
 # ---------------------------------------------------------------
-# Call sites keep passing NARRATOR_MODEL / BRAIN_MODEL; these constants act as
-# role tokens. _api_create_with_retry() swaps in the configured model and adds
-# output_config.effort / thinking for that role. Empty or missing config values
-# keep the API defaults, i.e. the previous behaviour.
+# Call sites pass a role token (NARRATOR_MODEL, BRAIN_MODEL, DIRECTOR_MODEL,
+# ARCHITECT_MODEL). _api_create_with_retry() swaps in the configured model and
+# adds output_config.effort / thinking for that role. Empty or missing config
+# values use the role defaults below.
 #
 #   config.json:  "narrator_model": "claude-sonnet-5-5",
 #                 "narrator_effort": "high",          # low|medium|high|xhigh|max
 #                 "narrator_thinking": "between_tools",  # disabled|adaptive|between_tools
 #                 "brain_model" / "brain_effort" / "brain_thinking"  (same for Haiku calls)
+#                 "director_model" / "director_*"    (Director, ## corrections)
+#                 "architect_model" / "architect_*"  (Story Architect, setup brain,
+#                                                     opening metadata, chapter summary)
+#
+# Defaults (chosen from Elvira A/B runs, Oct 2026): narrator Sonnet 5.5 (effort
+# high), brain Haiku 5.5 (fast per-turn calls), director Sonnet 5.5 (concrete
+# guidance instead of mood), architect Opus 5.5 (once per chapter: richer plans
+# and NPC profiles). Set director_model to claude-haiku-5-5 for the old routing.
 #
 # Model IDs are pinned snapshots — there is no "latest" alias. Switch models
 # deliberately and compare with an Elvira run first.
-MODEL_ROLES = ("narrator", "brain")
-_MODEL_ROLE_BY_DEFAULT = {NARRATOR_MODEL: "narrator", BRAIN_MODEL: "brain"}
-_ROLE_DEFAULT_MODEL = {"narrator": NARRATOR_MODEL, "brain": BRAIN_MODEL}
-# Role defaults applied when config.json leaves the option empty. The brain role
-# runs many short structured calls per turn — thinking only adds latency there.
-_ROLE_DEFAULT_THINKING = {"brain": "disabled"}
-# Narration quality benefits from high effort; the brain role keeps the API default.
-_ROLE_DEFAULT_EFFORT = {"narrator": "high"}
+MODEL_ROLES = ("narrator", "brain", "director", "architect")
+_MODEL_ROLE_BY_DEFAULT = {NARRATOR_MODEL: "narrator", BRAIN_MODEL: "brain",
+                          DIRECTOR_MODEL: "director", ARCHITECT_MODEL: "architect"}
+_ROLE_DEFAULT_MODEL = {"narrator": NARRATOR_MODEL, "brain": BRAIN_MODEL,
+                       "director": _DIRECTOR_DEFAULT_MODEL, "architect": _ARCHITECT_DEFAULT_MODEL}
+# Role defaults applied when config.json leaves the option empty. The brain and
+# director roles run short structured calls — thinking only adds latency there.
+_ROLE_DEFAULT_THINKING = {"brain": "disabled", "director": "disabled"}
+# Narration and planning quality benefit from high effort; brain keeps the API default.
+_ROLE_DEFAULT_EFFORT = {"narrator": "high", "architect": "high"}
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 THINKING_MODES = ("disabled", "adaptive", "between_tools")
 
@@ -4543,7 +4596,7 @@ def get_model_settings() -> dict:
 
 
 def model_for(role: str) -> str:
-    """Configured model ID for a role ("narrator" or "brain")."""
+    """Configured model ID for a role ("narrator", "brain", "director", "architect")."""
     return get_model_settings()[role]["model"]
 
 
@@ -4614,7 +4667,7 @@ def _api_create_with_retry(client: anthropic.Anthropic, max_retries: int = 2, **
         try:
             response = client.messages.create(**kwargs)
             try:
-                _log_usage(kwargs, response)
+                _log_usage(kwargs, response, role)
             except Exception:
                 pass  # diagnostics must never break a call
             return response
@@ -4852,7 +4905,7 @@ creativity_seed: {seed} (Use as loose inspiration for names, locations, and deta
     try:
         response = _api_create_with_retry(
             client, max_retries=2,
-            model=BRAIN_MODEL, max_tokens=SETUP_BRAIN_MAX_TOKENS, system=system,
+            model=ARCHITECT_MODEL, max_tokens=SETUP_BRAIN_MAX_TOKENS, system=system,
             messages=[{"role": "user", "content": user_msg}],
             output_config={"format": {"type": "json_schema", "schema": SETUP_BRAIN_OUTPUT_SCHEMA}},
         )
@@ -5052,7 +5105,7 @@ location:{game.current_location}
 situation:{game.current_scene_context}
 npcs:{npc_text}{campaign_ctx}{backstory_text}"""
 
-    # Story Architect uses NARRATOR_MODEL (Sonnet) — called once per game/chapter,
+    # Story Architect uses the architect role (Opus 5.5 by default) — called once per game/chapter,
     # cost is negligible (~$0.01), but quality of the blueprint shapes the entire story.
     # An unusable answer (too few acts, unparseable) gets ONE more attempt with an
     # explicit correction before the generic fallback blueprint is used — the model
@@ -5063,10 +5116,13 @@ npcs:{npc_text}{campaign_ctx}{backstory_text}"""
         try:
             response = _api_create_with_retry(
                 client, max_retries=2,
-                model=NARRATOR_MODEL, max_tokens=STORY_ARCH_MAX_TOKENS, system=system,
+                model=ARCHITECT_MODEL, max_tokens=STORY_ARCH_MAX_TOKENS, system=system,
                 messages=[{"role": "user", "content": attempt_msg}],
                 output_config={"format": {"type": "json_schema", "schema": STORY_ARCHITECT_OUTPUT_SCHEMA}},
             )
+            if getattr(response, "stop_reason", None) == "max_tokens":
+                log(f"[Story] Architect hit max_tokens ({STORY_ARCH_MAX_TOKENS}) "
+                    f"on attempt {attempt}/{ARCHITECT_ATTEMPTS}", level="warning")
             blueprint = json.loads(_response_text(response))
             blueprint["revealed"] = []  # Track which revelations have fired
             blueprint["structure_type"] = structure_type
@@ -5551,7 +5607,8 @@ def call_narrator(client: anthropic.Anthropic, prompt: str,
         history_slice = game.narration_history[-3:]
         for i, entry in enumerate(history_slice):
             is_most_recent = (i == len(history_slice) - 1)
-            narr_text = entry["narration"] if is_most_recent else entry["narration"][:MAX_NARRATION_CHARS]
+            narr_text = (entry["narration"] if is_most_recent
+                         else _history_narration(entry["narration"]))
             messages.append({"role": "user", "content": entry.get("prompt_summary",
                              "Continue the story.")})
             messages.append({"role": "assistant", "content": narr_text})
@@ -5874,7 +5931,7 @@ Extract all NPCs, clocks, location, scene context, and time of day from the open
     try:
         response = _api_create_with_retry(
             client, max_retries=2,
-            model=BRAIN_MODEL, max_tokens=OPENING_MAX_TOKENS,
+            model=ARCHITECT_MODEL, max_tokens=OPENING_MAX_TOKENS,
             system=system,
             messages=[{"role": "user", "content": prompt}],
             output_config={"format": {
@@ -6864,7 +6921,7 @@ def _apply_director_guidance(game: GameState, guidance: dict):
                     f"'{new_desc[:60]}' — keeping existing")
             else:
                 old_desc = npc.get("description", "")
-                npc["description"] = new_desc
+                npc["description"] = _finish_description(new_desc)
                 log(f"[Director] Description updated for {npc['name']}: "
                     f"'{old_desc[:60]}' → '{new_desc[:60]}'")
 
@@ -9805,7 +9862,7 @@ def call_chapter_summary(client: anthropic.Anthropic, game: GameState,
     try:
         response = _api_create_with_retry(
             client, max_retries=1,
-            model=BRAIN_MODEL, max_tokens=CHAPTER_SUM_MAX_TOKENS,
+            model=ARCHITECT_MODEL, max_tokens=CHAPTER_SUM_MAX_TOKENS,
             system=f"""Summarize an RPG chapter for campaign continuity.
 - Write in {lang}
 - "title": A short evocative title for this chapter (3-6 words)
@@ -10847,7 +10904,7 @@ npcs:
     try:
         response = _api_create_with_retry(
             client, max_retries=2,
-            model=BRAIN_MODEL, max_tokens=CORRECTION_MAX_TOKENS, system=system,
+            model=DIRECTOR_MODEL, max_tokens=CORRECTION_MAX_TOKENS, system=system,
             messages=[{"role": "user", "content": user_msg}],
             output_config={"format": {"type": "json_schema",
                                       "schema": CORRECTION_OUTPUT_SCHEMA}},

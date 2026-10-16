@@ -378,6 +378,8 @@ _STRINGS = {
 
         # Game Loop
         "game.input_placeholder": "Was tust du?",
+        "game.input_too_long": "Deine Eingabe ist zu lang - bitte k\u00fcrze sie auf h\u00f6chstens {max} Zeichen.",
+        "aria.input_limit": "H\u00f6chstens {max} Zeichen",
         "game.error": "Fehler: {error}",
         "game.invalid_api_key": "Ung\u00fcltiger API Key!",
         "game.still_processing": "Einen Moment - die vorherige Eingabe wird noch verarbeitet.",
@@ -998,6 +1000,8 @@ _STRINGS = {
 
         # Game Loop
         "game.input_placeholder": "What do you do?",
+        "game.input_too_long": "Your input is too long - please keep it to {max} characters or less.",
+        "aria.input_limit": "Up to {max} characters",
         "game.error": "Error: {error}",
         "game.invalid_api_key": "Invalid API Key!",
         "game.still_processing": "One moment - still processing your previous input.",

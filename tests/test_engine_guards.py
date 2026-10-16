@@ -438,3 +438,45 @@ def test_prompts_require_deliverable_triggers_and_live_contacts():
     extractor = inspect.getsource(E.call_narrator_metadata)
     assert "REMOTE PARTICIPATION" in extractor and "NEVER objects, traces" in extractor
     assert "LORE FIGURES TAKING PART" in extractor
+
+
+# --- NPC description completeness ------------------------------------------------
+
+def test_description_without_final_period_is_complete():
+    # Complete noun phrases without end punctuation used to be discarded as truncated.
+    assert E._is_complete_description("Junger Wachtmeister mit zu tief sitzender Mütze")
+    assert E._is_complete_description("Schwerfälliger Wirt mit mehligen Händen und müden Augen")
+    assert E._is_complete_description("Former pilot, now a tired mechanic.")
+
+
+def test_dangling_descriptions_are_rejected():
+    assert not E._is_complete_description("Junger Wachtmeister mit zu tief sitzender Mütze, der")
+    assert not E._is_complete_description("Bote der Polizeidirektion in Uniform mit")
+    assert not E._is_complete_description("Former pilot, now a tired mechanic and")
+    assert not E._is_complete_description("Fischhändler am Fenstertisch,")
+    assert not E._is_complete_description("kurz")
+
+
+def test_finish_description_adds_period_only_when_missing():
+    assert E._finish_description("Müder Wirt") == "Müder Wirt."
+    assert E._finish_description("Müder Wirt.") == "Müder Wirt."
+    assert E._finish_description("Er fragt: »Wer?«") == "Er fragt: »Wer?«"
+
+
+# --- Narrator context: older narrations ----------------------------------------
+
+def test_history_narration_keeps_typical_scenes_whole():
+    scene = ("Der Nebel steht über dem Hafen. " * 55).strip()   # ~1,700 chars
+    assert 1500 < len(scene) <= E.MAX_NARRATION_CHARS
+    assert E._history_narration(scene) == scene
+
+
+def test_history_narration_cuts_long_scenes_at_a_sentence_end():
+    scene = ("Ein langer Satz über das Watt und die Flut. " * 80).strip()
+    out = E._history_narration(scene)
+    assert len(out) <= E.MAX_NARRATION_CHARS
+    assert out.endswith(".")
+
+
+def test_player_input_limit_is_defined():
+    assert E.PLAYER_INPUT_MAX_CHARS == 500

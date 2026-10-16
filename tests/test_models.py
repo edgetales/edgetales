@@ -150,3 +150,86 @@ def test_brain_defaults_to_haiku_5_5_without_thinking():
 def test_brain_thinking_can_be_overridden():
     _write_cfg(brain_thinking="adaptive")
     assert E.get_model_settings()["brain"]["thinking"] == "adaptive"
+
+
+# --- Director / architect roles ------------------------------------------------
+
+def test_director_and_architect_defaults():
+    _write_cfg()
+    st = E.get_model_settings()
+    assert st["director"] == {"model": "claude-sonnet-5-5", "effort": None, "thinking": "disabled"}
+    assert st["architect"] == {"model": "claude-opus-5-5", "effort": "high", "thinking": None}
+    kw, role = E._apply_model_settings({"model": E.DIRECTOR_MODEL})
+    assert role == "director" and kw["model"] == "claude-sonnet-5-5"
+    assert kw["thinking"] == {"type": "disabled"}
+    kw, role = E._apply_model_settings({"model": E.ARCHITECT_MODEL})
+    assert role == "architect" and kw["model"] == "claude-opus-5-5"
+    assert kw["output_config"] == {"effort": "high"} and "thinking" not in kw
+    assert E.model_for("director") == "claude-sonnet-5-5"
+    assert E.model_for("architect") == "claude-opus-5-5"
+
+
+def test_director_can_be_set_back_to_haiku():
+    _write_cfg(director_model="claude-haiku-5-5")
+    kw, role = E._apply_model_settings({"model": E.DIRECTOR_MODEL})
+    assert role == "director" and kw["model"] == "claude-haiku-5-5"
+    # Brain calls are untouched by director settings
+    kw, role = E._apply_model_settings({"model": E.BRAIN_MODEL})
+    assert role == "brain" and kw["model"] == E.BRAIN_MODEL
+
+
+def test_architect_role_overrides():
+    _write_cfg(architect_model="claude-sonnet-5-5", architect_thinking="adaptive",
+               architect_effort="medium")
+    kw, role = E._apply_model_settings({"model": E.ARCHITECT_MODEL})
+    assert role == "architect" and kw["model"] == "claude-sonnet-5-5"
+    assert kw["output_config"] == {"effort": "medium"}
+    assert kw["thinking"] == {"type": "adaptive"}
+    kw, role = E._apply_model_settings({"model": E.NARRATOR_MODEL})
+    assert role == "narrator" and kw["model"] == E.NARRATOR_MODEL
+
+
+def test_director_thinking_substitute_is_per_role():
+    _write_cfg()
+    c = _Client([_bad_request('send "thinking": {"type": "between_tools"} instead')])
+    E._api_create_with_retry(c, max_retries=0, model=E.DIRECTOR_MODEL, max_tokens=10)
+    assert c.calls[1]["thinking"] == {"type": "between_tools"}
+    assert E._THINKING_SUBSTITUTES == {"director": "between_tools"}
+    E._api_create_with_retry(c, max_retries=0, model=E.BRAIN_MODEL, max_tokens=10)
+    assert c.calls[2]["thinking"] == {"type": "disabled"}
+
+
+def test_role_tokens_never_reach_the_api():
+    _write_cfg()
+    c = _Client([])
+    for token in (E.DIRECTOR_MODEL, E.ARCHITECT_MODEL):
+        E._api_create_with_retry(c, max_retries=0, model=token, max_tokens=10)
+    assert all(not k["model"].startswith("role:") for k in c.calls)
+
+
+def test_call_sites_use_their_roles():
+    import inspect
+    expect = {
+        E.call_director: "DIRECTOR_MODEL", E.call_correction_brain: "DIRECTOR_MODEL",
+        E.call_story_architect: "ARCHITECT_MODEL",
+        E.call_setup_brain: "ARCHITECT_MODEL",
+        E.call_opening_metadata: "ARCHITECT_MODEL",
+        E.call_chapter_summary: "ARCHITECT_MODEL",
+        E.call_narrator: "NARRATOR_MODEL", E.call_brain: "BRAIN_MODEL",
+        E.call_narrator_metadata: "BRAIN_MODEL",
+    }
+    for fn, token in expect.items():
+        assert f"model={token}," in inspect.getsource(fn), fn.__name__
+
+
+def test_api_log_names_the_role(monkeypatch):
+    lines = []
+    monkeypatch.setattr(E, "log", lambda msg, **kw: lines.append(msg))
+    usage = SimpleNamespace(input_tokens=1, output_tokens=2)
+    E._log_usage({"model": "claude-sonnet-5-5"}, SimpleNamespace(usage=usage), "director")
+    assert lines and "[director]" in lines[0]
+
+
+def test_story_architect_budget_leaves_room_for_thinking():
+    # Opus 5.5 at effort high used all 8,192 tokens and cut the blueprint JSON.
+    assert E.STORY_ARCH_MAX_TOKENS >= 16384
