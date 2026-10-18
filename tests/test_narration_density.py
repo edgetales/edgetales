@@ -122,8 +122,52 @@ def test_narrator_system_has_focus_rule(game):
     assert "LENGTH & FOCUS" in s
     assert "DEFERRED" in s
     assert "- 2-4 paragraphs" not in s
-    assert "WORLD PERIPHERY: Optional" in s
+    assert "WORLD PERIPHERY" not in s
     assert "Never repeat a time or weather cue" in s
+
+
+# --- readable prose --------------------------------------------------------------
+
+def test_narrator_system_has_prose_style_before_rules(game):
+    s = E.get_narrator_system(CFG, game)
+    assert "<prose_style>" in s and s.index("<prose_style>") < s.index("<rules>")
+    assert "Every detail reads as a clue" in s
+    assert "at most two incidental details" in s
+    assert "„Sie wird blass. Dann lächelt sie.“" in s   # German examples
+
+
+def test_prose_style_examples_follow_narration_language(game):
+    s = E.get_narrator_system(E.EngineConfig(narration_lang="English"), game)
+    assert "She goes pale. Then she smiles." in s
+    assert "Sie wird blass" not in s
+    # languages without own examples fall back to English
+    assert "She goes pale" in E._prose_style_block("French")
+
+
+def test_atmosphere_mandates_are_softened(game):
+    s = E.get_narrator_system(CFG, game)
+    assert "Describe only sensory impressions" not in s
+    assert "include at least one non-visual sense per scene" not in s
+    assert "or deepen atmosphere" not in s
+    assert "translate pressure into sensation" not in s
+    assert "Every 2–3 scenes, anchor one detail" not in s
+
+
+def test_long_player_speech_is_quoted_in_part(game):
+    s = E.get_narrator_system(CFG, game)
+    assert "LONG SPEECH" in s
+    assert "shorten by leaving out, never by rewording" in s
+    assert "PRESERVE EXACTLY" in s
+
+
+def test_tasks_ask_for_readable_not_immersive_narration(game):
+    _cast(game)
+    p = E.build_dialog_prompt(game, _dialog_brain(), config=CFG)
+    assert "of clear, readable narration" in p
+    assert "immersive narration" not in p
+    p = E.build_action_prompt(game, make_brain(), roll("STRONG_HIT"), [], [], [], config=CFG)
+    assert "tastes of the surrounding darkness" not in p
+    assert "sensory detail, body language, and atmosphere" not in p
 
 
 def test_director_prompt_limits_guidance(game):

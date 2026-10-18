@@ -5,6 +5,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **Easier-to-follow narration:** scenes are shorter and plainer, so the story no longer drowns in detail. The narrator now follows a clear style guide - plain words instead of images, short sentences, one telling detail instead of three, at most two incidental details (light, weather, a sound, a smell) per scene, one gesture per character, and at most one new name per scene. The rules that asked for a sensory impression in every scene, a time-of-day detail every few scenes and an unrelated background detail were removed or softened. Word budgets are about 30 % lower (dialog 100-180, action 140-230, opening 180-260 words).
+- **Your own words are not read back at length:** the narrator still shows what your character says and does, but a long speech is quoted in its key line(s) word for word and the rest is summarised in one short sentence; a multi-step action is shown in a sentence or two. Quoted words are never changed.
+
 ## [1.4.0] - 2026-10-16
 
 ### Added

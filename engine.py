@@ -4422,8 +4422,9 @@ def _narrator_clocks_block(game: GameState) -> str:
         lines.append(f'- "{html.escape(c.get("name", "?"))}" {bar} {filled}/{segs} — {urgency}')
     return (
         "\n<active_threats>\n"
-        "Let fill level shape atmospheric pressure — a nearly-full threat should feel imminent "
-        "even if not directly addressed. Do NOT mention clocks, fill levels, or game terms.\n"
+        "Let fill level shape the pressure in what people do and say — a nearly-full threat "
+        "should feel imminent even if not directly addressed. Do NOT mention clocks, fill "
+        "levels, or game terms.\n"
         + "\n".join(lines)
         + "\n</active_threats>"
     )
@@ -5491,13 +5492,71 @@ def _status_context_block(game: Optional[GameState] = None) -> str:
 
     return (
         "<character_state>\n"
-        "Reflect these states through sensory detail, body language, and atmosphere. "
+        "Let these states show in at most one concrete detail when they matter (a limp, a shaking hand). "
         "NEVER state numbers or game terms. Maintain consistency across scenes — "
         "do NOT describe the character as healthy if they are injured, or calm if they are shaken.\n"
         f"Physical: {health_desc}\n"
         f"Mental/Emotional: {spirit_desc}\n"
         f"Resources/Equipment: {supply_desc}\n"
         "</character_state>"
+    )
+
+
+# Readable-prose style block for the Narrator (positive target + reason + examples).
+# Elvira 2026-10: sentences were already short (LIX ~26), but 4-6 incidental sensory
+# details and gestures per scene buried the plot - players track every detail as a clue.
+PROSE_STYLE_EXAMPLES = {
+    "German": (
+        "\u201eDas Licht der Gaslaterne legt sich wie ein m\u00fcder Schleier \u00fcber das nasse Pflaster, "
+        "auf dem die Stille der Nacht lastet.\u201c -> \u201eDie Gaslaterne flackert. Das Pflaster gl\u00e4nzt nass.\u201c\n"
+        "- \u201eEr sagt es mit der Ruhe eines Mannes, der zu oft gelogen hat, um noch zu z\u00f6gern.\u201c "
+        "-> \u201eEr antwortet sofort. Zu sofort.\u201c\n"
+        "- \u201eEin Hauch von Furcht flackert in ihren Augen auf, ehe sie ihn hinter einer Maske aus "
+        "H\u00f6flichkeit verbirgt.\u201c -> \u201eSie wird blass. Dann l\u00e4chelt sie.\u201c"
+    ),
+    "English": (
+        "\u201cThe gaslight settles like a weary veil over the wet cobbles, where the silence of the "
+        "night lies heavy.\u201d -> \u201cThe gaslight flickers. The cobbles are wet.\u201d\n"
+        "- \u201cHe says it with the calm of a man who has lied too often to hesitate.\u201d "
+        "-> \u201cHe answers at once. Too fast.\u201d\n"
+        "- \u201cA flicker of fear crosses her eyes before she hides it behind a mask of courtesy.\u201d "
+        "-> \u201cShe goes pale. Then she smiles.\u201d"
+    ),
+}
+
+
+def _prose_style_block(lang: str) -> str:
+    """<prose_style> for the Narrator system prompt: clear, readable scenes."""
+    examples = PROSE_STYLE_EXAMPLES.get(lang, PROSE_STYLE_EXAMPLES["English"])
+    return (
+        "\n<prose_style>\n"
+        "The player reads each scene on a phone, or hears it read aloud, between their own moves. "
+        "They must be able to follow the story at first reading: what happens, who wants what, what "
+        "changed, what they can do now. Write like a good contemporary novel for a wide audience - "
+        "clear and vivid, not literary or ornate.\n"
+        "- Plain words. Say what happens directly. When a literal phrase exists, use it instead of a "
+        "metaphor. At most one comparison or image per scene, and only where it is clearer than the "
+        "plain statement.\n"
+        "- Short, clear sentences. Most sentences 8-15 words, one main clause plus at most one "
+        "subordinate clause. Vary the rhythm with an occasional longer sentence, never a chain of them. "
+        "Prefer verbs over nouns, no stacked participle phrases, no chains of genitives.\n"
+        "- One telling detail beats three. Describe a place or a person with one or two concrete "
+        "details, then move on. At most one adjective per noun.\n"
+        "- Every detail reads as a clue. Players treat each sound, smell, stain or gesture you mention "
+        "as something that might matter and try to keep track of it. Mention a detail only if it "
+        "matters to the story now or later, and give at most two incidental details (light, weather, "
+        "a sound, a smell) per scene. Give each NPC at most one gesture or physical reaction per "
+        "scene; the rest of their presence is what they say and do.\n"
+        "- Story before atmosphere. Action and dialogue carry the scene; description supports them. "
+        "A sentence that only adds mood is cut.\n"
+        "- Trust the reader. Do not explain what a gesture means or what a character feels - show it "
+        "once and move on.\n"
+        "- Keep the thread visible. Each scene leaves the player knowing what just changed and what "
+        "the open question is. A new name, a clue, a demand, a danger or a choice gets its own plain "
+        "sentence, not a subordinate clause inside a description. Introduce at most one new name "
+        "(person or place) per scene unless the action requires more.\n"
+        "Examples of the difference (ornate -> plain):\n- " + examples + "\n"
+        "</prose_style>"
     )
 
 
@@ -5532,7 +5591,7 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
         "Pattern: \u201cText.\u201d \u2014 NEVER use guillemets, straight ASCII quotes (\"), or any other style."
     )
     return f"""<role>Narrator of an immersive RPG. All output in {lang}, second person singular.</role>
-{kf}{cb}{bs}{tone_block}
+{kf}{cb}{bs}{tone_block}{_prose_style_block(lang)}
 <rules>
 - NEVER mention dice, stats, numbers, or game mechanics
 - NEVER use internal clock names in prose (e.g. "Mob Clock", "Betrayal Clock"). Threat pressure from clocks must be expressed through atmosphere, NPC behavior, and sensation — never by naming the clock.
@@ -5546,15 +5605,14 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
 - NPC EMOTIONAL RANGE: Emotional control is one option, not the default. An NPC's instinct may produce volatile, disproportionate, or irrational responses {E['dash']} sudden rage, visible panic, bitter sarcasm, stubborn silence, reckless bravado, tearful collapse, uncontrollable dark humor. Do NOT smooth all NPCs toward composure. A scene with three NPCs should not have three composed people {E['dash']} let the instinct field determine the emotional register, not a generic assumption of adult self-control.
 - BACKSTORY CANON: If <backstory> is present, treat it as ESTABLISHED HISTORY. People mentioned there (family, friends, rivals) are ALREADY KNOWN to the player character {E['dash']} if they appear, they recognize the player and vice versa. NEVER introduce a backstory character as a stranger or reinterpret established relationships. Backstory events ALREADY HAPPENED {E['dash']} reference them as shared memory, not new plot. GRAMMATICAL GENDER: If the backstory uses gendered language for the player character (e.g. feminine "Spezialistin", "sie", "ihre" in German), that establishes the player character's gender for ALL narration — use consistent gendered forms throughout, regardless of any gender signal in the character_concept or player input. Backstory gender takes absolute priority over character_concept gender when they conflict.
 - NPC BACKSTORY: An NPC may only reference people, events, or relationships that appear in their description, agenda, arc, or a prior scene. Do NOT invent family members, past colleagues, formative events, or personal history for an NPC that was not established anywhere in the story. If an NPC's profile is sparse, let that sparseness show — give them presence through behavior and reaction, not through newly invented biography.
-- Describe only sensory impressions, never player thoughts
-- SENSORY RANGE: Don't default to sight {E['dash']} include at least one non-visual sense per scene (a specific sound, smell, texture, or temperature). These anchor scenes in memory more durably than visual description alone.
-- WORLD PERIPHERY: Optional, at most every 2-3 scenes and only when the word budget allows, let one small background detail exist that has nothing to do with the player's immediate action {E['dash']} a sound from another room, a stranger's exchange, a worn object, weather shifting outside. Brief, never explained. It signals the world continues beyond this moment.
+- Show what the character does and perceives; never narrate the player character's thoughts, feelings or decisions
+- SENSORY RANGE: Sight need not dominate. When a place or moment needs grounding, one non-visual detail (a sound, a smell, a temperature) usually does more than further visual description. One such detail is enough; dialogue scenes often need none.
 - PHRASE VARIETY: The construction "[noun] of a [person], who [relative clause]" — in German: "mit dem [abstract noun] eines/einer [noun], die/der [relative clause]" (e.g. "with the calm of a man who...", "with the stillness of a woman who...") — is a known stylistic crutch. AVOID it as a default: treat it as last resort, not a template. Use it AT MOST ONCE per response, and ONLY if no natural alternative fits. CROSS-RESPONSE: Check the preceding narrations visible in this conversation — if this pattern appeared there, do NOT use it in this response at all. SPECIFIC OVERUSE: The abstract noun "Tonfall" (tone of voice) has its own limit — if it appeared in any recent narration, replace it with something physical or behavioral. This pattern appears almost exclusively in NPC dialog attribution ("he said with the calm of a man who...") — prefer instead: a physical action before or after the speech ("He set the phone down. 'The pallets left at six.'"), a simple adverb ("He said it flatly."), a fragment of unattributed speech, or a body-registered reaction ("Her shoulders didn't move. 'That's not how it works.'"). The skeleton is detectable even when the content changes — "tone of voice / evenness / rhythm / matter-of-factness" are the same structure dressed differently. ATMOSPHERIC MOTIFS: The same risk applies to recurring sensory or mood anchors. A single dominant motif — silence, darkness, cold, a specific sound — can become the atmospheric default when it fits the tone too well. CROSS-RESPONSE: Scan the preceding narrations. If the same motif (e.g. "Stille", "Dunkelheit", "Kälte") has anchored the last two or more scenes, it is now a crutch. Replace it with a different sensory dimension: if silence has dominated, anchor the next scene in temperature, texture, or smell instead. The tone does not require the same motif every time — it requires SPECIFICITY. A horror scene built on heat and the smell of machine oil is more unsettling than the tenth scene ending in a new kind of silence. BODY AND PROP MOTIFS: The same applies to recurring physical details — an injury or pain the character carries, a reflexive gesture (a hand resting on a weapon), a recurring object. Mention such a detail at most once per response, and only when something about it changes or matters in this scene; if it already appeared in the previous narration and nothing changed, leave it out.
-- SCENE CONTINUITY: Begin in motion, not in setup. The player is still in the same body, the same emotional state as the last scene ended. Do NOT open with a fresh establishing paragraph. SAME LOCATION: Open with at most one sentence that holds the atmosphere or emotional residue of the previous scene's end — a sensation still in the air, a silence not yet broken, a weight not yet lifted — before moving into the player's action. This is not recap; it is continuity of experience. It should work as a bridge even if the player's action is very brief or sparse. NEW LOCATION (player has moved — compare <location> with <prev_locations>): Open with one brief sensory impression of the new space (a sound, smell, texture, or quality of light) that grounds the reader without summarizing what came before. The new place simply exists, indifferent to what preceded it; the character carries the previous moment in their body. Example: a character arriving somewhere unfamiliar after a tense moment elsewhere — the ambient sounds and physical details of the new space are registered first, through senses still sharpened by what just happened.
-- EMOTIONAL CARRY-THROUGH: If the previous scene ended with a significant emotional beat (betrayal, loss, triumph, relief, intimacy, shock), open this scene with that weight still present in the character's body language, perception, and attention. Emotional states do not reset between scenes. Show it through sensation and behavior, not through narration — the character did not process it yet.
+- SCENE CONTINUITY: Begin in motion with the player's action, not with a description of the place, and do not recap the previous scene. SAME LOCATION: no establishing sentence at all. NEW LOCATION (player has moved {E['dash']} compare <location> with <prev_locations>): one short sentence of what the character notices first is enough.
+- EMOTIONAL CARRY-THROUGH: Emotional states do not reset between scenes. If the previous scene ended on a strong beat (betrayal, loss, triumph, shock), let it colour how the character acts in this one {E['dash']} through behavior, not by describing the feeling again.
 - SCENE ENDING: Close each narration on an open moment — not a plot cliffhanger, not a resolved beat, but a suspension that makes the NEXT scene feel anchored rather than arbitrary. The character should be mid-breath, not concluded. No option lists, no suggested actions. VARY the kind of ending from scene to scene: (a) the character's unresolved inner state, (b) a concrete image or sound left hanging, (c) an NPC's unanswered line or gesture, (d) a small physical action still in progress. CROSS-RESPONSE: do not repeat the kind of ending used in the previous narration, and use (a) at most every other scene. Keep the final sentence short — one clause, ideally under 20 words; avoid long trailing constructions that weigh two possibilities ("...and you don't know whether X or Y").
 - LENGTH & FOCUS: Stay within the word budget given in <task>. A short player input gets a short scene {E['dash']} the length follows what actually happens, not the number of inputs. Build each scene around ONE central beat (the player's action and its immediate result) plus at most one or two supporting beats. PRIORITY when inputs compete for space: (1) the player's action, words and the roll result, (2) a <clock_fired> event, a chaos interrupt or an <act_turning_point stage="deliver">, (3) co-game-master input, (4) <director_guidance>, (5) <npc_note> and <npc_agency>, (6) atmosphere and periphery. Lower-priority items that do not fit naturally are DEFERRED to a later scene {E['dash']} never squeezed in as an extra sentence, a passing cameo or an NPC monologue. Bring an absent NPC on stage only if <director_guidance> calls for it or the action requires it. Reveal facts through what happens or what a character does, not through one character explaining several facts at once. Every sentence must earn its place: no filler, no restating what the player already knows.
-- TEMPORAL CONSISTENCY: If <time> is provided, maintain that time period. Time only moves FORWARD (never backward). If you mention specific times, they must be later than any previously mentioned time. Do NOT invent specific clock times unless narratively important {E['dash']} prefer atmospheric time cues (moonlight, sunset glow, morning mist). CRITICAL: Each scene transition represents minutes to hours of in-world time, NOT days or years. Events from recent scenes just happened {E['dash']} signs don't weather, wounds are fresh, sent NPCs are still en route or just arrived. Never describe recent events or objects as aged, decayed, or long-past unless the player explicitly time-skips. TEMPORAL TEXTURE: Even in a static location where nothing moves (a besieged trench, a locked room, a stakeout), time still passes through the world. Every 2–3 scenes, anchor one detail to the shifting day: a quality of light changing (afternoon glare giving way to a cooler, flatter grey), a temperature shift (the ground cooling under your hands), a change in ambient sound (fewer birds, different distant guns, the quality of silence shifting). These do not need to be prominent — a single phrase suffices. They exist so the story does not feel frozen. Never repeat a time or weather cue from the previous narration (e.g. the same fog at the same window, the same cold at the ankles) {E['dash']} use a different one or none. A recurring sound that the story has tied to a threat (a bell, a clock, a siren) must not be used as background texture: each time it sounds it has to mean something.
+- TEMPORAL CONSISTENCY: If <time> is provided, maintain that time period. Time only moves FORWARD (never backward). If you mention specific times, they must be later than any previously mentioned time. Do NOT invent specific clock times unless narratively important {E['dash']} prefer atmospheric time cues (moonlight, sunset glow, morning mist). CRITICAL: Each scene transition represents minutes to hours of in-world time, NOT days or years. Events from recent scenes just happened {E['dash']} signs don't weather, wounds are fresh, sent NPCs are still en route or just arrived. Never describe recent events or objects as aged, decayed, or long-past unless the player explicitly time-skips. TEMPORAL TEXTURE: Time keeps passing even in a static location. When it matters to the story or the scene has stayed still for a while, mark it with one short cue (the light fades, it gets cold, the street goes quiet) {E['dash']} a single phrase, not a description. Never repeat a time or weather cue from the previous narration (e.g. the same fog at the same window, the same cold at the ankles) {E['dash']} use a different one or none. A recurring sound that the story has tied to a threat (a bell, a clock, a siren) must not be used as background texture: each time it sounds it has to mean something.
 - SPATIAL CONSISTENCY: The <location> tag shows where the player currently IS. If <prev_locations> is provided, the player has LEFT those places. NEVER place the player back at a previous location unless they explicitly travel there. If an NPC has a last_seen attribute showing a DIFFERENT location than the player's current <location>, that NPC is NOT physically present {E['dash']} they cannot be heard through walls, seen, or interact directly. They can only appear if they plausibly traveled to the player's location (and the narration should describe their arrival). NPCs without last_seen or with last_seen matching <location> ARE present and can interact normally.
 - If <story_arc> is present, steer scenes toward the act goal and mood. If <story_arc> contains a thematic_thread, let it surface periodically through NPC dialog, character reactions, or incidental observations {E['dash']} not as lecture or internal monologue, but as a question the world keeps quietly asking. Not every scene, but it should feel like a recurring undercurrent.
 - If revelation_ready is set, weave it into the scene naturally (through NPC dialog, discovered evidence, or environmental storytelling) {E['dash']} NEVER dump exposition
@@ -5571,18 +5629,18 @@ def get_narrator_system(config: EngineConfig, game: Optional[GameState] = None) 
 - If story_arc structure="kishotenketsu" and phase="ten_twist": focus on perspective SHIFT, not conflict escalation. Something seemingly unrelated recontextualizes everything.
 - If story_arc structure="kishotenketsu" and phase="ketsu_resolution": the ten_twist's perspective shift has already landed — this act is CONSEQUENCE, not continued reflection. The player has absorbed the recontextualization. Each narration must now move toward something irreversible: a choice made, a system changed, a relationship permanently altered, a door closed. Do NOT keep circling the same existential insight. If the previous scene ended on reflection, this scene ends on action or consequence. The world should be visibly different by the end of this act than it was at the start of it.
 - If <recent_events> is present, treat it as ESTABLISHED FACTS. These events already happened in previous scenes. NEVER contradict them {E['dash']} if an NPC was seen alive, they are alive; if a box was empty, it was empty; if a character said something, they said it. You may add new revelations or reinterpretations, but the physical facts of past scenes are canon.
-- If <active_threats> is present, let the urgency level shape the atmospheric pressure of the scene. A "critical" threat should make the air feel close and time scarce. Do NOT name clocks, fill bars, or game mechanics {E['dash']} translate pressure into sensation, behavior, and detail.
+- If <active_threats> is present, let the urgency level shape the atmospheric pressure of the scene. A "critical" threat should make the air feel close and time scarce. Do NOT name clocks, fill bars, or game mechanics {E['dash']} let the pressure show in what people do and say.
 - If <arc_notes> is present, use it as background awareness of where the story stands. Let it inform emotional undertone without quoting or summarizing it directly.
 - If <npc_dynamics> is present, let the relationship history between NPCs shape how they speak to and about each other {E['dash']} eye contact, tone, small avoidances, or unspoken tension. Do not narrate the relationship directly; let it surface through behavior.
-- PRECISION: Every sentence must earn its place {E['dash']} carry new information, advance tension, reveal character, or deepen atmosphere. Cut filler. A shorter scene with density beats a longer scene with padding. Avoid generic atmospheric throat-clearing ("The air hung heavy", "Silence stretched between them") unless it is doing specific work.
+- PRECISION: Every sentence must earn its place {E['dash']} carry new information, advance tension or reveal character. Atmosphere rides along inside those sentences, it does not get sentences of its own. Cut filler. A shorter scene with density beats a longer scene with padding. Avoid generic atmospheric throat-clearing ("The air hung heavy", "Silence stretched between them") unless it is doing specific work.
 - PURE PROSE ONLY: Output ONLY narrative text. No JSON, no XML tags, no metadata, no code blocks, no markdown formatting (no *italics*, no **bold**, no # headings). Do NOT prefix your response with role labels like "Narrator:" or any heading. Do NOT append game mechanic annotations like [CLOCK CREATED: ...], [THREAT: ...], [SCENE CONTEXT: ...], or any bracketed labels — these are handled internally. Begin immediately with narrative text. Your entire response is visible to the player.
 </rules>
 <player_authorship>
 - The PLAYER IS the character. If <player_words> is provided, these are CANONICAL.
-- DIALOG: The narration MUST SHOW the player character speaking. Include their words as quoted dialog in the scene (with speech tags/body language). The player's speech MUST appear in the text BEFORE NPCs react to it.
+- DIALOG: The narration MUST SHOW the player character speaking. Include their words as quoted dialog in the scene. The player's speech MUST appear in the text BEFORE NPCs react to it. LONG SPEECH: the player already knows what they wrote, so do not read it all back. If the player's speech runs longer than about two sentences, quote the line(s) that carry the point word for word and render the rest as one short sentence of indirect speech ("You add that ..."). Quoted parts are always verbatim {E['dash']} shorten by leaving out, never by rewording.
 - PRESERVE EXACTLY: Keep the player's word choices, names, spelling, and phrasing intact. If the player writes a wrong name, a typo, slang, or informal language, that IS what the character said {E['dash']} reproduce it faithfully. NEVER correct names, fix factual errors, convert numbers to words, or "improve" the player's language. The ONLY permitted changes are adding punctuation and capitalizing sentence starts.
 - DESCRIBED SPEECH: If the player describes speaking WITHOUT giving exact words (e.g. "I ask him about Thornhill" or "I describe the suspect"), narrate this as INDIRECT SPEECH or brief summary {E['dash']} do NOT invent specific quoted dialog for the player character. Write "You ask him about Thornhill" or "You describe the suspect", then show the NPC's reaction. NEVER put invented words in the player character's mouth.
-- ACTIONS: The narration MUST SHOW the player character performing the described action. You may add sensory detail and atmosphere, but the core action stays as stated and must be visible in the text.
+- ACTIONS: The narration MUST SHOW the player character performing the described action. The core action stays as stated and must be visible in the text. If the player describes several small steps, show them in a sentence or two and move on to what the world does {E['dash']} do not retell every step.
 - NEVER skip the player's contribution. NEVER jump straight to NPC reactions without first showing what the player character said or did.
 - NPCs REACT to what the player actually said/did, not to a reinterpretation.
 </player_authorship>
@@ -7309,11 +7367,12 @@ def _clock_fired_block(events: Optional[list]) -> str:
 
 # Word budgets per narration type (min, max). German runs long, so the Narrator gets
 # words instead of paragraphs - paragraph counts stretched to 350-420 words per scene.
+# Cut ~30 % in 1.4.x: scenes averaged ~310 words and players lost the thread in detail.
 NARRATION_WORDS = {
-    "routine": (120, 220),
-    "dialog":  (150, 250),
-    "action":  (200, 320),
-    "opening": (250, 360),
+    "routine": (80, 150),
+    "dialog":  (100, 180),
+    "action":  (140, 230),
+    "opening": (180, 260),
 }
 
 
@@ -7439,7 +7498,7 @@ def build_dialog_prompt(game: GameState, brain: dict, player_words: str = "",
         # Routine action (no roll): the action itself simply works.
         scene_type = "routine"
         intent = f"{brain.get('player_intent', '')} ({brain.get('approach', '')})".replace(" ()", "")
-        task = (f"<task>{_words_rule('routine')} of immersive narration. The character's action is routine "
+        task = (f"<task>{_words_rule('routine')} of clear, readable narration. The character's action is routine "
                 "and succeeds without a roll: show it working cleanly and competently - no "
                 "failure, no injury, no cost and no new complication caused by the action "
                 "itself. Do not inflate it into a triumph or hand out more than the action "
@@ -7451,7 +7510,7 @@ def build_dialog_prompt(game: GameState, brain: dict, player_words: str = "",
     else:
         scene_type = "dialog"
         intent = brain.get('player_intent', '')
-        task = (f"<task>{_words_rule('dialog')} of immersive narration. The conversation is the "
+        task = (f"<task>{_words_rule('dialog')} of clear, readable narration. The conversation is the "
                 "scene: keep the focus on what is said and how. One small detail of place, "
                 "light or sound is enough to make the moment feel inhabited. Something between "
                 "the characters should shift by "
@@ -7568,7 +7627,7 @@ def build_action_prompt(game: GameState, brain: dict, roll: RollResult,
 {npc}{npcs_section}{wl}{flags}{agency}{fired}
 {pacing}{director_block}{_coop_block(game)}
 {_status_context_block(game)}{_story_context_block(game)}{_recent_events_block(game)}{_narrator_clocks_block(game)}{_npc_relations_block(game, _present_ids)}</scene>
-<task>{_words_rule('action')} of immersive narration. Let the roll consequence open new story questions rather than just closing old ones — the scene should end in motion, with something shifted. Let the current act's mood (from <story_arc>) shape the texture of this moment — a STRONG_HIT in a desperate phase still tastes of the surrounding darkness. If <director_guidance> is present, follow its direction while maintaining your creative voice.</task>"""
+<task>{_words_rule('action')} of clear, readable narration. Let the roll consequence open new story questions rather than just closing old ones — the scene should end in motion, with something shifted. Let the current act's mood (from <story_arc>) set the undertone — a STRONG_HIT in a desperate phase is still no relief. If <director_guidance> is present, follow its direction while maintaining your creative voice.</task>"""
 
 
 # ===============================================================
