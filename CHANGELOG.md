@@ -10,6 +10,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 - **Easier-to-follow narration:** scenes are shorter and plainer, so the story no longer drowns in detail. The narrator now follows a clear style guide - plain words instead of images, short sentences, one telling detail instead of three, at most two incidental details (light, weather, a sound, a smell) per scene, one gesture per character, and at most one new name per scene. The rules that asked for a sensory impression in every scene, a time-of-day detail every few scenes and an unrelated background detail were removed or softened. Word budgets are about 30 % lower (dialog 100-180, action 140-230, opening 180-260 words).
 - **Your own words are not read back at length:** the narrator still shows what your character says and does, but a long speech is quoted in its key line(s) word for word and the rest is summarised in one short sentence; a multi-step action is shown in a sentence or two. Quoted words are never changed.
+- **Better screen-reader support throughout the app** (nothing changes visually or for mouse and touch use):
+  - Collapsible sections (sidebar, save list, settings, help, characters, dice details) are announced in the interface language with their plain title - before, screen readers said "Expand" in English and read icon names aloud.
+  - Each scene marker in the story is a heading and each message is a labelled section ("Narrator", "Player"), so the story can be browsed scene by scene and message by message.
+  - Narration is marked with its narration language, so screen readers switch to the right voice when it differs from the interface language (also in the co-GM view).
+  - Character values, location, clocks and story acts are read as full phrases ("Momentum: 5 of 10", "Threat Storm tide: 1 of 6", "Act 2, current") with NVDA and JAWS too; threat and scheme clocks are told apart in words instead of only by colour.
+  - Every save in the list is a named group that says which one is loaded; the chapter being viewed and the selected character draft are announced as such.
+  - All confirmation dialogs (load, delete, new game, delete player), the momentum choice, the chapter loading dialog and the info pop-ups have a name; info pop-ups are read out when they open.
+  - Sliders (chat font size, Chatterbox emotion and text fidelity) have names; "Saved", the recap and other loading states are announced.
+  - A "Skip to game log" link appears as the first element on keyboard focus; the menu button says whether the menu is open; login and player selection have page headings, the help sections are headings.
+  - The game-over overlay and the rewind effect are hidden from screen readers (the card below carries the same text), and the dictation timer is no longer re-announced every second.
+
+### Fixed
+- **Focus lands where you continue after choosing a player:** switching from player selection (or from other screens that replace themselves, like leaving the chapter view) to the game stopped halfway with an internal error, so the cursor did not move to the input field and a typed draft was not restored. During character creation, a pending momentum choice, the epilogue and game over, keyboard and screen-reader focus now moves to the first choice as intended.
+- **Names with quotation marks in screen-reader labels:** labels containing a `"` (for example a character or save name) were read with "&quot;" or broke the label.
 
 ## [1.4.0] - 2026-10-16
 

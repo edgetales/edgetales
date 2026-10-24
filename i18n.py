@@ -140,6 +140,23 @@ LANGUAGES = {
     "Dansk": "Danish",
 }
 
+# BCP 47 code per narration language (English name -> code). Set as the `lang`
+# attribute on narration so screen readers read it with the matching voice
+# even when the UI language differs.
+LANGUAGE_CODES = {
+    "German": "de", "English": "en", "Spanish": "es", "French": "fr",
+    "Portuguese": "pt", "Italian": "it", "Dutch": "nl", "Russian": "ru",
+    "Chinese (Mandarin)": "zh", "Japanese": "ja", "Korean": "ko", "Arabic": "ar",
+    "Hindi": "hi", "Indonesian": "id", "Turkish": "tr", "Polish": "pl",
+    "Vietnamese": "vi", "Thai": "th", "Swedish": "sv", "Danish": "da",
+}
+
+
+def narration_lang_code(label: str) -> str:
+    """BCP 47 code for a narration language display label ('Deutsch' -> 'de').
+    Unknown labels return '' (the caller then sets no lang attribute)."""
+    return LANGUAGE_CODES.get(LANGUAGES.get(label or "", ""), "")
+
 
 # ===============================================================
 # UI LANGUAGE CONFIGURATION
@@ -745,6 +762,14 @@ _STRINGS = {
         "aria.coop_invite_game_info": "Infos zum Spiel der Einladung",
         "aria.coop_question": "Frage des Erz\u00e4hlers an dich",
         "aria.remove_signal": "Signal entfernen",
+        "aria.save_card": "Spielstand {name}",
+        "aria.save_card_active": "Spielstand {name}, aktuell geladen",
+        "aria.save_info_popup": "Spielstand-Info",
+        "aria.current": "aktuell",
+        "aria.completed": "abgeschlossen",
+        "aria.clock_threat": "Bedrohung {name}: {filled} von {segments}",
+        "aria.clock_scheme": "Intrige {name}: {filled} von {segments}",
+        "aria.game_over_region": "Abenteuer zu Ende",
         "coop.reveal": "Hinter den Kulissen",
         "coop.reveal_intro": "Was {name} zur Geschichte beigetragen hat - Szene f\u00fcr Szene:",
         "coop.reveal_empty": "Bisher ist noch nichts vom Co-Spielleiter in der Geschichte aufgetaucht.",
@@ -1365,6 +1390,14 @@ _STRINGS = {
         "aria.coop_invite_game_info": "Details of the invited game",
         "aria.coop_question": "The narrator's question for you",
         "aria.remove_signal": "Remove signal",
+        "aria.save_card": "Save {name}",
+        "aria.save_card_active": "Save {name}, currently loaded",
+        "aria.save_info_popup": "Save info",
+        "aria.current": "current",
+        "aria.completed": "completed",
+        "aria.clock_threat": "Threat {name}: {filled} of {segments}",
+        "aria.clock_scheme": "Scheme {name}: {filled} of {segments}",
+        "aria.game_over_region": "Adventure over",
         "coop.reveal": "Behind the scenes",
         "coop.reveal_intro": "What {name} contributed to the story - scene by scene:",
         "coop.reveal_empty": "Nothing from the Co-GM has surfaced in the story yet.",
