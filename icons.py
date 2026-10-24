@@ -397,6 +397,22 @@ _ICON_JS = r"""
 """
 
 
+_PLAIN_RE = None
+
+
+def plain_text(text: str) -> str:
+    """Text without the UI emoji, for attributes the icon runtime never touches
+    (aria-label and similar): the browser draws these emoji as aria-hidden icons
+    in text nodes, but inside an attribute a screen reader would read the emoji
+    name aloud ("game die", "skull"). Collapses the whitespace left behind."""
+    global _PLAIN_RE
+    if _PLAIN_RE is None:
+        import re
+        keys = sorted(set(EMOJI_ICON) | set(DOT_COLORS), key=len, reverse=True)
+        _PLAIN_RE = re.compile("(?:" + "|".join(re.escape(k) for k in keys) + ")️?|️")
+    return " ".join(_PLAIN_RE.sub(" ", str(text or "")).split())
+
+
 def icon_head_html() -> str:
     """<style> + <script> that draw every UI emoji and Material icon as a Lucide line icon."""
     data = {"icons": EMOJI_ICON, "dots": DOT_COLORS, "mi": MATERIAL_ICON,

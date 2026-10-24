@@ -141,9 +141,9 @@ from engine import (
     coop_add_signal, coop_add_new_npc, coop_remove_signal, coop_start_session, coop_end_session,
     coop_public_view, coop_pending_impulse, coop_reveal, generate_cogm_question,
 )
-from icons import icon_head_html
+from icons import icon_head_html, plain_text
 from i18n import (
-    t, UI_LANGUAGES, DEFAULT_LANG,
+    t, UI_LANGUAGES, DEFAULT_LANG, narration_lang_code,
     get_stat_labels, get_move_labels, get_result_labels,
     get_disposition_labels, get_position_labels, get_effect_labels,
     get_time_labels, get_dice_display_options, get_no_voice_sample_label,
@@ -783,7 +783,7 @@ def _setup_stt_button(mic_btn, inp, chat_container, stt_status, stt_status_conte
     recording_state = {"active": False}
 
     _WAVEFORM_HTML = (
-        '<span class="stt-waveform">'
+        '<span class="stt-waveform" aria-hidden="true">'
         '<span class="wv-bar"></span><span class="wv-bar"></span><span class="wv-bar"></span>'
         '<span class="wv-bar"></span><span class="wv-bar"></span><span class="wv-bar"></span>'
         '<span class="wv-bar"></span></span>'
@@ -812,7 +812,7 @@ def _setup_stt_button(mic_btn, inp, chat_container, stt_status, stt_status_conte
             mic_btn.props(f'color=red aria-label="{t("aria.stop_recording", L())}"')
             mic_btn._props["icon"] = "stop"
             mic_btn.update()
-            _show_status(f'{_WAVEFORM_HTML} <span style="color: var(--error)">{t("stt.recording", L())} <span id="_sttTimer">0:00</span></span>')
+            _show_status(f'{_WAVEFORM_HTML} <span style="color: var(--error)">{t("stt.recording", L())} <span id="_sttTimer" aria-hidden="true">0:00</span></span>')
             # Fire-and-forget: getUserMedia may show a permission dialog that blocks JS.
             # Wrapping in an async IIFE prevents Python from waiting on the dialog.
             ui.run_javascript(f'''
@@ -993,6 +993,49 @@ CUSTOM_CSS = _CSS_FILE.read_text(encoding="utf-8") if _CSS_FILE.exists() else ""
 CUSTOM_CSS += icon_head_html()
 
 
+# ---------------------------------------------------------------------------
+# Accessibility helpers
+# ---------------------------------------------------------------------------
+
+def _aprop(name: str, text) -> str:
+    """One props() entry with a plain-text value: UI emoji removed, quoted as a
+    Python literal (NiceGUI parses prop values with ast.literal_eval, so HTML
+    entities would end up verbatim in the attribute and be read aloud)."""
+    return f"{name}={_json.dumps(plain_text(text), ensure_ascii=False)}"
+
+
+def _expansion(label: str, **kwargs):
+    """ui.expansion whose toggle has a screen-reader label in the UI language.
+    Quasar's default reads 'Expand "<label>"' in English (emoji names included);
+    the expanded/collapsed state is announced via aria-expanded."""
+    return ui.expansion(label, **kwargs).props(_aprop("toggle-aria-label", label))
+
+
+def _sr_text(text: str):
+    """Visually hidden text for screen readers only. Its own element - never put
+    sr-only markup inside ui.markdown()/ui.html() (stripped or leaks visibly)."""
+    return ui.label(plain_text(text)).classes("sr-only")
+
+
+def _sr_announcer():
+    """Visually hidden live region (out of the layout flow): set .text to announce."""
+    return ui.label("").classes("sr-only").props('role="status"')
+
+
+def _label_dialog(dlg, label_el, desc_el=None) -> None:
+    """Name a dialog (or alertdialog card) by one of its own visible elements."""
+    dlg.props(f'aria-labelledby="{label_el.html_id}"')
+    if desc_el is not None:
+        dlg.props(f'aria-describedby="{desc_el.html_id}"')
+
+
+def _narration_lang_props(lang_label: str) -> str:
+    """lang attribute for narration text, so screen readers switch voice when the
+    narration language differs from the UI language. '' for unknown labels."""
+    code = narration_lang_code(lang_label)
+    return f'lang="{code}"' if code else ""
+
+
 # ===============================================================
 # USER SELECTION — now built inline by main_page phases
 # ===============================================================
@@ -1046,15 +1089,16 @@ def render_sidebar_status(game: GameState, session=None, cogm_view: bool = False
     lang = s.get("ui_lang", DEFAULT_UI_LANG or DEFAULT_LANG) if session else L()
     kid = s.get("kid_friendly", False)
     sl = get_stat_labels(lang)
-    _name_aria = game.player_name.replace('"', '&quot;')
-    ui.label(f"{E['person']} {game.player_name}").classes("text-lg font-bold").props(f'aria-label="{_name_aria}"')
+    ui.label(f"{E['person']} {game.player_name}").classes("text-lg font-bold")
     ui.label(game.character_concept).classes("text-sm text-gray-400 italic")
     if kid: ui.label(f"{E['green_heart']} {t('sidebar.kid_mode', lang)}").classes("text-xs text-green-400")
     tl = get_time_labels(lang)
     t_label = tl.get(game.time_of_day, "") if game.time_of_day else ""
     t_disp = f" - {t_label}" if t_label else ""
-    _loc_aria = f"{t('aria.location', lang)}: {game.current_location} - {t('sidebar.scene', lang)} {game.scene_count}{t_disp}".replace('"', '&quot;')
-    ui.label(f"{E['pin']} {game.current_location} - {t('sidebar.scene', lang)} {game.scene_count}{t_disp}").classes("text-xs text-gray-400").props(f'aria-label="{_loc_aria}"')
+    # Screen readers get the labelled sentence; aria-label on a plain div is ignored
+    # by NVDA/JAWS, so the visible line is hidden and an sr-only line carries the text
+    ui.label(f"{E['pin']} {game.current_location} - {t('sidebar.scene', lang)} {game.scene_count}{t_disp}").classes("text-xs text-gray-400").props('aria-hidden="true"')
+    _sr_text(f"{t('aria.location', lang)}: {game.current_location} - {t('sidebar.scene', lang)} {game.scene_count}{t_disp}")
     if game.crisis_mode and not game.game_over:
         ui.label(f"{E['warn']} {t('sidebar.crisis_kid', lang) if kid else t('sidebar.crisis', lang)}").classes("text-sm text-red-400 font-bold mt-2")
     if game.game_over:
@@ -1074,10 +1118,12 @@ def render_sidebar_status(game: GameState, session=None, cogm_view: bool = False
     ]
     with ui.element('div').classes('stat-grid w-full'):
         for _lbl, _val, _aria in _stat_specs:
-            _aria_esc = _aria.replace('"', '&quot;')
-            with ui.element('div').classes('stat-item').props(f'role="text" aria-label="{_aria_esc}"'):
+            # Visible label/value are hidden from screen readers; an sr-only child reads
+            # "Label: value" (aria-label on a plain div is ignored by NVDA/JAWS)
+            with ui.element('div').classes('stat-item'):
                 ui.html(str(_lbl)).classes('stat-label').props('aria-hidden="true"')
                 ui.html(str(_val)).classes('stat-value').props('aria-hidden="true"')
+                _sr_text(_aria)
     ui.separator()
     # Tracks — label already communicates value, progressbar is visual-only
     for track, label, cls in [("health",f"{E['heart_red']} {t('sidebar.health', lang)}","health"),("spirit",f"{E['heart_blue']} {t('sidebar.spirit', lang)}","spirit"),("supply",f"{E['backpack']} {t('sidebar.supply', lang)}","supply")]:
@@ -1103,7 +1149,10 @@ def render_sidebar_status(game: GameState, session=None, cogm_view: bool = False
             _c_filled = int(c["filled"])
             _c_segs = max(1, int(c["segments"]))
             p = _c_filled / _c_segs * 100
-            ui.label(f"{em} {c['name']}: {_c_filled}/{_c_segs}").classes("text-xs")
+            # The dot colour tells threat from scheme - screen readers get it in words
+            ui.label(f"{em} {c['name']}: {_c_filled}/{_c_segs}").classes("text-xs").props('aria-hidden="true"')
+            _sr_text(t("aria.clock_threat" if c["clock_type"] == "threat" else "aria.clock_scheme",
+                       lang, name=c["name"], filled=_c_filled, segments=_c_segs))
             with ui.element('div').classes('track-bar w-full').props('aria-hidden="true"'):
                 ui.element('div').classes('track-fill progress').style(f'width:{p:.0f}%')
     _render_sidebar_story_npcs(game, lang)
@@ -1140,11 +1189,14 @@ def _render_sidebar_story_npcs(game: GameState, lang: str) -> None:
         act_l = t("sidebar.act", lang)
         for i,a in enumerate(bp["acts"]):
             an = i+1; sr = a.get("scene_range",[1,20])
-            if an < act["act_number"]: ui.label(f"{act_l} {an} {E['check']}").classes("text-xs text-gray-500")
+            if an < act["act_number"]:
+                ui.label(f"{act_l} {an} {E['check']}").classes("text-xs text-gray-500").props('aria-hidden="true"')
+                _sr_text(f"{act_l} {an}, {t('aria.completed', lang)}")
             elif an == act["act_number"]:
                 p = max(0,min(100,(game.scene_count-sr[0])/max(1,sr[1]-sr[0])*100))
                 _act_aria = t("aria.story_progress", lang, n=an)
-                ui.label(f"{E['play']} {act_l} {an}").classes("text-xs font-bold")
+                ui.label(f"{E['play']} {act_l} {an}").classes("text-xs font-bold").props('aria-hidden="true"')
+                _sr_text(f"{act_l} {an}, {t('aria.current', lang)}")
                 with ui.element('div').classes('track-bar w-full') \
                         .props(f'role="progressbar" aria-valuenow="{int(p)}" aria-valuemin="0" aria-valuemax="100" aria-label="{_act_aria}"'):
                     ui.element('div').classes('track-fill progress').style(f'width:{p:.0f}%')
@@ -1170,7 +1222,7 @@ def _render_sidebar_story_npcs(game: GameState, lang: str) -> None:
             for n in active_npcs:
                 disp = dl.get(n.get("disposition", "neutral"), dl["neutral"])
                 bond_max = n.get("bond_max", 4)
-                with ui.expansion(f"{disp} - {n['name']}").classes("w-full"):
+                with _expansion(f"{disp} - {n['name']}").classes("w-full"):
                     _da = _display_aliases(n.get("aliases", []))
                     alias_str = f"{aka_label} {', '.join(_da)}" if _da else ""
                     with ui.element('div').classes('npc-card'):
@@ -1181,11 +1233,11 @@ def _render_sidebar_story_npcs(game: GameState, lang: str) -> None:
                             ui.label(n["description"]).classes('npc-desc')
         if background_npcs:
             background_npcs.sort(key=_npc_sort_key)
-            with ui.expansion(f"{E['people']} {t('sidebar.known_persons', lang)} ({len(background_npcs)})").classes("w-full"):
+            with _expansion(f"{E['people']} {t('sidebar.known_persons', lang)} ({len(background_npcs)})").classes("w-full"):
                 for n in background_npcs:
                     disp = dl.get(n.get("disposition", "neutral"), dl["neutral"])
                     bond_max = n.get("bond_max", 4)
-                    with ui.expansion(f"{disp} - {n['name']}").classes("w-full").style("opacity:0.75"):
+                    with _expansion(f"{disp} - {n['name']}").classes("w-full").style("opacity:0.75"):
                         _da = _display_aliases(n.get("aliases", []))
                         alias_str = f"{aka_label} {', '.join(_da)}" if _da else ""
                         with ui.element('div').classes('npc-card'):
@@ -1195,7 +1247,7 @@ def _render_sidebar_story_npcs(game: GameState, lang: str) -> None:
                             if n.get("description"):
                                 ui.label(n["description"]).classes('npc-desc')
         if deceased_npcs:
-            with ui.expansion(f"\u2620\ufe0f {t('sidebar.deceased_persons', lang)} ({len(deceased_npcs)})").classes("w-full"):
+            with _expansion(f"\u2620\ufe0f {t('sidebar.deceased_persons', lang)} ({len(deceased_npcs)})").classes("w-full"):
                 for n in deceased_npcs:
                     ui.label(f"\u2620\ufe0f {n['name']}").classes("text-xs").style("opacity: 0.4; text-decoration: line-through; padding: 0.15rem 0.5rem")
 
@@ -1246,6 +1298,8 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
             if recap_status:
                 recap_status.text = f"{E['scroll']} {t('actions.recap_loading', lang)}"
                 recap_status.set_visibility(True)
+            if _recap_sr:
+                _recap_sr[0].text = t('actions.recap_loading', lang)
             try:
                 client = anthropic.Anthropic(api_key=s["api_key"])
                 config = get_engine_config()
@@ -1268,7 +1322,7 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                         if not s.get("sr_chat", True):
                             recap_el.props('aria-hidden="true"')
                         elif s.get("sr_chat", True):
-                            recap_el.props(f'aria-label="{t("aria.recap_says", lang)}"')
+                            recap_el.props(f'role="article" aria-label="{t("aria.recap_says", lang)}"')
                         with recap_el:
                             ui.markdown(f"{prefix}{_clean_narration(recap)}")
                     s["_recap_element"] = recap_el
@@ -1283,6 +1337,9 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                 s["processing"] = False
                 if recap_status:
                     recap_status.set_visibility(False)
+                if _recap_sr:
+                    _recap_sr[0].text = ""
+    _recap_sr: list = []  # sr-only live region (the visible status only toggles display)
     if game:
         # --- Wrap Up Story (re-offer epilogue after dismiss) ---
         _bp = game.story_blueprint or {}
@@ -1326,8 +1383,9 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
         ui.button(f"{E['scroll']} {t('actions.recap', lang)}", on_click=do_recap).props("flat dense").classes("w-full")
         recap_status = ui.label("").classes("text-xs text-center w-full").style("color: var(--text-secondary)")
         recap_status.set_visibility(False)
+        _recap_sr.append(_sr_announcer())
     # Save/Load
-    with ui.expansion(f"{E['floppy']} {t('actions.saves', lang)}", value=saves_open).classes("w-full"):
+    with _expansion(f"{E['floppy']} {t('actions.saves', lang)}", value=saves_open).classes("w-full"):
         active = s.get("active_save", "autosave")
         active_display = t("actions.autosave", lang) if active == "autosave" else active
 
@@ -1340,12 +1398,15 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
             save_confirm = ui.label(f"{E['checkmark']} {t('actions.saved', lang)}").classes(
                 "text-sm text-center w-full").style("color: var(--success)")
             save_confirm.set_visibility(False)
+            save_sr = _sr_announcer()  # the visible confirmation only toggles display
             async def do_quick_save():
                 save_game(game, username, s["messages"], s.get("active_save", "autosave"))
                 save_confirm.set_visibility(True)
+                save_sr.text = t('actions.saved', lang)
                 async def _hide():
                     await asyncio.sleep(2)
                     save_confirm.set_visibility(False)
+                    save_sr.text = ""
                 asyncio.create_task(_hide())
             ui.button(f"{E['floppy']} {t('actions.quick_save', lang)}", on_click=do_quick_save).classes("w-full")
 
@@ -1355,7 +1416,9 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
             def toggle_save_as():
                 save_as_visible["val"] = not save_as_visible["val"]
                 save_as_container.set_visibility(save_as_visible["val"])
-            ui.button(f"{E['plus']} {t('actions.save_as', lang)}", on_click=toggle_save_as).props("flat dense").classes("w-full")
+                save_as_btn.props(f'aria-expanded="{str(save_as_visible["val"]).lower()}"')
+            save_as_btn = ui.button(f"{E['plus']} {t('actions.save_as', lang)}", on_click=toggle_save_as).props(
+                'flat dense aria-expanded="false"').classes("w-full")
             with save_as_container:
                 save_as_inp = ui.input(t("actions.save_as_placeholder", lang)).classes("w-full").props("dense outlined dark")
                 async def do_save_as():
@@ -1407,8 +1470,12 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                 # Card-style row
                 border_color = "var(--success)" if is_active else "var(--accent)"
                 bg_color = "var(--success-dim)" if is_active else "var(--accent-dim)"
+                # A named group per save: screen readers announce the save (and whether
+                # it is the loaded one - shown visually only by colour and a check mark)
                 with ui.card().classes("w-full p-2 mb-1").style(
-                    f"background: {bg_color}; border: 1px solid {border_color}; border-radius: 8px"):
+                    f"background: {bg_color}; border: 1px solid {border_color}; border-radius: 8px").props(
+                    'role="group" ' + _aprop("aria-label", t("aria.save_card_active" if is_active else "aria.save_card",
+                                                           lang, name=display_name))):
                     with ui.column().classes("w-full gap-1"):
                         # Title + meta
                         _dn_safe = html_mod.escape(display_name)
@@ -1438,7 +1505,7 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                                 _share_aria = t("aria.share_save", lang, name=display_name)
                                 _do_share = make_share(sname)
                                 with ui.button(icon="send").props(
-                                    f'flat round dense size=sm aria-label="{_share_aria}" aria-haspopup="menu"'
+                                    f'flat round dense size=sm {_aprop("aria-label", _share_aria)} aria-haspopup="menu"'
                                 ).style("margin: -6px 0; flex: 0 0 auto"):
                                     with ui.menu().props("anchor='bottom right' self='top right'"):
                                         ui.label(t("actions.share_title", lang)).classes(
@@ -1476,7 +1543,7 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                                         return
                                     if game and not _active:
                                         with ui.dialog() as dlg, ui.card():
-                                            ui.label(t("actions.load_confirm", lang, name=dn))
+                                            _label_dialog(dlg, ui.label(t("actions.load_confirm", lang, name=dn)))
                                             with ui.row().classes("gap-4 mt-2"):
                                                 async def confirm_load():
                                                     dlg.close()
@@ -1488,17 +1555,19 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                                         await _execute_load()
                                 return do_load
                             _load_aria = t("aria.load_save", lang, name=display_name)
-                            ui.button(icon="play_arrow", on_click=make_load(sname, display_name, is_active)).props(f'flat round dense size=sm aria-label="{_load_aria}"').tooltip(t("actions.load", lang)).style("justify-self: start")
+                            ui.button(icon="play_arrow", on_click=make_load(sname, display_name, is_active)).props(f'flat round dense size=sm {_aprop("aria-label", _load_aria)}').tooltip(t("actions.load", lang)).style("justify-self: start")
 
                             # --- Setup info tooltip (slot always rendered for stable layout) ---
                             _lines = save_info_lines(info, lang)
                             _has_info = bool(_lines)
                             _info_visibility = "" if _has_info else "visibility: hidden; pointer-events: none"
                             with ui.button(icon="info_outline").props(
-                                f'flat round dense size=sm aria-label="{t("aria.save_info", lang)}"'
+                                f'flat round dense size=sm aria-label="{t("aria.save_info", lang)}" aria-haspopup="dialog"'
                             ).classes("text-gray-400").style(f"min-width: 36px; min-height: 36px; justify-self: center; {_info_visibility}"):
                                 if _has_info:
-                                    with ui.menu().props("anchor='top middle' self='bottom middle' :offset='[0,6]'"):
+                                    # Text popover, not a list of actions: dialog role instead of Quasar's menu role
+                                    with ui.menu().props("anchor='top middle' self='bottom middle' :offset='[0,6]' role=\"dialog\" "
+                                                         + _aprop("aria-label", t("aria.save_info_popup", lang) + ": " + display_name)):
                                         ui.html('<br>'.join(_lines)).style(
                                             "max-width:280px;max-height:320px;overflow-y:auto;"
                                             "padding:8px 12px;font-size:0.82rem;line-height:1.45"
@@ -1513,7 +1582,7 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                                             ui.notify(t("coop.save_in_use", lang, name=display), type="warning", position="top")
                                             return
                                         with ui.dialog() as dlg, ui.card():
-                                            ui.label(t("actions.delete_confirm", lang, name=display))
+                                            _label_dialog(dlg, ui.label(t("actions.delete_confirm", lang, name=display)))
                                             with ui.row().classes("gap-4 mt-2"):
                                                 async def confirm_del():
                                                     if _coop_save_in_use(username, n):
@@ -1536,7 +1605,7 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                                         dlg.open()
                                     return do_delete
                                 _del_aria = t("aria.delete_save", lang, name=display_name)
-                                ui.button(icon="delete_outline", on_click=make_delete(sname)).props(f'flat round dense size=sm aria-label="{_del_aria}"').tooltip(t("actions.delete", lang)).style("color: var(--error); justify-self: end")
+                                ui.button(icon="delete_outline", on_click=make_delete(sname)).props(f'flat round dense size=sm {_aprop("aria-label", _del_aria)}').tooltip(t("actions.delete", lang)).style("color: var(--error); justify-self: end")
                             else:
                                 # Phantom button — invisible, keeps delete slot for stable centering
                                 ui.button(icon="delete_outline").props('flat round dense size=sm aria-hidden="true"').style("min-width: 36px; min-height: 36px; visibility: hidden; pointer-events: none; justify-self: end")
@@ -1569,6 +1638,7 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                                         return do_view
                                     btn = ui.button(lbl, on_click=make_view_ch(ch_n)).props("flat dense size=sm no-caps").classes("w-full text-left text-xs")
                                     if is_viewing:
+                                        btn.props('aria-current="true"')
                                         btn.style("color: var(--accent-light); border: 1px solid var(--accent-light)")
                                     else:
                                         btn.style("color: var(--text-secondary)")
@@ -1583,7 +1653,8 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                                             ui.navigate.reload()
                                     ui.button(cur_lbl, on_click=back_to_current).props("flat dense size=sm no-caps").classes("w-full text-left text-xs")
                                 else:
-                                    ui.label(cur_lbl).classes("text-xs w-full").style("color: var(--success); padding: 0.25rem 0.5rem")
+                                    ui.label(cur_lbl).classes("text-xs w-full").style("color: var(--success); padding: 0.25rem 0.5rem").props('aria-hidden="true"')
+                                    _sr_text(f"{t('chapters.chapter_label', lang, n=chapter)}, {t('aria.current', lang)}")
         else:
             ui.label(t("actions.no_saves", lang)).classes("text-xs text-center w-full").style("color: var(--text-secondary)")
 
@@ -1604,7 +1675,7 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
                 return
             if game:
                 with ui.dialog() as dlg, ui.card():
-                    ui.label(t("actions.new_game_confirm", lang))
+                    _label_dialog(dlg, ui.label(t("actions.new_game_confirm", lang)))
                     with ui.row().classes("gap-4 mt-2"):
                         async def confirm_new():
                             dlg.close()
@@ -1647,20 +1718,23 @@ def render_sidebar_actions(on_switch_user=None, on_refresh=None, saves_open=Fals
 def _info_btn(tip_text: str) -> None:
     """Info icon that opens a click-to-dismiss popover (mobile-friendly alternative to hover tooltip)."""
     with ui.button(icon="info_outline").props(
-        f'flat round dense size=sm aria-label="{tip_text}"'
+        f'flat round dense size=sm {_aprop("aria-label", tip_text)} aria-haspopup="dialog"'
     ).classes("text-gray-400").style("min-width: 36px; min-height: 36px"):
-        with ui.menu().props("anchor='top middle' self='bottom middle' :offset='[0,6]'"):
-            ui.label(tip_text).style(
+        # Text popover, not a list of actions: dialog role (Quasar sets "menu"),
+        # named by its text so screen readers read it when it opens
+        with ui.menu().props("anchor='top middle' self='bottom middle' :offset='[0,6]' role=\"dialog\"") as pop:
+            tip = ui.label(tip_text).style(
                 "max-width: 260px; white-space: normal; padding: 8px 12px;"
                 " font-size: 0.85rem; line-height: 1.45"
             )
+        _label_dialog(pop, tip)
 
 
 def render_settings() -> None:
     s = S()
     lang = L()
     username = s["current_user"]
-    with ui.expansion(f"{E['gear']} {t('settings.title', lang)}").classes("w-full"):
+    with _expansion(f"{E['gear']} {t('settings.title', lang)}").classes("w-full"):
         # Only show API key input if no server-side key is configured
         if not SERVER_API_KEY:
             api_inp = ui.input(t("settings.api_key", lang), value=s.get("api_key",""), password=True, password_toggle_button=True).classes("w-full")
@@ -1719,9 +1793,11 @@ def render_settings() -> None:
                             t("settings.cb_requires", lang)
                         ).classes("text-xs").style("color: #999; margin-top: 2px")
                 cb_device_sel = ui.select(list(CHATTERBOX_DEVICE_OPTIONS.keys()), label=t("settings.device", lang), value=s.get("cb_device","Auto")).classes("w-full")
-                cb_exag_slider = ui.slider(min=0.0, max=1.0, step=0.05, value=s.get("cb_exaggeration",0.5)).props("label-always")
+                cb_exag_slider = ui.slider(min=0.0, max=1.0, step=0.05, value=s.get("cb_exaggeration",0.5)).props(
+                    "label-always " + _aprop("aria-label", t("settings.emotion", lang)))
                 ui.label(t("settings.emotion", lang)).classes("text-xs").style("color: var(--text-secondary)")
-                cb_cfg_slider = ui.slider(min=0.0, max=1.0, step=0.05, value=s.get("cb_cfg_weight",0.5)).props("label-always")
+                cb_cfg_slider = ui.slider(min=0.0, max=1.0, step=0.05, value=s.get("cb_cfg_weight",0.5)).props(
+                    "label-always " + _aprop("aria-label", t("settings.cfg_weight", lang)))
                 ui.label(t("settings.cfg_weight", lang)).classes("text-xs").style("color: var(--text-secondary)")
                 # Voice sample selection
                 no_sample = get_no_voice_sample_label(lang)
@@ -1741,7 +1817,7 @@ def render_settings() -> None:
             async def preview_voice():
                 preview_text = t("tts.preview_text", lang)
                 with preview_container:
-                    indicator = ui.row().classes("w-full items-center gap-2")
+                    indicator = ui.row().classes("w-full items-center gap-2").props('role="status"')
                     with indicator:
                         ui.spinner("audio", size="sm", color="primary")
                         ui.label(t("settings.preview_loading", lang)).classes("text-xs").style("color: var(--text-secondary)")
@@ -1819,7 +1895,8 @@ def render_settings() -> None:
         with ui.row().classes("w-full items-center gap-2"):
             ui.label(t("settings.chat_font_size", lang)).classes("text-sm flex-1")
             _font_size_label = ui.label(f"{_cur_font_size:.2f}×").classes("text-sm").style("min-width:3rem; text-align:right; color: var(--text-secondary)")
-        font_size_slider = ui.slider(min=0.75, max=1.5, step=0.05, value=_cur_font_size).classes("w-full")
+        font_size_slider = ui.slider(min=0.75, max=1.5, step=0.05, value=_cur_font_size).classes("w-full").props(
+            _aprop("aria-label", t("settings.chat_font_size", lang)))
         def _apply_font_size(val):
             _font_size_label.set_text(f"{val:.2f}×")
             ui.run_javascript(f"document.documentElement.style.setProperty('--chat-font-size', '{val:.2f}rem')")
@@ -1873,13 +1950,16 @@ def render_settings() -> None:
             # Sofort am Body setzen, damit der Chat ohne Reload die neue Schrift zeigt
             ui.run_javascript(f"document.body.setAttribute('data-narrator-font', '{new_font}')")
             save_confirm.set_visibility(True)
+            save_sr.text = t('settings.saved_confirm', lang)
             async def _hide():
                 await asyncio.sleep(2)
                 save_confirm.set_visibility(False)
+                save_sr.text = ""
             asyncio.create_task(_hide())
         ui.button(f"{E['floppy']} {t('settings.save_btn', lang)}", on_click=save_cfg, color="primary").classes("w-full")
         save_confirm = ui.label(f"{E['checkmark']} {t('settings.saved_confirm', lang)}").classes("text-sm text-center w-full").style("color: var(--success)")
         save_confirm.set_visibility(False)
+        save_sr = _sr_announcer()  # the visible confirmation only toggles display
 
 
 def render_display_settings(on_saved=None) -> None:
@@ -1892,7 +1972,7 @@ def render_display_settings(on_saved=None) -> None:
     s = S()
     lang = L()
     username = s["current_user"]
-    with ui.expansion(f"{E['gear']} {t('settings.display_title', lang)}").classes("w-full"):
+    with _expansion(f"{E['gear']} {t('settings.display_title', lang)}").classes("w-full"):
         ui_lang_labels = list(UI_LANGUAGES.keys())
         _code_to_label = {v: k for k, v in UI_LANGUAGES.items()}
         ui_lang_sel = ui.select(ui_lang_labels, label=t("settings.ui_lang", lang),
@@ -1913,7 +1993,8 @@ def render_display_settings(on_saved=None) -> None:
             ui.label(t("settings.chat_font_size", lang)).classes("text-sm flex-1")
             size_lbl = ui.label(f"{_cur_size:.2f}×").classes("text-sm").style(
                 "min-width:3rem; text-align:right; color: var(--text-secondary)")
-        size_slider = ui.slider(min=0.75, max=1.5, step=0.05, value=_cur_size).classes("w-full")
+        size_slider = ui.slider(min=0.75, max=1.5, step=0.05, value=_cur_size).classes("w-full").props(
+            _aprop("aria-label", t("settings.chat_font_size", lang)))
 
         def _apply_size(val):
             size_lbl.set_text(f"{val:.2f}×")
@@ -1953,22 +2034,25 @@ def render_display_settings(on_saved=None) -> None:
 
 def render_help() -> None:
     lang = L()
-    with ui.expansion(f"{E['question']} {t('help.title', lang)}").classes("w-full"):
-        ui.markdown(t("help.intro_title", lang))
+    # Section titles are bold paragraphs visually; as headings screen-reader users
+    # can jump between them
+    _HELP_HEADING = 'role="heading" aria-level="3"'
+    with _expansion(f"{E['question']} {t('help.title', lang)}").classes("w-full"):
+        ui.markdown(t("help.intro_title", lang)).props(_HELP_HEADING)
         ui.label(t("help.intro_text", lang)).classes("text-xs text-gray-400")
         ui.separator()
 
-        ui.markdown(t("help.freedom_title", lang))
+        ui.markdown(t("help.freedom_title", lang)).props(_HELP_HEADING)
         ui.label(t("help.freedom_text", lang)).classes("text-xs text-gray-400")
         ui.separator()
 
-        ui.markdown(t("help.probe_title", lang))
+        ui.markdown(t("help.probe_title", lang)).props(_HELP_HEADING)
         ui.label(t("help.probe_text", lang)).classes("text-xs text-gray-400")
         ui.html(t("help.probe_detail", lang)).style("font-size:0.85em; line-height:1.8; padding:0.3em 0")
         ui.label(t("help.routine_text", lang)).classes("text-xs text-gray-400")
         ui.separator()
 
-        ui.markdown(t("help.results_title", lang))
+        ui.markdown(t("help.results_title", lang)).props(_HELP_HEADING)
         ui.label(t("help.results_text", lang)).classes("text-xs text-gray-400")
         with ui.element('div').style("font-size:0.85em; line-height:1.6; padding:0.2em 0"):
             for _ico, _lbl_key, _desc_key in [
@@ -1980,11 +2064,11 @@ def render_help() -> None:
                 ui.label(t(_desc_key, lang)).classes("text-xs text-gray-400").style("margin-bottom:0.4em")
         ui.separator()
 
-        ui.markdown(f"{t('help.match_title', lang)} {E['comet']}")
+        ui.markdown(f"{t('help.match_title', lang)} {E['comet']}").props(_HELP_HEADING)
         ui.label(t("help.match_text", lang)).classes("text-xs text-gray-400")
         ui.separator()
 
-        ui.markdown(t("help.position_title", lang))
+        ui.markdown(t("help.position_title", lang)).props(_HELP_HEADING)
         ui.label(t("help.position_text", lang)).classes("text-xs text-gray-400")
         with ui.element('div').style("font-size:0.85em; line-height:1.6; padding:0.2em 0"):
             for _ico, _lbl_key, _desc_key in [
@@ -1996,7 +2080,7 @@ def render_help() -> None:
                 ui.label(t(_desc_key, lang)).classes("text-xs text-gray-400").style("margin-bottom:0.4em")
         ui.separator()
 
-        ui.markdown(t("help.stats_title", lang))
+        ui.markdown(t("help.stats_title", lang)).props(_HELP_HEADING)
         ui.label(t("help.stats_text", lang)).classes("text-xs text-gray-400")
         ui.html(
             f"{E['feather']} {t('help.stat_edge', lang)}<br>"
@@ -2007,7 +2091,7 @@ def render_help() -> None:
         ).style("font-size:0.85em; line-height:2")
         ui.separator()
 
-        ui.markdown(t("help.tracks_title", lang))
+        ui.markdown(t("help.tracks_title", lang)).props(_HELP_HEADING)
         ui.label(t("help.tracks_text", lang)).classes("text-xs text-gray-400")
         ui.html(
             f"<span class='track-label health'>{E['heart_red']} {t('help.track_health', lang)}</span><br>"
@@ -2016,27 +2100,27 @@ def render_help() -> None:
         ).style("font-size:0.85em; line-height:2")
         ui.separator()
 
-        ui.markdown(t("help.momentum_title", lang))
+        ui.markdown(t("help.momentum_title", lang)).props(_HELP_HEADING)
         ui.label(t("help.momentum_text", lang)).classes("text-xs text-gray-400")
         ui.separator()
 
-        ui.markdown(f"{t('help.chaos_title', lang)} {E['tornado']}")
+        ui.markdown(f"{t('help.chaos_title', lang)} {E['tornado']}").props(_HELP_HEADING)
         ui.label(t("help.chaos_text", lang)).classes("text-xs text-gray-400")
         ui.separator()
 
-        ui.markdown(f"{t('help.clocks_title', lang)} {E['clock']}")
+        ui.markdown(f"{t('help.clocks_title', lang)} {E['clock']}").props(_HELP_HEADING)
         ui.label(t("help.clocks_text", lang)).classes("text-xs text-gray-400")
         ui.separator()
 
-        ui.markdown(f"{t('help.crisis_title', lang)} {E['skull']}")
+        ui.markdown(f"{t('help.crisis_title', lang)} {E['skull']}").props(_HELP_HEADING)
         ui.label(t("help.crisis_text", lang)).classes("text-xs text-gray-400")
         ui.separator()
 
-        ui.markdown(f"{t('help.kid_title', lang)} {E['green_heart']}")
+        ui.markdown(f"{t('help.kid_title', lang)} {E['green_heart']}").props(_HELP_HEADING)
         ui.label(t("help.kid_text", lang)).classes("text-xs text-gray-400")
         ui.separator()
 
-        ui.markdown(f"{t('help.correction_title', lang)} {E['pen']}")
+        ui.markdown(f"{t('help.correction_title', lang)} {E['pen']}").props(_HELP_HEADING)
         ui.label(t("help.correction_text", lang)).classes("text-xs text-gray-400")
         ui.label(t("help.correction_example", lang)).classes("text-xs text-gray-400")
 
@@ -2057,7 +2141,7 @@ def render_chat_messages(container) -> Optional[str]:
         if msg.get("scene_marker"):
             marker_id = f"msg-{i}"
             last_scene_marker_id = marker_id
-            ui.html(msg["scene_marker"]).classes("scene-marker").props(f'id="{marker_id}"')
+            ui.html(msg["scene_marker"]).classes("scene-marker").props(f'id="{marker_id}" role="heading" aria-level="2"')
             continue
         role = msg.get("role","assistant")
         content = msg.get("content","")
@@ -2072,11 +2156,11 @@ def render_chat_messages(container) -> Optional[str]:
             # Screen-reader role attribution via aria-label on the container —
             # avoids injecting sr-only spans that leak visibly through DOMPurify / ui.html wrappers
             if msg.get("recap"):
-                _msg_col.props(f'aria-label="{t("aria.recap_says", lang)}"')
+                _msg_col.props(f'role="article" aria-label="{t("aria.recap_says", lang)}"')
             elif role == "user":
-                _msg_col.props(f'aria-label="{t("aria.player_says", lang)}"')
+                _msg_col.props(f'role="article" aria-label="{t("aria.player_says", lang)}"')
             else:
-                _msg_col.props(f'aria-label="{t("aria.narrator_says", lang)}"')
+                _msg_col.props(f'role="article" aria-label="{t("aria.narrator_says", lang)}"')
         with _msg_col:
             if msg.get("corrected"):
                 with ui.element('div').classes('correction-badge').props(f'aria-label="{t("aria.correction_badge", lang)}"'):
@@ -2084,7 +2168,9 @@ def render_chat_messages(container) -> Optional[str]:
             _content = _clean_narration(content)
             if role == "assistant" and s.get("narrator_font") == "highlight":
                 _content = _highlight_dialog(_content)
-            ui.markdown(f"{prefix}{_content}")
+            _md = ui.markdown(f"{prefix}{_content}")
+            if role == "assistant" and not msg.get("recap"):
+                _md.props(_narration_lang_props(s.get("narration_lang", "")))
             rd = msg.get("roll_data")
             if rd: render_dice_display(rd)
     # Entity highlights (Design mode): inject JS after all messages are rendered
@@ -2131,7 +2217,7 @@ def render_dice_display(rd: dict) -> None:
             header += f" {E['comet']}"
         if rd.get("chaos_interrupt"):
             header += f" {E['dot']} {t('dice.chaos_short', lang)}"
-        with ui.expansion(header).classes("w-full"):
+        with _expansion(header).classes("w-full"):
             _dice = rd.get('dice_text') or action_dice_text(rd['d1'], rd.get('d2', 0))
             ui.markdown(t("dice.action", lang, dice=_dice, stat_value=rd['stat_value'], score_display=rd['score_display'], c1=rd['c1'], c2=rd['c2']))
             if is_match:
@@ -2336,14 +2422,13 @@ def _render_confirm():
     location=setup.get("starting_location","")
 
     # --- Character summary ---
-    _name_esc = name.replace('"', '&quot;')
-    ui.markdown(f"### {E['person']} {name}").props(f'aria-label="{_name_esc}"')
+    ui.markdown(f"### {E['person']} {name}")
     ui.markdown(f"*{concept}*")
     if setting_desc:
         ui.markdown(f"{setting_desc}")
     if location:
-        _loc_esc = f"{t('aria.location', lang)}: {location}".replace('"', '&quot;')
-        ui.markdown(f"{E['pin']} {location}").props(f'aria-label="{_loc_esc}"')
+        ui.markdown(f"{E['pin']} {location}").props('aria-hidden="true"')
+        _sr_text(f"{t('aria.location', lang)}: {location}")
     sl = get_stat_labels(lang)
     with ui.row().classes("gap-4 my-2"):
         for sk,slabel in sl.items():
@@ -2363,7 +2448,7 @@ def _render_confirm():
     custom_tone_lbl = f"{E['pen']} {t('creation.custom_tone_btn', lang)}"
     custom_arch_lbl = f"{E['pen']} {t('creation.custom_idea', lang)}"
 
-    with ui.expansion(f"{E['pen']} {t('creation.adjust', lang)}").classes("w-full"):
+    with _expansion(f"{E['pen']} {t('creation.adjust', lang)}").classes("w-full"):
         edit_name = ui.input(t("user.name", lang), value=setup.get("character_name","")).classes("w-full")
         edit_desc = ui.textarea(t("creation.background", lang), value=creation.get("custom_desc","")).props("rows=3 maxlength=800 counter").classes("w-full")
         ui.separator()
@@ -2435,7 +2520,7 @@ def _render_confirm():
             updated["wishes"] = edit_wishes.value.strip() if edit_wishes.value else ""
             updated["content_lines"] = edit_lines.value.strip() if edit_lines.value else ""
             with adjust_container:
-                with ui.row().classes("w-full items-center gap-3") as regen_row:
+                with ui.row().classes("w-full items-center gap-3").props('role="status"') as regen_row:
                     ui.spinner("dots", size="md", color="primary")
                     ui.label(t("creation.regenerating", lang)).classes("text-sm").style("color: var(--text-secondary)")
             try:
@@ -2476,7 +2561,8 @@ def _render_confirm():
                     ui.navigate.reload()
                 with ui.column().classes("items-center gap-1"):
                     btn = ui.button(f"{E['person']} {d_name}", on_click=pick_draft, color="primary" if is_selected else None)
-                    btn.props("outline" if not is_selected else "")
+                    # The selected draft is shown by colour - state it for screen readers
+                    btn.props(("outline" if not is_selected else "") + f' aria-pressed="{str(is_selected).lower()}"')
                     ui.label(d_concept).classes("text-xs text-center").style("color: var(--text-secondary); max-width: 160px")
 
     # --- Action buttons ---
@@ -2542,7 +2628,7 @@ def _render_confirm():
                     return
                 start_btn.disable(); reroll_btn.disable()
                 with confirm_container:
-                    with ui.row().classes("w-full items-center gap-3") as reroll_row:
+                    with ui.row().classes("w-full items-center gap-3").props('role="status"') as reroll_row:
                         ui.spinner("dots", size="md", color="primary")
                         ui.label(t("creation.regenerating", lang)).classes("text-sm").style("color: var(--text-secondary)")
                 await _scroll_chat_bottom()
@@ -2604,7 +2690,7 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
             if not s.get("sr_chat", True):
                 _user_col.props('aria-hidden="true"')
             elif s.get("sr_chat", True):
-                _user_col.props(f'aria-label="{t("aria.player_says", L())}"')
+                _user_col.props(f'role="article" aria-label="{t("aria.player_says", L())}"')
             with _user_col:
                 ui.markdown(display_text)
     _turn_applied = False  # True once the engine turn succeeded (no retry after that)
@@ -2733,7 +2819,7 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
                 scroll_target_id = f"msg-{len(s['messages'])}"
                 with chat_container:
                     if game.scene_count > 1:
-                        ui.html(t("game.scene_marker", L(), n=game.scene_count, location=game.current_location)).classes("scene-marker").props(f'id="{scroll_target_id}"')
+                        ui.html(t("game.scene_marker", L(), n=game.scene_count, location=game.current_location)).classes("scene-marker").props(f'id="{scroll_target_id}" role="heading" aria-level="2"')
                     else:
                         ui.element('div').props(f'id="{scroll_target_id}"')
                     _has_chaos_interrupt = bool(roll_data and roll_data.get("chaos_interrupt"))
@@ -2741,12 +2827,12 @@ async def process_player_input(text: str, chat_container, sidebar_container=None
                     if not s.get("sr_chat", True):
                         msg_col.props('aria-hidden="true"')
                     elif s.get("sr_chat", True):
-                        msg_col.props(f'aria-label="{t("aria.narrator_says", L())}"')
+                        msg_col.props(f'role="article" aria-label="{t("aria.narrator_says", L())}"')
                     with msg_col:
                         _narr = _clean_narration(narration)
                         if s.get("narrator_font") == "highlight":
                             _narr = _highlight_dialog(_narr)
-                        ui.markdown(_narr)
+                        ui.markdown(_narr).props(_narration_lang_props(s.get("narration_lang", "")))
                         if roll_data: render_dice_display(roll_data)
             # Entity highlights (Design mode) — process newly rendered message
             # For corrections: render_chat_messages() already called _inject_entity_highlights
@@ -2860,8 +2946,9 @@ def render_momentum_burn() -> bool:
     rl=t("momentum.weak_hit", lang) if nr=="WEAK_HIT" else t("momentum.strong_hit", lang)
     with ui.card().classes("w-full p-4 burn-card").style("background: var(--accent-dim); border: 1px solid var(--accent)") as burn_card:
         burn_card.props('role="alertdialog"')
-        ui.label(f"{E['fire']} {t('sidebar.momentum', lang)}").classes("text-xs font-semibold").style("color: var(--accent-light); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 0.25rem")
-        ui.markdown(t("momentum.question", lang, cost=pre_momentum, result=rl))
+        _burn_title = ui.label(f"{E['fire']} {t('sidebar.momentum', lang)}").classes("text-xs font-semibold").style("color: var(--accent-light); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 0.25rem")
+        _burn_q = ui.markdown(t("momentum.question", lang, cost=pre_momentum, result=rl))
+        _label_dialog(burn_card, _burn_title, _burn_q)
         with ui.row().classes("gap-4 mt-4") as btn_row:
             async def burn():
                 try:
@@ -2913,6 +3000,7 @@ def render_momentum_burn() -> bool:
                                 document.head.appendChild(style);
                                 var wrap = document.createElement('div');
                                 wrap.className = '_rw_wrap';
+                                wrap.setAttribute('aria-hidden', 'true');
                                 wrap.innerHTML = '<div class="_rw_lines"></div><div class="_rw_flash"></div><div class="_rw_chrom"></div>';
                                 document.body.appendChild(wrap);
                                 setTimeout(function(){ wrap.remove(); style.remove(); }, 750);
@@ -2946,12 +3034,12 @@ def _make_chapter_action(game, chapter_msg_key: str):
             ui.notify(t("game.invalid_api_key", lang), type="negative")
             return
         # Show persistent loading dialog (blocks further clicks, visible feedback)
-        loading_dlg = ui.dialog().props("persistent")
+        loading_dlg = ui.dialog().props('persistent aria-busy="true"')
         with loading_dlg, ui.card().classes("items-center p-6").style(
             "background: var(--bg-surface); min-width: 260px"):
             ui.spinner("dots", size="lg", color="primary")
-            ui.label(t(chapter_msg_key, lang, n=game.chapter_number + 1)).classes(
-                "text-sm mt-2").style("color: var(--text-secondary)")
+            _label_dialog(loading_dlg, ui.label(t(chapter_msg_key, lang, n=game.chapter_number + 1)).classes(
+                "text-sm mt-2").style("color: var(--text-secondary)"))
         loading_dlg.open()
         try:
             config = get_engine_config(); username = s["current_user"]
@@ -3013,7 +3101,8 @@ def render_epilogue() -> bool:
 
     # --- Post-epilogue: chapter complete, choose next step ---
     if game.epilogue_shown:
-        with ui.card().classes("w-full p-4 epilog-card").style("background: var(--accent-dim); border: 1px solid var(--accent-border)"):
+        with ui.card().classes("w-full p-4 epilog-card").style("background: var(--accent-dim); border: 1px solid var(--accent-border)").props(
+                'role="region" ' + _aprop("aria-label", t("epilogue.done_title", lang))):
             ui.markdown(f"{E['star']} **{t('epilogue.done_title', lang)}**")
             ui.label(t("epilogue.done_text", lang)).classes("text-sm mt-1")
             with ui.row().classes("gap-4 mt-4"):
@@ -3024,14 +3113,15 @@ def render_epilogue() -> bool:
 
     # --- Epilogue offer: story complete but epilogue not yet generated ---
     if bp.get("story_complete") and not game.epilogue_dismissed:
-        with ui.card().classes("w-full p-4 epilog-card").style("background: var(--accent-dim); border: 1px solid var(--accent-border)"):
+        with ui.card().classes("w-full p-4 epilog-card").style("background: var(--accent-dim); border: 1px solid var(--accent-border)").props(
+                'role="region" ' + _aprop("aria-label", t("epilogue.offer_title", lang))):
             ui.markdown(f"{E['star']} **{t('epilogue.offer_title', lang)}**")
             ui.label(t("epilogue.offer_text", lang)).classes("text-sm mt-1")
             btn_row = ui.row().classes("gap-4 mt-4")
             with btn_row:
                 async def gen_epilogue():
                     btn_row.clear()
-                    with btn_row:
+                    with btn_row, ui.row().classes("items-center gap-2").props('role="status"'):
                         ui.spinner(size="sm")
                         ui.label(t("epilogue.generating", lang)).classes("text-sm")
                     try:
@@ -3074,6 +3164,7 @@ def render_game_over() -> bool:
             if (document.querySelector('._go_overlay')) return;
             var ov = document.createElement('div');
             ov.className = '_go_overlay';
+            ov.setAttribute('aria-hidden', 'true');
             ov.innerHTML =
                 '<span class="_go_skull">{_skull}</span>'
                 + '<div class="_go_title">{_title}</div>'
@@ -3089,7 +3180,7 @@ def render_game_over() -> bool:
     # NiceGUI card — becomes visible once overlay fades (after ~5.2s)
     with ui.card().classes("w-full p-4 epilog-card").style(
         "background: var(--error-dim); border: 1px solid var(--error-border)"
-    ):
+    ).props('role="region" ' + _aprop("aria-label", t("aria.game_over_region", lang))):
         ui.markdown(f"{t('gameover.title', lang)} " + (_sub))
         with ui.row().classes("gap-4 mt-4"):
             new_ch, full_new = _make_chapter_action(game, "gameover.chapter_msg")
@@ -3469,7 +3560,7 @@ def render_cogm_chat(container, sess: "CoopLive") -> None:
     _sr_chat = s.get("sr_chat", True)
     for i, msg in enumerate(sess.host_s.get("messages", [])):
         if msg.get("scene_marker"):
-            ui.html(msg["scene_marker"]).classes("scene-marker").props(f'id="cogm-msg-{i}"')
+            ui.html(msg["scene_marker"]).classes("scene-marker").props(f'id="cogm-msg-{i}" role="heading" aria-level="2"')
             continue
         if msg.get("role") != "assistant" or msg.get("recap"):
             continue
@@ -3477,12 +3568,13 @@ def render_cogm_chat(container, sess: "CoopLive") -> None:
         if not _sr_chat:
             col.props('aria-hidden="true"')
         else:
-            col.props(f'aria-label="{t("aria.narrator_says", lang)}"')
+            col.props(f'role="article" aria-label="{t("aria.narrator_says", lang)}"')
         with col:
             content = _clean_narration(msg.get("content", ""))
             if s.get("narrator_font") == "highlight":
                 content = _highlight_dialog(content)
-            ui.markdown(content)
+            # Narration is in the host's narration language, not the Co-GM's
+            ui.markdown(content).props(_narration_lang_props(sess.host_s.get("narration_lang", "")))
     if s.get("narrator_font") == "highlight" and sess.game is not None:
         _inject_entity_highlights(sess.game)
 
@@ -3497,7 +3589,7 @@ def render_cogm_panel(container, sess: "CoopLive", on_change) -> None:
     q = coop_state(game).get("question")
     with container:
         if sess.question_pending:
-            with ui.row().classes("w-full items-center gap-2 rpg-input-bar").style("padding: 0.5rem 1rem"):
+            with ui.row().classes("w-full items-center gap-2 rpg-input-bar").style("padding: 0.5rem 1rem").props('role="status"'):
                 ui.spinner("dots", size="sm")
                 ui.label(t("coop.question_loading", lang)).classes("text-sm").style("color: var(--text-secondary)")
             return
@@ -3616,7 +3708,8 @@ def open_cockpit(sess: "CoopLive", on_open=None) -> None:
         ui.label(t("coop.impulse_title", lang)).classes("text-xs font-semibold mt-3").style(
             "color: var(--accent-light); letter-spacing: 0.06em; text-transform: uppercase")
         slot_box = ui.column().classes("w-full")
-        impulse_tiles = ui.element("div").classes("grid grid-cols-2 sm:grid-cols-4 gap-2 w-full")
+        impulse_tiles = ui.element("div").classes("grid grid-cols-2 sm:grid-cols-4 gap-2 w-full").props(
+            'role="group" ' + _aprop("aria-label", t("coop.impulse_title", lang)))
         impulse_editor = ui.column().classes("w-full")
 
         # ── Zone 2: background ─────────────────────────────────────────
@@ -3624,7 +3717,8 @@ def open_cockpit(sess: "CoopLive", on_open=None) -> None:
         ui.label(t("coop.background_title", lang)).classes("text-xs font-semibold").style(
             "color: var(--accent-light); letter-spacing: 0.06em; text-transform: uppercase")
         ui.label(t("coop.background_hint", lang)).classes("text-xs").style("color: var(--text-secondary)")
-        background_tiles = ui.element("div").classes("grid grid-cols-2 sm:grid-cols-4 gap-2 w-full")
+        background_tiles = ui.element("div").classes("grid grid-cols-2 sm:grid-cols-4 gap-2 w-full").props(
+            'role="group" ' + _aprop("aria-label", t("coop.background_title", lang)))
         background_editor = ui.column().classes("w-full")
         background_list = ui.column().classes("w-full gap-1")
 
@@ -4295,7 +4389,7 @@ async def main_page(client: Client):
     ui.add_head_html(CUSTOM_CSS)
 
     # ── Always show a spinner immediately (SSR, no WebSocket needed) ──
-    loading = ui.column().classes("w-full items-center mt-20 gap-4")
+    loading = ui.column().classes("w-full items-center mt-20 gap-4").props('role="status"')
     with loading:
         ui.spinner("dots", size="lg", color="primary")
         ui.label(t("conn.loading", DEFAULT_UI_LANG or DEFAULT_LANG)).classes("text-gray-400")
@@ -4436,8 +4530,10 @@ async def main_page(client: Client):
 
     # Slim header with hamburger menu (hidden until main app phase)
     with ui.header(fixed=True).classes("rpg-slim-header items-center").style("padding: 0 0.5rem") as header:
+        # Skip link: first focusable element, visible only on keyboard focus (custom_head.html)
+        _skip_link = ui.link(t("aria.skip_to_content", L()), "#chat-log").classes("skip-link")
         _hamburger_btn = ui.button(icon="menu", on_click=lambda: drawer.toggle()) \
-            .props(f'flat round dense aria-label="{t("aria.menu_open", L())}"') \
+            .props(f'flat round dense aria-expanded="false" aria-label="{t("aria.menu_open", L())}"') \
             .classes("text-gray-400 hover:text-white") \
             .style("min-width: 44px; min-height: 44px")
         ui.space()
@@ -4457,16 +4553,24 @@ async def main_page(client: Client):
     S()["_drawer"] = drawer  # Store for access from sidebar action handlers
 
     # Accessibility: hide main content from screen readers when drawer overlays (mobile < 768px)
-    drawer.on('show', lambda: ui.run_javascript('''
+    # The menu button states whether the drawer is open (aria-expanded)
+    def _drawer_shown():
+        _hamburger_btn.props('aria-expanded="true"')
+        ui.run_javascript('''
         if (window.innerWidth < 768) {
             document.querySelector('.q-page')?.setAttribute('aria-hidden','true');
             document.querySelector('.q-footer')?.setAttribute('aria-hidden','true');
         }
-    '''))
-    drawer.on('hide', lambda: ui.run_javascript('''
+    ''')
+
+    def _drawer_hidden():
+        _hamburger_btn.props('aria-expanded="false"')
+        ui.run_javascript('''
         document.querySelector('.q-page')?.removeAttribute('aria-hidden');
         document.querySelector('.q-footer')?.removeAttribute('aria-hidden');
-    '''))
+    ''')
+    drawer.on('show', _drawer_shown)
+    drawer.on('hide', _drawer_hidden)
 
     # Footer (created at page level, hidden initially, populated in main phase)
     with ui.footer(fixed=True).classes("q-pa-none").style(
@@ -4493,7 +4597,38 @@ async def main_page(client: Client):
             }}, {delay_ms});
         ''')
 
+    def _focus_primary(footer: bool = True):
+        """Move keyboard/screen-reader focus to the most relevant interactive element.
+        Priority: footer input (game active) -> creation buttons -> card buttons
+        (momentum burn, epilogue, game over). footer=False for phases that hide the
+        footer (a hidden Quasar footer keeps its layout box); those only focus
+        buttons - focusing a text field could pop up the on-screen keyboard."""
+        if footer:
+            targets = ["'.q-footer input'", "'.q-page .choice-btn'", "'.q-page .q-card .q-btn'",
+                       "'.q-page input'", "'.q-page textarea'"]
+        else:
+            targets = ["'.q-page .choice-btn'", "'.q-page .q-card .q-btn'"]
+        ui.run_javascript(f'''
+            setTimeout(() => {{
+                for (const sel of [{", ".join(targets)}]) {{
+                    const el = document.querySelector(sel);
+                    if (el && el.offsetParent !== null) {{ el.focus(); return; }}
+                }}
+            }}, 600);
+        ''')
+
+    # Phase changes are mostly triggered by a button that the phase itself deletes
+    # (content_area / drawer / footer are cleared). NiceGUI resolves the client of
+    # later calls (run_javascript, focus, scroll) through the caller's slot, which
+    # then raises "The parent element this slot belongs to has been deleted." and
+    # silently aborted the rest of the phase - e.g. the focus move to the input
+    # field for keyboard and screen-reader users. The wrappers run each phase in
+    # the slot of content_area, which is never deleted.
     def _show_login_phase():
+        with content_area:
+            _show_login_phase_impl()
+
+    def _show_login_phase_impl():
         """Phase 1: Invite code login (no reload on success)."""
         s["_phase"] = "login"
         header.set_value(False)
@@ -4503,7 +4638,7 @@ async def main_page(client: Client):
         lang = L()
         with content_area:
             with ui.column().classes("w-full max-w-sm mx-auto mt-20 gap-4 items-center"):
-                ui.label(f"{E['swords']} {t('login.title', lang)}").classes("text-2xl font-bold").props(f'aria-label="{t("login.title", lang)}"')
+                ui.label(f"{E['swords']} {t('login.title', lang)}").classes("text-2xl font-bold").props('role="heading" aria-level="1"')
                 ui.label(t("user.subtitle", lang)).classes("text-gray-400 italic")
                 ui.label(t("login.subtitle", lang)).classes("text-gray-400 text-sm")
                 code_inp = ui.input(t("login.code_label", lang), password=True, password_toggle_button=True).classes("w-full")
@@ -4531,6 +4666,10 @@ async def main_page(client: Client):
         _focus_element('.q-page input', delay_ms=500)
 
     def _show_user_selection_phase():
+        with content_area:
+            _show_user_selection_phase_impl()
+
+    def _show_user_selection_phase_impl():
         """Phase 2: User selection (no reload on select)."""
         s["_phase"] = "select"
         header.set_value(False)
@@ -4540,7 +4679,7 @@ async def main_page(client: Client):
         lang = L()
         with content_area:
             with ui.column().classes("w-full items-center mt-12"):
-                ui.label(t("user.title", lang)).classes("text-3xl font-bold")
+                ui.label(t("user.title", lang)).classes("text-3xl font-bold").props('role="heading" aria-level="1"')
                 ui.label(t("user.subtitle", lang)).classes("text-gray-400 italic mb-2")
                 ui.label(t("user.who_plays", lang)).classes("text-lg mb-8").style("color: var(--text-secondary)")
                 users = list_users()
@@ -4551,7 +4690,7 @@ async def main_page(client: Client):
                             ui.button(name, on_click=lambda n=name: _select_user(n),
                                       color="primary").classes("px-8 py-4 text-lg")
                     ui.separator().classes("my-4 w-96")
-                with ui.expansion(f"{E['plus']} {t('user.new_player', lang)}", value=len(users) == 0).classes("w-96"):
+                with _expansion(f"{E['plus']} {t('user.new_player', lang)}", value=len(users) == 0).classes("w-96"):
                     inp = ui.input(t("user.name", lang), placeholder=t("user.name_placeholder", lang)).props("maxlength=30").classes("w-full")
                     async def create():
                         n = inp.value.strip()
@@ -4564,7 +4703,7 @@ async def main_page(client: Client):
                                 ui.notify(t("user.exists", lang, name=n), type="negative")
                     ui.button(f"{E['checkmark']} {t('user.create', lang)}", on_click=create, color="primary").classes("w-full mt-2")
                 if users:
-                    with ui.expansion(f"{E['gear']} {t('user.manage', lang)}").classes("w-96"):
+                    with _expansion(f"{E['gear']} {t('user.manage', lang)}").classes("w-96"):
                         names = [u["name"] for u in users]
                         sel = ui.select(names, label=t("user.remove_label", lang), value=names[0]).classes("w-full")
                         def _user_in_coop(name) -> bool:
@@ -4590,7 +4729,7 @@ async def main_page(client: Client):
                                 return
                             with ui.dialog() as dlg, ui.card():
                                 _del_dlg["dlg"] = dlg
-                                ui.label(t("user.confirm_delete", lang, name=sel.value))
+                                _label_dialog(dlg, ui.label(t("user.confirm_delete", lang, name=sel.value)))
                                 with ui.row():
                                     ui.button(t("user.yes", lang), on_click=lambda n=sel.value: _confirm_del_user(n), color="negative")
                                     ui.button(t("user.no", lang), on_click=dlg.close)
@@ -4670,6 +4809,10 @@ async def main_page(client: Client):
             _show_user_selection_phase()
 
     async def _show_main_phase():
+        with content_area:
+            await _show_main_phase_impl()
+
+    async def _show_main_phase_impl():
         """Phase 3: Main app with drawer, footer, chat."""
         if not s.get("user_config_loaded"):
             load_user_settings(s["current_user"])
@@ -4699,6 +4842,7 @@ async def main_page(client: Client):
         _ui_refs.clear()
         # Re-set skeleton ARIA labels (were set at build time with default language)
         _hamburger_btn.props(f'aria-label="{t("aria.menu_open", _user_lang)}"')
+        _skip_link.set_text(t("aria.skip_to_content", _user_lang))
         drawer.props(f'aria-label="{t("aria.sidebar", _user_lang)}"')
         footer.props(f'aria-label="{t("aria.input_area", _user_lang)}"')
         content_area.props(f'role="main" aria-label="{t("aria.main_content", _user_lang)}"')
@@ -4755,7 +4899,7 @@ async def main_page(client: Client):
 
             chat_container = ui.column().classes("chat-scroll w-full")
             _sr_chat = s.get("sr_chat", True)
-            _chat_aria_props = f'id="chat-log" aria-label="{t("aria.chat_log", L())}"'
+            _chat_aria_props = f'id="chat-log" tabindex="-1" aria-label="{t("aria.chat_log", L())}"'
             if _sr_chat:
                 _chat_aria_props += ' role="log" aria-live="polite"'
             chat_container.props(_chat_aria_props)
@@ -4823,21 +4967,25 @@ async def main_page(client: Client):
                     if render_momentum_burn():
                         footer.set_value(False)
                         await _scroll_chat_bottom(delay_ms=300)
+                        _focus_primary(footer=False)
                         return
                     if render_game_over():
                         footer.set_value(False)
                         await _scroll_chat_bottom(delay_ms=300)
+                        _focus_primary(footer=False)
                         return
                     if render_epilogue():
                         footer.set_value(False)
                         await _scroll_chat_bottom(delay_ms=300)
                         if last_scene_id:
                             await _scroll_to_element(last_scene_id)
+                        _focus_primary(footer=False)
                         return
 
                     game = s.get("game"); creation = s.get("creation")
                     if (game is None or creation is not None) and render_creation_flow(chat_container):
                         footer.set_value(False)
+                        _focus_primary(footer=False)
                         return
 
         # --- Populate footer (input bar or chapter view bar) ---
@@ -4933,22 +5081,7 @@ async def main_page(client: Client):
             await do_tts(pending, chat_container)
 
         # Accessibility: move focus to the most relevant interactive element
-        # Priority: footer input (game active) → creation buttons → creation input → card buttons
-        ui.run_javascript('''
-            setTimeout(() => {
-                const targets = [
-                    '.q-footer input',
-                    '.q-page .choice-btn',
-                    '.q-page .q-card .q-btn',
-                    '.q-page input',
-                    '.q-page textarea'
-                ];
-                for (const sel of targets) {
-                    const el = document.querySelector(sel);
-                    if (el && el.offsetParent !== null) { el.focus(); return; }
-                }
-            }, 600);
-        ''')
+        _focus_primary()
 
     # ==================================================================
     # CO-OP: Co-GM phase, invite acceptance, per-tab tick
@@ -5024,6 +5157,10 @@ async def main_page(client: Client):
             log(f"[Coop] Co-GM view refresh failed: {e}", level="warning")
 
     async def _show_cogm_phase(sess):
+        with content_area:
+            await _show_cogm_phase_impl(sess)
+
+    async def _show_cogm_phase_impl(sess):
         """Co-GM phase: read-only story of the host, question panel, cockpit."""
         s["_phase"] = "cogm"
         sess.cockpit_hold = False   # a rebuilt view has no open cockpit
@@ -5031,6 +5168,12 @@ async def main_page(client: Client):
         lang = L()
         game = sess.game
         _ui_refs.clear()
+        # Skeleton labels in the user's language (built with the default language)
+        _hamburger_btn.props(f'aria-label="{t("aria.menu_open", lang)}"')
+        _skip_link.set_text(t("aria.skip_to_content", lang))
+        drawer.props(f'aria-label="{t("aria.sidebar", lang)}"')
+        footer.props(f'aria-label="{t("aria.input_area", lang)}"')
+        content_area.props(f'role="main" aria-label="{t("aria.main_content", lang)}"')
         if game is None:
             s["coop_host"] = None
             await _show_main_phase()
@@ -5072,7 +5215,7 @@ async def main_page(client: Client):
         content_area.clear()
         with content_area:
             chat = ui.column().classes("chat-scroll w-full")
-            _props = f'id="chat-log" aria-label="{t("aria.chat_log", lang)}"'
+            _props = f'id="chat-log" tabindex="-1" aria-label="{t("aria.chat_log", lang)}"'
             if s.get("sr_chat", True):
                 _props += ' role="log" aria-live="polite"'
             chat.props(_props)
